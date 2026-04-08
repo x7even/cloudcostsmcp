@@ -40,6 +40,8 @@ def test_normalized_price_summary():
     assert s["provider"] == "aws"
     assert "0.192" in s["price"]
     assert s["instanceType"] == "m5.xlarge"
+    assert s["region"] == "us-east-1"
+    assert s["region_name"] == "US East (N. Virginia)"
 
 
 def test_price_comparison_sorted():

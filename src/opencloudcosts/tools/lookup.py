@@ -88,12 +88,16 @@ def register_lookup_tools(mcp: Any) -> None:
         regions: list[str],
         os: str = "Linux",
         term: str = "on_demand",
+        baseline_region: str = "",
     ) -> dict[str, Any]:
         """
         Compare the price of the same compute instance type across multiple regions.
 
-        Returns prices for each region sorted cheapest first, plus the % price delta
-        between cheapest and most expensive regions.
+        Fetches all regions concurrently. Returns prices sorted cheapest first, plus
+        the % price delta between cheapest and most expensive regions.
+
+        Optionally compares every region against a baseline (e.g. baseline_region="us-east-1")
+        to show delta $/% vs that reference point.
 
         Args:
             provider: Cloud provider — "aws" or "gcp"
@@ -101,6 +105,8 @@ def register_lookup_tools(mcp: Any) -> None:
             regions: List of region codes to compare, e.g. ["us-east-1", "ap-southeast-2"]
             os: Operating system — "Linux" (default) or "Windows"
             term: Pricing term — "on_demand" (default), "reserved_1yr", "reserved_3yr"
+            baseline_region: Optional region code for delta comparison, e.g. "us-east-1".
+                             Adds delta_per_hour, delta_monthly, delta_pct to each result.
         """
         pvdr = _providers(ctx).get(provider)
         if pvdr is None:
@@ -111,31 +117,73 @@ def register_lookup_tools(mcp: Any) -> None:
         except ValueError:
             return {"error": f"Unknown term '{term}'."}
 
+        # Fan out concurrently instead of sequentially
+        semaphore = asyncio.Semaphore(10)
+
+        async def fetch_one(region: str) -> tuple[str, list, str | None]:
+            async with semaphore:
+                try:
+                    prices = await pvdr.get_compute_price(instance_type, region, os, pricing_term)
+                    return region, prices, None
+                except Exception as e:
+                    return region, [], str(e)
+
+        raw = await asyncio.gather(*[fetch_one(r) for r in regions])
+
         all_prices = []
         errors = {}
-        for region in regions:
-            try:
-                prices = await pvdr.get_compute_price(instance_type, region, os, pricing_term)
-                if prices:
-                    all_prices.extend(prices)
-                else:
-                    errors[region] = "no pricing found"
-            except Exception as e:
-                errors[region] = str(e)
+        for region, prices, err in raw:
+            if err:
+                errors[region] = err
+            elif prices:
+                all_prices.extend(prices)
+            else:
+                errors[region] = "no pricing found"
+
+        if not all_prices:
+            return {
+                "result": "no_prices_found",
+                "message": f"No pricing found for {instance_type} in any of the specified regions.",
+                "errors": errors,
+            }
 
         comparison = PriceComparison.from_results(
-            f"{instance_type} across {regions}", all_prices
+            f"{instance_type} across regions", all_prices
         )
+
+        prices_by_region = [p.summary() for p in comparison.results]
+
+        if baseline_region:
+            # summary() uses "price" key not "price_per_hour" — build uniform dicts
+            from opencloudcosts.utils.baseline import apply_baseline_deltas
+            uniform = [
+                {
+                    "region": p.region,
+                    "region_name": p.summary().get("region_name", p.region),
+                    "price_per_hour": f"${p.price_per_unit:.6f}",
+                    "monthly_estimate": f"${p.monthly_cost:.2f}/mo",
+                    **{k: v for k, v in p.summary().items()
+                       if k in ("vcpu", "memory", "instanceType", "operatingSystem")},
+                }
+                for p in comparison.results
+            ]
+            try:
+                apply_baseline_deltas(uniform, baseline_region)
+            except ValueError as e:
+                return {"error": str(e)}
+            prices_by_region = uniform
 
         result: dict[str, Any] = {
             "provider": provider,
             "instance_type": instance_type,
             "term": term,
-            "prices_by_region": [p.summary() for p in comparison.results],
+            "prices_by_region": prices_by_region,
             "cheapest_region": comparison.cheapest.region if comparison.cheapest else None,
             "most_expensive_region": comparison.most_expensive.region if comparison.most_expensive else None,
             "price_delta_pct": comparison.price_delta_pct,
         }
+        if baseline_region:
+            result["baseline_region"] = baseline_region
         if errors:
             result["errors"] = errors
         return result

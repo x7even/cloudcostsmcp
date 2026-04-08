@@ -149,3 +149,12 @@ def list_aws_regions() -> list[str]:
 
 def list_gcp_regions() -> list[str]:
     return sorted(GCP_REGION_DISPLAY.keys())
+
+
+def region_display_name(provider: str, region_code: str) -> str:
+    """Return the friendly display name for a region code, or the code itself if unknown."""
+    if provider == "aws":
+        return AWS_REGION_DISPLAY.get(region_code, region_code)
+    if provider == "gcp":
+        return GCP_REGION_DISPLAY.get(region_code, region_code)
+    return region_code

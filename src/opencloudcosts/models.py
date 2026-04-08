@@ -70,10 +70,12 @@ class NormalizedPrice(BaseModel):
 
     def summary(self) -> dict[str, Any]:
         """Compact dict for LLM consumption."""
+        from opencloudcosts.utils.regions import region_display_name
         return {
             "provider": self.provider.value,
             "description": self.description,
             "region": self.region,
+            "region_name": region_display_name(self.provider.value, self.region),
             "term": self.pricing_term.value,
             "price": f"${self.price_per_unit:.6f} {self.unit.value}",
             "monthly_estimate": f"${self.monthly_cost:.2f}/mo" if self.unit == PriceUnit.PER_HOUR else None,

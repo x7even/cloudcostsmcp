@@ -3,12 +3,21 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from decimal import Decimal
 from typing import Any
 
-# Default region set for find_cheapest_region when no regions are specified.
+from mcp.server.fastmcp import Context
+
+from opencloudcosts.models import PriceComparison, PricingTerm
+from opencloudcosts.utils.baseline import apply_baseline_deltas
+from opencloudcosts.utils.regions import region_display_name
+
+logger = logging.getLogger(__name__)
+
+# Default region set for AWS fan-out tools when no regions are specified.
 # Querying all ~30 AWS regions cold (no cache) requires downloading ~30 bulk
 # pricing files and will time out. This curated list covers the major
-# commercial regions. Pass explicit regions= to search the full set.
+# commercial regions. Pass regions=["all"] to search the full set.
 _AWS_MAJOR_REGIONS = [
     "us-east-1",       # N. Virginia
     "us-east-2",       # Ohio
@@ -24,12 +33,6 @@ _AWS_MAJOR_REGIONS = [
     "ap-south-1",      # Mumbai
 ]
 
-from mcp.server.fastmcp import Context
-
-from opencloudcosts.models import PriceComparison, PricingTerm
-
-logger = logging.getLogger(__name__)
-
 
 def register_availability_tools(mcp: Any) -> None:
 
@@ -41,6 +44,8 @@ def register_availability_tools(mcp: Any) -> None:
     ) -> dict[str, Any]:
         """
         List all regions where a cloud service is available for the given provider.
+
+        Returns region codes and their friendly display names.
 
         Args:
             provider: Cloud provider — "aws" or "gcp"
@@ -56,7 +61,15 @@ def register_availability_tools(mcp: Any) -> None:
             logger.error("list_regions error: %s", e)
             return {"error": str(e)}
 
-        return {"provider": provider, "service": service, "regions": regions, "count": len(regions)}
+        return {
+            "provider": provider,
+            "service": service,
+            "regions": [
+                {"code": r, "name": region_display_name(provider, r)}
+                for r in regions
+            ],
+            "count": len(regions),
+        }
 
     @mcp.tool()
     async def list_instance_types(
@@ -100,13 +113,13 @@ def register_availability_tools(mcp: Any) -> None:
             logger.error("list_instance_types error: %s", e)
             return {"error": str(e)}
 
-        # Sort by vcpu then memory, truncate
         instances.sort(key=lambda i: (i.vcpu, i.memory_gb))
         instances = instances[:max_results]
 
         return {
             "provider": provider,
             "region": region,
+            "region_name": region_display_name(provider, region),
             "filters": {
                 "family": family or None,
                 "min_vcpus": min_vcpus or None,
@@ -160,6 +173,7 @@ def register_availability_tools(mcp: Any) -> None:
             "service": service,
             "sku_or_type": sku_or_type,
             "region": region,
+            "region_name": region_display_name(provider, region),
             "available": available,
         }
 
@@ -171,6 +185,7 @@ def register_availability_tools(mcp: Any) -> None:
         os: str = "Linux",
         term: str = "on_demand",
         regions: list[str] | None = None,
+        baseline_region: str = "",
     ) -> dict[str, Any]:
         """
         Find the cheapest region for a given compute instance type across all (or specified) regions.
@@ -178,13 +193,18 @@ def register_availability_tools(mcp: Any) -> None:
         Queries pricing concurrently across regions and returns results sorted cheapest first,
         with the price delta between cheapest and most expensive regions.
 
+        Optionally compares every region against a baseline (e.g. baseline_region="us-east-1")
+        to show delta $/% vs that reference point.
+
         Args:
             provider: Cloud provider — "aws" or "gcp"
             instance_type: Instance type, e.g. "m5.xlarge" or "c5.2xlarge"
             os: Operating system — "Linux" (default) or "Windows"
             term: Pricing term — "on_demand" (default), "reserved_1yr", "reserved_3yr"
-            regions: List of region codes to compare. Omit to compare major regions (faster).
+            regions: List of region codes to compare. Omit for major regions (faster).
                      Pass ["all"] to search every available region (slow on first run without cache).
+            baseline_region: Optional region code to use as comparison baseline, e.g. "us-east-1".
+                             Each result will include delta_per_hour, delta_monthly, delta_pct.
         """
         pvdr = ctx.request_context.lifespan_context["providers"].get(provider)
         if pvdr is None:
@@ -195,9 +215,6 @@ def register_availability_tools(mcp: Any) -> None:
         except ValueError:
             return {"error": f"Unknown term '{term}'."}
 
-        # Resolve region list — for AWS without an explicit list, default to
-        # major regions to avoid cold-cache timeouts (~30 bulk file downloads).
-        # The caller can pass regions=["all"] or an explicit list for full coverage.
         all_regions_requested = regions == ["all"]
         if not regions or all_regions_requested:
             all_available = await pvdr.list_regions("compute")
@@ -209,9 +226,7 @@ def register_availability_tools(mcp: Any) -> None:
                 scoped_search = False
         else:
             scoped_search = False
-            all_available = regions
 
-        # Fan out concurrently — throttle to 10 at a time to avoid API rate limits
         semaphore = asyncio.Semaphore(10)
 
         async def fetch_one(region: str) -> tuple[str, list]:
@@ -242,26 +257,42 @@ def register_availability_tools(mcp: Any) -> None:
             f"{instance_type} cheapest region ({provider})", all_prices
         )
 
+        sorted_entries = [
+            {
+                "region": p.region,
+                "region_name": region_display_name(provider, p.region),
+                "price_per_hour": f"${p.price_per_unit:.6f}",
+                "monthly_estimate": f"${p.monthly_cost:.2f}/mo",
+            }
+            for p in comparison.results
+        ]
+
+        if baseline_region:
+            try:
+                apply_baseline_deltas(sorted_entries, baseline_region)
+            except ValueError as e:
+                return {"error": str(e)}
+
+        cheapest = comparison.cheapest
+        most_exp = comparison.most_expensive
         result: dict[str, Any] = {
             "provider": provider,
             "instance_type": instance_type,
             "os": os,
             "term": term,
-            "cheapest_region": comparison.cheapest.region if comparison.cheapest else None,
-            "cheapest_price": f"${comparison.cheapest.price_per_unit:.6f}/hr" if comparison.cheapest else None,
-            "most_expensive_region": comparison.most_expensive.region if comparison.most_expensive else None,
-            "most_expensive_price": f"${comparison.most_expensive.price_per_unit:.6f}/hr" if comparison.most_expensive else None,
+            "cheapest_region": cheapest.region if cheapest else None,
+            "cheapest_region_name": region_display_name(provider, cheapest.region) if cheapest else None,
+            "cheapest_price": f"${cheapest.price_per_unit:.6f}/hr" if cheapest else None,
+            "most_expensive_region": most_exp.region if most_exp else None,
+            "most_expensive_region_name": region_display_name(provider, most_exp.region) if most_exp else None,
+            "most_expensive_price": f"${most_exp.price_per_unit:.6f}/hr" if most_exp else None,
             "price_delta_pct": comparison.price_delta_pct,
-            "all_regions_sorted": [
-                {
-                    "region": p.region,
-                    "price_per_hour": f"${p.price_per_unit:.6f}",
-                    "monthly_estimate": f"${p.monthly_cost:.2f}",
-                }
-                for p in comparison.results
-            ],
+            "all_regions_sorted": sorted_entries,
             "not_available_in": not_available if not_available else None,
         }
+        if baseline_region:
+            result["baseline_region"] = baseline_region
+            result["baseline_region_name"] = region_display_name(provider, baseline_region)
         if scoped_search:
             result["note"] = (
                 f"Searched {len(regions)} major regions. "
@@ -277,22 +308,29 @@ def register_availability_tools(mcp: Any) -> None:
         os: str = "Linux",
         term: str = "on_demand",
         include_prices: bool = True,
+        regions: list[str] | None = None,
+        baseline_region: str = "",
     ) -> dict[str, Any]:
         """
         Find all regions where a specific compute instance type is available.
 
-        Queries all regions concurrently and returns the ones where pricing exists.
-        Optionally includes the price in each available region, sorted cheapest first.
+        Queries regions concurrently and returns the ones where pricing exists,
+        sorted cheapest first. Includes friendly region names, vCPU/memory specs,
+        and optional baseline delta comparison.
 
-        For AWS without credentials, searches major regions by default (faster).
-        Pass the full region list explicitly if you need exhaustive coverage.
+        For AWS, defaults to major regions to avoid cold-cache timeouts.
+        Pass regions=["all"] to search every available region.
 
         Args:
             provider: Cloud provider — "aws" or "gcp"
             instance_type: Instance type, e.g. "c6a.xlarge" or "n2-standard-4"
             os: Operating system — "Linux" (default) or "Windows"
             term: Pricing term — "on_demand" (default), "reserved_1yr", "spot"
-            include_prices: If true (default), include per-hour price for each region
+            include_prices: If true (default), include per-hour price and monthly estimate
+            regions: Specific region codes to search. Pass ["all"] for every region.
+                     Omit to use major regions for AWS (faster on first run).
+            baseline_region: Region to use as comparison baseline, e.g. "us-east-1".
+                             Adds delta_per_hour, delta_monthly, delta_pct to each result.
         """
         pvdr = ctx.request_context.lifespan_context["providers"].get(provider)
         if pvdr is None:
@@ -303,12 +341,18 @@ def register_availability_tools(mcp: Any) -> None:
         except ValueError:
             return {"error": f"Unknown term '{term}'."}
 
-        all_regions = await pvdr.list_regions("compute")
-        # For AWS, default to major regions to avoid cold-cache timeouts
-        search_regions = (
-            _AWS_MAJOR_REGIONS if provider == "aws" else all_regions
-        )
-        scoped = provider == "aws" and search_regions is _AWS_MAJOR_REGIONS
+        all_regions_requested = regions == ["all"]
+        if not regions or all_regions_requested:
+            all_available = await pvdr.list_regions("compute")
+            if provider == "aws" and not all_regions_requested:
+                search_regions = _AWS_MAJOR_REGIONS
+                scoped = True
+            else:
+                search_regions = all_available
+                scoped = False
+        else:
+            search_regions = regions
+            scoped = False
 
         semaphore = asyncio.Semaphore(10)
 
@@ -327,15 +371,29 @@ def register_availability_tools(mcp: Any) -> None:
         available = []
         for region, prices in raw:
             if prices:
-                entry: dict[str, Any] = {"region": region}
+                p = prices[0]
+                entry: dict[str, Any] = {
+                    "region": region,
+                    "region_name": region_display_name(provider, region),
+                }
                 if include_prices:
-                    p = prices[0]
                     entry["price_per_hour"] = f"${p.price_per_unit:.6f}"
                     entry["monthly_estimate"] = f"${p.monthly_cost:.2f}/mo"
+                    if "vcpu" in p.attributes:
+                        entry["vcpu"] = p.attributes["vcpu"]
+                    if "memory" in p.attributes:
+                        entry["memory"] = p.attributes["memory"]
+                    entry["_sort_price"] = p.price_per_unit
                 available.append(entry)
 
         if include_prices:
-            available.sort(key=lambda x: x.get("price_per_hour", ""))
+            available.sort(key=lambda x: x.pop("_sort_price", Decimal("0")))
+
+        if baseline_region and include_prices:
+            try:
+                apply_baseline_deltas(available, baseline_region)
+            except ValueError as e:
+                return {"error": str(e)}
 
         result: dict[str, Any] = {
             "provider": provider,
@@ -344,10 +402,13 @@ def register_availability_tools(mcp: Any) -> None:
             "available_region_count": len(available),
             "available_regions": available,
         }
+        if baseline_region:
+            result["baseline_region"] = baseline_region
+            result["baseline_region_name"] = region_display_name(provider, baseline_region)
         if scoped:
             result["note"] = (
                 f"Searched {len(search_regions)} major regions. "
-                "Pass the full list from list_regions() for exhaustive coverage."
+                "Pass regions=['all'] to search all available regions (slower on first run)."
             )
         return result
 
