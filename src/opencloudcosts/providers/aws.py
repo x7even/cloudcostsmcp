@@ -345,6 +345,63 @@ class AWSProvider:
     # Public API
     # ------------------------------------------------------------------
 
+    async def _get_spot_price(
+        self, instance_type: str, region: str, os: str = "Linux"
+    ) -> list[NormalizedPrice]:
+        product_desc = "Linux/UNIX" if os == "Linux" else "Windows"
+
+        def _fetch():
+            ec2 = boto3.client("ec2", region_name=region)
+            return ec2.describe_spot_price_history(
+                InstanceTypes=[instance_type],
+                ProductDescriptions=[product_desc],
+                MaxResults=20,
+            )
+
+        try:
+            resp = await asyncio.to_thread(_fetch)
+        except (
+            botocore.exceptions.NoCredentialsError,
+            botocore.exceptions.PartialCredentialsError,
+        ):
+            raise ValueError(
+                "Spot pricing requires AWS credentials. "
+                "Set AWS_PROFILE or AWS_ACCESS_KEY_ID. "
+                "Public spot pricing data is not available."
+            )
+
+        items = resp.get("SpotPriceHistory", [])
+        if not items:
+            return []
+
+        by_az: dict[str, Decimal] = {}
+        for item in items:
+            az = item["AvailabilityZone"]
+            price = Decimal(item["SpotPrice"])
+            if az not in by_az or price < by_az[az]:
+                by_az[az] = price
+
+        cheapest_az = min(by_az, key=lambda az: by_az[az])
+        price = by_az[cheapest_az]
+
+        return [NormalizedPrice(
+            provider=CloudProvider.AWS,
+            service="compute",
+            sku_id=f"{instance_type}-spot",
+            product_family="Compute Instance",
+            region=region,
+            pricing_term=PricingTerm.SPOT,
+            price_per_unit=price,
+            unit=PriceUnit.PER_HOUR,
+            description=f"{instance_type} spot ({cheapest_az})",
+            attributes={
+                "instanceType": instance_type,
+                "availabilityZone": cheapest_az,
+                "allAZPrices": json.dumps({az: str(p) for az, p in by_az.items()}),
+                "operatingSystem": os,
+            },
+        )]
+
     async def get_compute_price(
         self,
         instance_type: str,
@@ -352,6 +409,9 @@ class AWSProvider:
         os: str = "Linux",
         term: PricingTerm = PricingTerm.ON_DEMAND,
     ) -> list[NormalizedPrice]:
+        if term == PricingTerm.SPOT:
+            return await self._get_spot_price(instance_type, region, os)
+
         cache_extras = {"instance_type": instance_type, "os": os, "term": term.value}
         cached = await self._cache.get_prices("aws", "compute", region, cache_extras)
         if cached is not None:

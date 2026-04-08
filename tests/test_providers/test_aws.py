@@ -163,6 +163,65 @@ async def test_bulk_fallback_on_no_credentials(aws_provider: AWSProvider):
     assert prices[0].price_per_unit == Decimal("0.1920000000")
 
 
+# ------------------------------------------------------------------
+# Spot pricing
+# ------------------------------------------------------------------
+
+_SPOT_PRICE_HISTORY_RESPONSE = {
+    "SpotPriceHistory": [
+        {"AvailabilityZone": "us-east-1a", "SpotPrice": "0.0420", "InstanceType": "m5.xlarge", "ProductDescription": "Linux/UNIX"},
+        {"AvailabilityZone": "us-east-1b", "SpotPrice": "0.0380", "InstanceType": "m5.xlarge", "ProductDescription": "Linux/UNIX"},
+        {"AvailabilityZone": "us-east-1a", "SpotPrice": "0.0390", "InstanceType": "m5.xlarge", "ProductDescription": "Linux/UNIX"},
+    ]
+}
+
+
+async def test_get_spot_price_returns_cheapest_az(aws_provider: AWSProvider):
+    """Returns cheapest AZ price; allAZPrices contains all AZ entries."""
+    mock_ec2 = MagicMock()
+    mock_ec2.describe_spot_price_history.return_value = _SPOT_PRICE_HISTORY_RESPONSE
+
+    with patch("boto3.client", return_value=mock_ec2):
+        prices = await aws_provider.get_compute_price("m5.xlarge", "us-east-1", term=PricingTerm.SPOT)
+
+    assert len(prices) == 1
+    p = prices[0]
+    assert p.pricing_term == PricingTerm.SPOT
+    # us-east-1b has the only price 0.0380; us-east-1a min is 0.0390
+    assert p.price_per_unit == Decimal("0.0380")
+    assert p.attributes["availabilityZone"] == "us-east-1b"
+    all_az = json.loads(p.attributes["allAZPrices"])
+    assert "us-east-1a" in all_az
+    assert "us-east-1b" in all_az
+    assert all_az["us-east-1b"] == "0.0380"
+    assert all_az["us-east-1a"] == "0.0390"
+    assert p.provider == CloudProvider.AWS
+    assert p.region == "us-east-1"
+
+
+async def test_get_spot_price_no_credentials_raises_valueerror(aws_provider: AWSProvider):
+    """NoCredentialsError from boto3 becomes a clear ValueError."""
+    import botocore.exceptions
+
+    def raise_no_creds(*args, **kwargs):
+        raise botocore.exceptions.NoCredentialsError()
+
+    with patch("boto3.client", side_effect=raise_no_creds):
+        with pytest.raises(ValueError, match="requires AWS credentials"):
+            await aws_provider.get_compute_price("m5.xlarge", "us-east-1", term=PricingTerm.SPOT)
+
+
+async def test_get_spot_price_empty_response(aws_provider: AWSProvider):
+    """Empty SpotPriceHistory returns empty list."""
+    mock_ec2 = MagicMock()
+    mock_ec2.describe_spot_price_history.return_value = {"SpotPriceHistory": []}
+
+    with patch("boto3.client", return_value=mock_ec2):
+        prices = await aws_provider.get_compute_price("m5.xlarge", "us-east-1", term=PricingTerm.SPOT)
+
+    assert prices == []
+
+
 async def test_bulk_fallback_filters_correctly(aws_provider: AWSProvider):
     """Bulk fallback applies TERM_MATCH filters in-memory."""
     import botocore.exceptions
