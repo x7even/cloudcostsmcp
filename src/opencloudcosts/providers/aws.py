@@ -9,6 +9,7 @@ Effective pricing uses Cost Explorer (`ce` client) — opt-in only due to $0.01/
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from decimal import Decimal
@@ -94,7 +95,7 @@ class AWSProvider:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _get_products(
+    async def _get_products(
         self,
         service_code: str,
         filters: list[dict[str, str]],
@@ -104,9 +105,15 @@ class AWSProvider:
         Return matching price list items, trying boto3 first.
         Falls back to the public bulk pricing HTTPS endpoint if credentials
         are absent — so public pricing works with zero AWS configuration.
+
+        Both paths run in a thread executor so they don't block the event loop,
+        enabling genuine concurrency when fan-out tools (find_cheapest_region)
+        call this across many regions simultaneously.
         """
         try:
-            return self._get_products_boto3(service_code, filters, max_results)
+            return await asyncio.to_thread(
+                self._get_products_boto3, service_code, filters, max_results
+            )
         except (
             botocore.exceptions.NoCredentialsError,
             botocore.exceptions.PartialCredentialsError,
@@ -124,7 +131,9 @@ class AWSProvider:
             # Bulk API uses region codes, not display names
             from opencloudcosts.utils.regions import AWS_DISPLAY_REGION
             region_code = AWS_DISPLAY_REGION.get(region, region)
-            return self._get_products_bulk(service_code, region_code, filters, max_results)
+            return await asyncio.to_thread(
+                self._get_products_bulk, service_code, region_code, filters, max_results
+            )
 
     def _get_products_boto3(
         self,
@@ -312,7 +321,7 @@ class AWSProvider:
         ]
 
         try:
-            raw = self._get_products("AmazonEC2", filters, max_results=10)
+            raw = await self._get_products("AmazonEC2", filters, max_results=10)
         except botocore.exceptions.ClientError as e:
             logger.error("AWS Pricing API error: %s", e)
             raise
@@ -351,7 +360,7 @@ class AWSProvider:
                 {"Field": "location", "Value": display_name},
                 {"Field": "productFamily", "Value": "Storage"},
             ]
-            raw = self._get_products("AmazonEC2", filters, max_results=5)
+            raw = await self._get_products("AmazonEC2", filters, max_results=5)
         else:
             # S3 standard storage as fallback
             filters = [
@@ -359,7 +368,7 @@ class AWSProvider:
                 {"Field": "storageClass", "Value": "General Purpose"},
                 {"Field": "volumeType", "Value": "Standard"},
             ]
-            raw = self._get_products("AmazonS3", filters, max_results=5)
+            raw = await self._get_products("AmazonS3", filters, max_results=5)
 
         prices = []
         for item in raw:
@@ -418,7 +427,7 @@ class AWSProvider:
         if "." in query and not query.startswith("gpu"):
             filters.append({"Field": "instanceType", "Value": query})
 
-        raw = self._get_products("AmazonEC2", filters, max_results=max_results * 3)
+        raw = await self._get_products("AmazonEC2", filters, max_results=max_results * 3)
 
         prices = []
         query_lower = query.lower()
@@ -466,7 +475,7 @@ class AWSProvider:
             # family prefix like "m5", "c6g"
             pass  # we filter post-fetch
 
-        raw = self._get_products("AmazonEC2", filters, max_results=500)
+        raw = await self._get_products("AmazonEC2", filters, max_results=500)
 
         instances: list[InstanceTypeInfo] = []
         seen: set[str] = set()

@@ -73,7 +73,8 @@ Add to your project's `.mcp.json`:
       "command": "uv",
       "args": ["run", "--directory", "/path/to/opencloudcosts", "opencloudcosts"],
       "env": {
-        "AWS_PROFILE": "default"
+        "AWS_PROFILE": "default",
+        "OCC_GCP_API_KEY": "AIza..."
       }
     }
   }

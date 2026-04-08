@@ -5,6 +5,25 @@ import asyncio
 import logging
 from typing import Any
 
+# Default region set for find_cheapest_region when no regions are specified.
+# Querying all ~30 AWS regions cold (no cache) requires downloading ~30 bulk
+# pricing files and will time out. This curated list covers the major
+# commercial regions. Pass explicit regions= to search the full set.
+_AWS_MAJOR_REGIONS = [
+    "us-east-1",       # N. Virginia
+    "us-east-2",       # Ohio
+    "us-west-1",       # N. California
+    "us-west-2",       # Oregon
+    "ca-central-1",    # Canada
+    "eu-west-1",       # Ireland
+    "eu-west-2",       # London
+    "eu-central-1",    # Frankfurt
+    "ap-southeast-1",  # Singapore
+    "ap-southeast-2",  # Sydney
+    "ap-northeast-1",  # Tokyo
+    "ap-south-1",      # Mumbai
+]
+
 from mcp.server.fastmcp import Context
 
 from opencloudcosts.models import PriceComparison, PricingTerm
@@ -164,7 +183,8 @@ def register_availability_tools(mcp: Any) -> None:
             instance_type: Instance type, e.g. "m5.xlarge" or "c5.2xlarge"
             os: Operating system — "Linux" (default) or "Windows"
             term: Pricing term — "on_demand" (default), "reserved_1yr", "reserved_3yr"
-            regions: List of region codes to compare. Omit to compare all available regions.
+            regions: List of region codes to compare. Omit to compare major regions (faster).
+                     Pass ["all"] to search every available region (slow on first run without cache).
         """
         pvdr = ctx.request_context.lifespan_context["providers"].get(provider)
         if pvdr is None:
@@ -175,9 +195,21 @@ def register_availability_tools(mcp: Any) -> None:
         except ValueError:
             return {"error": f"Unknown term '{term}'."}
 
-        # Resolve region list
-        if not regions:
-            regions = await pvdr.list_regions("compute")
+        # Resolve region list — for AWS without an explicit list, default to
+        # major regions to avoid cold-cache timeouts (~30 bulk file downloads).
+        # The caller can pass regions=["all"] or an explicit list for full coverage.
+        all_regions_requested = regions == ["all"]
+        if not regions or all_regions_requested:
+            all_available = await pvdr.list_regions("compute")
+            if provider == "aws" and not all_regions_requested:
+                regions = _AWS_MAJOR_REGIONS
+                scoped_search = True
+            else:
+                regions = all_available
+                scoped_search = False
+        else:
+            scoped_search = False
+            all_available = regions
 
         # Fan out concurrently — throttle to 10 at a time to avoid API rate limits
         semaphore = asyncio.Semaphore(10)
@@ -210,7 +242,7 @@ def register_availability_tools(mcp: Any) -> None:
             f"{instance_type} cheapest region ({provider})", all_prices
         )
 
-        return {
+        result: dict[str, Any] = {
             "provider": provider,
             "instance_type": instance_type,
             "os": os,
@@ -230,6 +262,12 @@ def register_availability_tools(mcp: Any) -> None:
             ],
             "not_available_in": not_available if not_available else None,
         }
+        if scoped_search:
+            result["note"] = (
+                f"Searched {len(regions)} major regions. "
+                "Pass regions=['all'] to search all available regions (slower on first run)."
+            )
+        return result
 
     @mcp.tool()
     async def cache_stats(ctx: Context) -> dict[str, Any]:
