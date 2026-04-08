@@ -33,6 +33,25 @@ _AWS_MAJOR_REGIONS = [
     "ap-south-1",      # Mumbai
 ]
 
+# Default region set for GCP fan-out tools when no regions are specified.
+# Querying all 30+ GCP regions cold (no cache) requires many API calls and
+# will time out. This curated list covers the major commercial regions.
+# Pass regions=["all"] to search the full set.
+_GCP_MAJOR_REGIONS = [
+    "us-central1",          # Iowa
+    "us-east1",             # South Carolina
+    "us-west1",             # Oregon
+    "us-west2",             # Los Angeles
+    "europe-west1",         # Belgium
+    "europe-west2",         # London
+    "europe-west3",         # Frankfurt
+    "europe-west4",         # Netherlands
+    "asia-east1",           # Taiwan
+    "asia-northeast1",      # Tokyo
+    "asia-southeast1",      # Singapore
+    "australia-southeast1", # Sydney
+]
+
 
 def register_availability_tools(mcp: Any) -> None:
 
@@ -221,6 +240,9 @@ def register_availability_tools(mcp: Any) -> None:
             if provider == "aws" and not all_regions_requested:
                 regions = _AWS_MAJOR_REGIONS
                 scoped_search = True
+            elif provider == "gcp" and not all_regions_requested:
+                regions = _GCP_MAJOR_REGIONS
+                scoped_search = True
             else:
                 regions = all_available
                 scoped_search = False
@@ -295,7 +317,7 @@ def register_availability_tools(mcp: Any) -> None:
             result["baseline_region_name"] = region_display_name(provider, baseline_region)
         if scoped_search:
             result["note"] = (
-                f"Searched {len(regions)} major regions. "
+                f"Searched {len(regions)} major {provider.upper()} regions. "
                 "Pass regions=['all'] to search all available regions (slower on first run)."
             )
         return result
@@ -346,6 +368,9 @@ def register_availability_tools(mcp: Any) -> None:
             all_available = await pvdr.list_regions("compute")
             if provider == "aws" and not all_regions_requested:
                 search_regions = _AWS_MAJOR_REGIONS
+                scoped = True
+            elif provider == "gcp" and not all_regions_requested:
+                search_regions = _GCP_MAJOR_REGIONS
                 scoped = True
             else:
                 search_regions = all_available
@@ -407,7 +432,7 @@ def register_availability_tools(mcp: Any) -> None:
             result["baseline_region_name"] = region_display_name(provider, baseline_region)
         if scoped:
             result["note"] = (
-                f"Searched {len(search_regions)} major regions. "
+                f"Searched {len(search_regions)} major {provider.upper()} regions. "
                 "Pass regions=['all'] to search all available regions (slower on first run)."
             )
         return result

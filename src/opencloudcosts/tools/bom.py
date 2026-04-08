@@ -34,6 +34,7 @@ def register_bom_tools(mcp: Any) -> None:
           - hours_per_month: hours/month for compute (default 730 = always-on)
           - term: pricing term (default "on_demand")
           - description: optional label for this line item
+          - os: "Linux" (default) or "Windows"
 
         Example items:
           [
@@ -57,6 +58,7 @@ def register_bom_tools(mcp: Any) -> None:
                 term_str = item.get("term", "on_demand")
                 description = item.get("description") or f"{resource_type} ({region})"
                 size_gb = float(item.get("size_gb", 100.0))
+                os_type = item.get("os", "Linux")
 
                 pvdr = providers.get(provider_name)
                 if pvdr is None:
@@ -66,7 +68,7 @@ def register_bom_tools(mcp: Any) -> None:
                 pricing_term = PricingTerm(term_str)
 
                 if service == "compute":
-                    prices = await pvdr.get_compute_price(resource_type, region, "Linux", pricing_term)
+                    prices = await pvdr.get_compute_price(resource_type, region, os_type, pricing_term)
                 elif service == "storage":
                     prices = await pvdr.get_storage_price(resource_type, region, size_gb)
                 elif service == "database":
@@ -142,7 +144,8 @@ def register_bom_tools(mcp: Any) -> None:
         given a Bill of Materials and expected monthly usage volume.
 
         Args:
-            items: Same format as estimate_bom — list of cloud resource items
+            items: Same format as estimate_bom — list of cloud resource items.
+                Each compute item may include os: "Linux" (default) or "Windows".
             units_per_month: Monthly volume of the unit being measured (e.g. 10000 users)
             unit_label: What the unit represents — "user", "request", "transaction", etc.
 
@@ -165,6 +168,7 @@ def register_bom_tools(mcp: Any) -> None:
                 term_str = item.get("term", "on_demand")
                 description = item.get("description") or f"{resource_type} ({region})"
                 size_gb = float(item.get("size_gb", 100.0))
+                os_type = item.get("os", "Linux")
 
                 pvdr = providers.get(provider_name)
                 if pvdr is None:
@@ -174,7 +178,7 @@ def register_bom_tools(mcp: Any) -> None:
                 pricing_term = PricingTerm(term_str)
 
                 if service == "compute":
-                    prices = await pvdr.get_compute_price(resource_type, region, "Linux", pricing_term)
+                    prices = await pvdr.get_compute_price(resource_type, region, os_type, pricing_term)
                 elif service == "storage":
                     prices = await pvdr.get_storage_price(resource_type, region, size_gb)
                 elif service == "database":

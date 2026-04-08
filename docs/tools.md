@@ -62,6 +62,36 @@ Get block or object storage pricing in a region.
 
 ---
 
+### `get_database_price`
+
+Get pricing for a managed database instance (RDS).
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `provider` | string | ✓ | `"aws"` (GCP in Phase 4) |
+| `instance_type` | string | ✓ | e.g. `"db.r5.large"`, `"db.t4g.micro"` |
+| `region` | string | ✓ | Region code |
+| `engine` | string | | `"MySQL"` (default), `"PostgreSQL"`, `"MariaDB"`, `"Oracle"`, `"SQLServer"`, `"Aurora-MySQL"`, `"Aurora-PostgreSQL"` |
+| `deployment` | string | | `"single-az"` (default) or `"multi-az"` |
+| `term` | string | | `"on_demand"` (default), `"reserved_1yr"`, `"reserved_3yr"` |
+
+**Example response:**
+```json
+{
+  "provider": "aws",
+  "instance_type": "db.r5.large",
+  "engine": "MySQL",
+  "deployment": "single-az",
+  "term": "on_demand",
+  "region": "us-east-1",
+  "region_name": "US East (N. Virginia)",
+  "price_per_hour": "$0.240000",
+  "monthly_estimate": "$175.20/mo"
+}
+```
+
+---
+
 ### `get_service_price`
 
 **Generic pricing for any AWS service** — CloudWatch, data transfer, RDS, Lambda, ELB, CloudFront, Route53, DynamoDB, EFS, ElastiCache, and 250+ others.
@@ -260,7 +290,7 @@ Find the cheapest region for an instance type across all (or specified) regions.
 | `instance_type` | string | ✓ | e.g. `"m5.xlarge"` |
 | `os` | string | | `"Linux"` (default) or `"Windows"` |
 | `term` | string | | `"on_demand"` (default), `"reserved_1yr"`, `"reserved_3yr"` |
-| `regions` | list[string] | | Regions to compare. Omit for major regions (faster). Pass `["all"]` for exhaustive. |
+| `regions` | list[string] | | Regions to compare. Omit to use 12 major regions for AWS or GCP (faster on first run). Pass `["all"]` for exhaustive search across all available regions (slower without cache). |
 | `baseline_region` | string | | Region for delta comparison, e.g. `"us-east-1"` |
 
 ---
@@ -276,7 +306,7 @@ Find every region where an instance type is available, with prices, region names
 | `os` | string | | `"Linux"` (default) or `"Windows"` |
 | `term` | string | | `"on_demand"` (default), `"reserved_1yr"`, `"spot"` |
 | `include_prices` | bool | | Include per-hour price (default `true`) |
-| `regions` | list[string] | | Regions to search. Omit for major regions. Pass `["all"]` for exhaustive. |
+| `regions` | list[string] | | Regions to search. Omit to use 12 major regions for AWS or GCP (faster on first run). Pass `["all"]` for exhaustive search across all available regions (slower without cache). |
 | `baseline_region` | string | | Region for delta comparison, e.g. `"us-east-1"` |
 
 **Example — find all regions for c6a.xlarge with us-east-1 deltas:**
@@ -310,6 +340,7 @@ Calculate Total Cost of Ownership for a Bill of Materials.
 | `term` | `"on_demand"` | Pricing term |
 | `description` | | Human-readable label |
 | `size_gb` | `100` | For storage items |
+| `os` | `"Linux"` | Operating system — `"Linux"` (default) or `"Windows"` |
 
 **Example response:**
 ```json

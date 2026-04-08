@@ -287,6 +287,109 @@ def register_lookup_tools(mcp: Any) -> None:
         }
 
     @mcp.tool()
+    async def get_database_price(
+        ctx: Context,
+        provider: str,
+        instance_type: str,
+        region: str,
+        engine: str = "MySQL",
+        deployment: str = "single-az",
+        term: str = "on_demand",
+    ) -> dict[str, Any]:
+        """
+        Get the price for a managed database instance (RDS on AWS).
+
+        A dedicated, LLM-friendly tool for database pricing. Handles engine name
+        normalization, Multi-AZ vs Single-AZ mapping, and RDS filter attribute names
+        automatically — no need to know AWS RDS filter keys.
+
+        Supported engines: MySQL, PostgreSQL, MariaDB, Oracle, SQLServer,
+        Aurora-MySQL, Aurora-PostgreSQL.
+
+        Args:
+            provider: Cloud provider — "aws" (GCP Cloud SQL planned for Phase 4)
+            instance_type: DB instance type, e.g. "db.r5.large", "db.t4g.micro"
+            region: Region code, e.g. "us-east-1"
+            engine: Database engine — "MySQL" (default), "PostgreSQL", "MariaDB",
+                    "Oracle", "SQLServer", "Aurora-MySQL", "Aurora-PostgreSQL"
+            deployment: "single-az" (default) or "multi-az"
+            term: Pricing term — "on_demand" (default), "reserved_1yr", "reserved_3yr"
+        """
+        _RDS_ENGINE_MAP = {
+            "mysql": "MySQL",
+            "postgresql": "PostgreSQL",
+            "postgres": "PostgreSQL",
+            "mariadb": "MariaDB",
+            "oracle": "Oracle",
+            "sqlserver": "SQL Server",
+            "aurora-mysql": "Aurora MySQL",
+            "aurora-postgresql": "Aurora PostgreSQL",
+            "aurora-postgres": "Aurora PostgreSQL",
+        }
+
+        pvdr = _providers(ctx).get(provider)
+        if pvdr is None:
+            return {"error": f"Provider '{provider}' not configured."}
+
+        if provider == "gcp":
+            return {
+                "error": (
+                    "GCP database pricing (Cloud SQL) is planned for Phase 4. "
+                    "For GCP compute-equivalent sizing, use get_compute_price(provider='gcp', ...)."
+                )
+            }
+
+        if not hasattr(pvdr, "get_service_price"):
+            return {"error": f"Provider '{provider}' does not support database pricing."}
+
+        engine_normalized = _RDS_ENGINE_MAP.get(engine.lower(), engine)
+        deployment_option = "Multi-AZ" if deployment.lower() == "multi-az" else "Single-AZ"
+
+        filters: dict[str, str] = {
+            "instanceType": instance_type,
+            "databaseEngine": engine_normalized,
+            "deploymentOption": deployment_option,
+        }
+
+        if term.startswith("reserved"):
+            filters["termType"] = "Reserved"
+            filters["leaseContractLength"] = "1yr" if "1yr" in term else "3yr"
+            filters["purchaseOption"] = "No Upfront"
+
+        try:
+            prices = await pvdr.get_service_price("rds", region, filters, max_results=5)
+        except Exception as e:
+            logger.error("get_database_price error: %s", e)
+            return {"error": f"API error: {e}"}
+
+        if not prices:
+            return {
+                "result": "no_prices_found",
+                "message": (
+                    f"No pricing found for {instance_type} ({engine_normalized}, "
+                    f"{deployment_option}) in {region}."
+                ),
+                "tip": (
+                    "Check instance_type format (e.g. 'db.r5.large'), "
+                    "engine name, and region."
+                ),
+            }
+
+        from opencloudcosts.utils.regions import region_display_name as _rdn
+        p = prices[0]
+        return {
+            "provider": provider,
+            "instance_type": instance_type,
+            "engine": engine_normalized,
+            "deployment": deployment,
+            "term": term,
+            "region": region,
+            "region_name": _rdn(provider, region),
+            "price_per_hour": f"${p.price_per_unit:.6f}",
+            "monthly_estimate": f"${p.monthly_cost:.2f}/mo",
+        }
+
+    @mcp.tool()
     async def get_service_price(
         ctx: Context,
         provider: str,
