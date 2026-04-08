@@ -1,7 +1,10 @@
 """
 AWS cloud pricing provider.
 
-Public pricing uses boto3 `pricing` client (no auth needed beyond a valid endpoint).
+Public pricing: uses boto3 `pricing` client when AWS credentials are available,
+otherwise falls back to the public AWS bulk pricing HTTPS endpoints (no credentials
+needed) via httpx. All public pricing tools work credential-free.
+
 Effective pricing uses Cost Explorer (`ce` client) — opt-in only due to $0.01/call cost.
 """
 from __future__ import annotations
@@ -13,6 +16,7 @@ from typing import Any
 
 import boto3
 import botocore.exceptions
+import httpx
 
 from cloudcostmcp.cache import CacheManager
 from cloudcostmcp.config import Settings
@@ -48,6 +52,19 @@ _RESERVED_FILTERS: dict[PricingTerm, dict[str, str]] = {
 }
 
 
+# Public bulk pricing — no credentials required
+# Per-region index is ~5-15 MB gzipped; we cache parsed results in SQLite.
+_BULK_BASE = "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws"
+_BULK_URL = "{base}/{service}/current/{region}/index.json"
+
+# Service code -> bulk offer code
+_BULK_SERVICE: dict[str, str] = {
+    "AmazonEC2": "AmazonEC2",
+    "AmazonS3": "AmazonS3",
+    "AmazonRDS": "AmazonRDS",
+}
+
+
 def _boto_session(settings: Settings) -> boto3.Session:
     kwargs: dict[str, Any] = {}
     if settings.aws_profile:
@@ -62,7 +79,8 @@ class AWSProvider:
         self._settings = settings
         self._cache = cache
         session = _boto_session(settings)
-        # Pricing API is only available in us-east-1
+        # Pricing client — only used when credentials are present.
+        # Falls back to httpx bulk API automatically on NoCredentialsError.
         self._pricing = session.client("pricing", region_name=_PRICING_REGION)
         self._ce: Any = None          # lazy — only create if Cost Explorer enabled
         self._sp: Any = None          # Savings Plans API client
@@ -82,7 +100,39 @@ class AWSProvider:
         filters: list[dict[str, str]],
         max_results: int = 100,
     ) -> list[dict[str, Any]]:
-        """Paginate get_products and return parsed price list items."""
+        """
+        Return matching price list items, trying boto3 first.
+        Falls back to the public bulk pricing HTTPS endpoint if credentials
+        are absent — so public pricing works with zero AWS configuration.
+        """
+        try:
+            return self._get_products_boto3(service_code, filters, max_results)
+        except (
+            botocore.exceptions.NoCredentialsError,
+            botocore.exceptions.PartialCredentialsError,
+        ):
+            logger.info(
+                "No AWS credentials — falling back to public bulk pricing API for %s",
+                service_code,
+            )
+            # Extract region from filters for the bulk URL
+            region = next(
+                (f["Value"] for f in filters if f["Field"] == "location"), None
+            )
+            if region is None:
+                return []
+            # Bulk API uses region codes, not display names
+            from cloudcostmcp.utils.regions import AWS_DISPLAY_REGION
+            region_code = AWS_DISPLAY_REGION.get(region, region)
+            return self._get_products_bulk(service_code, region_code, filters, max_results)
+
+    def _get_products_boto3(
+        self,
+        service_code: str,
+        filters: list[dict[str, str]],
+        max_results: int,
+    ) -> list[dict[str, Any]]:
+        """Fetch via boto3 pricing client (requires credentials)."""
         paginator = self._pricing.get_paginator("get_products")
         boto_filters = [
             {"Type": "TERM_MATCH", "Field": f["Field"], "Value": f["Value"]}
@@ -99,6 +149,62 @@ class AWSProvider:
                 results.append(json.loads(item_str))
                 if len(results) >= max_results:
                     return results
+        return results
+
+    def _get_products_bulk(
+        self,
+        service_code: str,
+        region_code: str,
+        filters: list[dict[str, str]],
+        max_results: int,
+    ) -> list[dict[str, Any]]:
+        """
+        Fetch from the public bulk pricing JSON (no credentials needed).
+        Downloads the per-region index, then filters in-memory to match
+        the same fields that would have been used in TERM_MATCH filters.
+        """
+        url = _BULK_URL.format(
+            base=_BULK_BASE,
+            service=_BULK_SERVICE.get(service_code, service_code),
+            region=region_code,
+        )
+        logger.debug("Bulk pricing fetch: %s", url)
+        try:
+            resp = httpx.get(url, timeout=60, follow_redirects=True)
+            resp.raise_for_status()
+            data = resp.json()
+        except httpx.HTTPError as e:
+            logger.error("Bulk pricing HTTP error for %s/%s: %s", service_code, region_code, e)
+            return []
+
+        products = data.get("products", {})
+        terms_data = data.get("terms", {})
+
+        # Build filter map from non-location fields (location is implicit from URL)
+        field_filters = {
+            f["Field"]: f["Value"]
+            for f in filters
+            if f["Field"] != "location"
+        }
+
+        results: list[dict[str, Any]] = []
+        for sku, product in products.items():
+            attrs = product.get("attributes", {})
+            # Apply all TERM_MATCH filters
+            if not all(attrs.get(k) == v for k, v in field_filters.items()):
+                continue
+
+            # Reconstruct the same shape get_products returns
+            item: dict[str, Any] = {"product": product, "terms": {}}
+            for term_type in ("OnDemand", "Reserved"):
+                term_skus = terms_data.get(term_type, {}).get(sku, {})
+                if term_skus:
+                    item["terms"][term_type] = term_skus
+
+            results.append(item)
+            if len(results) >= max_results:
+                break
+
         return results
 
     @staticmethod

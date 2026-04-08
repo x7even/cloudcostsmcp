@@ -124,3 +124,76 @@ async def test_list_instance_types(aws_provider: AWSProvider):
     assert instances[0].instance_type == "m5.xlarge"
     assert instances[0].vcpu == 4
     assert instances[0].memory_gb == 16.0
+
+
+# ------------------------------------------------------------------
+# Credential-free bulk API fallback
+# ------------------------------------------------------------------
+
+# Minimal bulk index JSON matching the public pricing file format
+_BULK_INDEX = {
+    "products": {
+        "JRTCKXETXF8Z6NMQ": _M5_XLARGE_PRICE_ITEM["product"],
+    },
+    "terms": {
+        "OnDemand": {
+            "JRTCKXETXF8Z6NMQ": _M5_XLARGE_PRICE_ITEM["terms"]["OnDemand"],
+        }
+    },
+}
+
+
+async def test_bulk_fallback_on_no_credentials(aws_provider: AWSProvider):
+    """When boto3 raises NoCredentialsError, _get_products falls back to httpx bulk API."""
+    import botocore.exceptions
+    import httpx
+
+    def raise_no_creds(*args, **kwargs):
+        raise botocore.exceptions.NoCredentialsError()
+
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json.return_value = _BULK_INDEX
+
+    with patch.object(aws_provider, "_get_products_boto3", side_effect=raise_no_creds):
+        with patch("httpx.get", return_value=mock_response):
+            prices = await aws_provider.get_compute_price("m5.xlarge", "us-east-1")
+
+    assert len(prices) == 1
+    assert prices[0].price_per_unit == Decimal("0.1920000000")
+
+
+async def test_bulk_fallback_filters_correctly(aws_provider: AWSProvider):
+    """Bulk fallback applies TERM_MATCH filters in-memory."""
+    import botocore.exceptions
+
+    # Add a second product that should NOT match (different instance type)
+    bulk_with_extra = json.loads(json.dumps(_BULK_INDEX))
+    bulk_with_extra["products"]["DIFFERENTSKU"] = {
+        "sku": "DIFFERENTSKU",
+        "productFamily": "Compute Instance",
+        "attributes": {
+            "instanceType": "c5.xlarge",   # different — should be filtered out
+            "vcpu": "4",
+            "memory": "8 GiB",
+            "operatingSystem": "Linux",
+            "tenancy": "Shared",
+            "preInstalledSw": "NA",
+            "capacitystatus": "Used",
+        },
+    }
+
+    def raise_no_creds(*args, **kwargs):
+        raise botocore.exceptions.NoCredentialsError()
+
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json.return_value = bulk_with_extra
+
+    with patch.object(aws_provider, "_get_products_boto3", side_effect=raise_no_creds):
+        with patch("httpx.get", return_value=mock_response):
+            prices = await aws_provider.get_compute_price("m5.xlarge", "us-east-1")
+
+    # Should only return m5.xlarge, not c5.xlarge
+    assert len(prices) == 1
+    assert prices[0].attributes["instanceType"] == "m5.xlarge"
