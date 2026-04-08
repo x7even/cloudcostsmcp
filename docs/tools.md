@@ -33,7 +33,20 @@ Get the price for a specific compute instance type in a cloud region.
 | `instance_type` | string | ✓ | e.g. `"m5.xlarge"`, `"n2-standard-4"` |
 | `region` | string | ✓ | Region code, e.g. `"us-east-1"` |
 | `os` | string | | `"Linux"` (default) or `"Windows"` |
-| `term` | string | | `"on_demand"` (default), `"reserved_1yr"`, `"reserved_3yr"`, `"spot"` |
+| `term` | string | | Pricing term — see table below (default: `"on_demand"`) |
+
+**Valid `term` values for `get_compute_price`:**
+
+| Value | Description |
+|-------|-------------|
+| `on_demand` | On-demand (default) |
+| `reserved_1yr` | 1-year No Upfront RI |
+| `reserved_1yr_partial` | 1-year Partial Upfront RI |
+| `reserved_1yr_all` | 1-year All Upfront RI (normalised to effective hourly) |
+| `reserved_3yr` | 3-year No Upfront RI |
+| `reserved_3yr_partial` | 3-year Partial Upfront RI |
+| `reserved_3yr_all` | 3-year All Upfront RI (normalised to effective hourly) |
+| `spot` | Spot instance (requires credentials) |
 
 **Example response:**
 ```json
@@ -289,7 +302,7 @@ Find the cheapest region for an instance type across all (or specified) regions.
 | `provider` | string | ✓ | `"aws"` or `"gcp"` |
 | `instance_type` | string | ✓ | e.g. `"m5.xlarge"` |
 | `os` | string | | `"Linux"` (default) or `"Windows"` |
-| `term` | string | | `"on_demand"` (default), `"reserved_1yr"`, `"reserved_3yr"` |
+| `term` | string | | `"on_demand"` (default), `"reserved_1yr"`, `"reserved_1yr_partial"`, `"reserved_1yr_all"`, `"reserved_3yr"`, `"reserved_3yr_partial"`, `"reserved_3yr_all"` |
 | `regions` | list[string] | | Regions to compare. Omit to use 12 major regions for AWS or GCP (faster on first run). Pass `["all"]` for exhaustive search across all available regions (slower without cache). |
 | `baseline_region` | string | | Region for delta comparison, e.g. `"us-east-1"` |
 
