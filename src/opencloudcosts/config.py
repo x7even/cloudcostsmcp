@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     cache_ttl_hours: int = 24
     metadata_ttl_days: int = 7
     effective_price_ttl_hours: int = 1
+    spot_cache_ttl_minutes: int = Field(default=5, description="TTL for spot price cache entries in minutes")
     default_currency: str = "USD"
     default_regions: list[str] = ["us-east-1", "us-west-2"]
     max_results: int = 20
