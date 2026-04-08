@@ -7,12 +7,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from cloudcostmcp.cache import CacheManager
-from cloudcostmcp.config import Settings
-from cloudcostmcp.models import CloudProvider, PriceUnit, PricingTerm
-from cloudcostmcp.providers.base import NotConfiguredError
-from cloudcostmcp.providers.gcp import GCPProvider
-from cloudcostmcp.utils.gcp_specs import parse_instance_type, get_machine_family
+from opencloudcosts.cache import CacheManager
+from opencloudcosts.config import Settings
+from opencloudcosts.models import CloudProvider, PriceUnit, PricingTerm
+from opencloudcosts.providers.base import NotConfiguredError
+from opencloudcosts.providers.gcp import GCPProvider
+from opencloudcosts.utils.gcp_specs import parse_instance_type, get_machine_family
 
 
 # ---------------------------------------------------------------------------

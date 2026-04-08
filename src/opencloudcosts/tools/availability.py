@@ -7,7 +7,7 @@ from typing import Any
 
 from mcp.server.fastmcp import Context
 
-from cloudcostmcp.models import PriceComparison, PricingTerm
+from opencloudcosts.models import PriceComparison, PricingTerm
 
 logger = logging.getLogger(__name__)
 

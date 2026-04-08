@@ -6,8 +6,8 @@ from typing import Any
 
 from mcp.server.fastmcp import Context
 
-from cloudcostmcp.models import PriceComparison, PricingTerm
-from cloudcostmcp.providers.base import NotConfiguredError
+from opencloudcosts.models import PriceComparison, PricingTerm
+from opencloudcosts.providers.base import NotConfiguredError
 
 logger = logging.getLogger(__name__)
 
@@ -241,7 +241,7 @@ def register_lookup_tools(mcp: Any) -> None:
         (Reserved Instances, Savings Plans, Committed Use Discounts, EDP).
 
         Requires cloud provider credentials with Cost Explorer (AWS) or billing export (GCP) access.
-        For AWS, also requires CLOUDCOSTMCP_AWS_ENABLE_COST_EXPLORER=true (note: costs $0.01/call).
+        For AWS, also requires OCC_AWS_ENABLE_COST_EXPLORER=true (note: costs $0.01/call).
 
         Args:
             provider: Cloud provider — "aws" or "gcp"
@@ -294,7 +294,7 @@ def register_lookup_tools(mcp: Any) -> None:
         active Reserved Instances (instance type, count, offering type, days remaining),
         plus utilization metrics from Cost Explorer for the previous month.
 
-        Requires credentials and CLOUDCOSTMCP_AWS_ENABLE_COST_EXPLORER=true for AWS.
+        Requires credentials and OCC_AWS_ENABLE_COST_EXPLORER=true for AWS.
 
         Args:
             provider: Cloud provider — "aws" (GCP support coming in Phase 4)
@@ -306,7 +306,7 @@ def register_lookup_tools(mcp: Any) -> None:
         try:
             return await pvdr.get_discount_summary()
         except NotConfiguredError as e:
-            return {"error": str(e), "hint": "Set CLOUDCOSTMCP_AWS_ENABLE_COST_EXPLORER=true and configure AWS credentials."}
+            return {"error": str(e), "hint": "Set OCC_AWS_ENABLE_COST_EXPLORER=true and configure AWS credentials."}
         except Exception as e:
             logger.error("get_discount_summary error: %s", e)
             return {"error": f"API error: {e}"}

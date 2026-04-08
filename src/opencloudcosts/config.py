@@ -8,14 +8,14 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_prefix="CLOUDCOSTMCP_",
+        env_prefix="OCC_",
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
     )
 
     # General
-    cache_dir: Path = Path.home() / ".cache" / "cloudcostmcp"
+    cache_dir: Path = Path.home() / ".cache" / "opencloudcosts"
     cache_ttl_hours: int = 24
     metadata_ttl_days: int = 7
     effective_price_ttl_hours: int = 1

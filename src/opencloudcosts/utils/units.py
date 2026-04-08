@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from cloudcostmcp.models import PriceUnit
+from opencloudcosts.models import PriceUnit
 
 # AWS Pricing API unit strings -> our PriceUnit enum
 AWS_UNIT_MAP: dict[str, PriceUnit] = {

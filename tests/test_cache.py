@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from cloudcostmcp.cache import CacheManager
+from opencloudcosts.cache import CacheManager
 
 
 @pytest.fixture

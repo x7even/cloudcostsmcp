@@ -1,16 +1,16 @@
-# CloudCost MCP — Tool Reference
+# OpenCloudCosts — Tool Reference
 
 ## Provider Notes
 
 ### AWS
 - Instance types: `m5.xlarge`, `c6g.2xlarge`, `r5.4xlarge`, etc.
 - Regions: `us-east-1`, `ap-southeast-2`, `eu-west-1`, etc. (use `list_regions` for full list)
-- Public pricing works with no credentials. Cost Explorer requires `CLOUDCOSTMCP_AWS_ENABLE_COST_EXPLORER=true`.
+- Public pricing works with no credentials. Cost Explorer requires `OCC_AWS_ENABLE_COST_EXPLORER=true`.
 
 ### GCP
 - Instance types: `n2-standard-4`, `e2-standard-8`, `c2-standard-16`, etc.
 - Regions: `us-central1`, `us-east1`, `europe-west1`, `asia-southeast1`, etc.
-- Requires a GCP API key (`CLOUDCOSTMCP_GCP_API_KEY`) or Application Default Credentials (`gcloud auth application-default login`).
+- Requires a GCP API key (`OCC_GCP_API_KEY`) or Application Default Credentials (`gcloud auth application-default login`).
 - Pricing works by combining per-vCPU and per-GB-RAM SKUs: `total = vcpus × cpu_price + memory_gb × ram_price`
 - CUD (Committed Use Discount) pricing available via `term="cud_1yr"` or `term="cud_3yr"`
 - Supported machine families: `e2`, `n1`, `n2`, `n2d`, `c2`, `c2d`, `t2d`, `t2a`, `m1`
@@ -124,7 +124,7 @@ Free-text search across the pricing catalog. Useful for exploring instance famil
 
 Get effective pricing reflecting actual account discounts (Reserved Instances, Savings Plans, CUDs, EDPs). Returns the effective hourly rate and % discount vs on-demand.
 
-**Requires:** AWS credentials + `CLOUDCOSTMCP_AWS_ENABLE_COST_EXPLORER=true` (costs $0.01/call)
+**Requires:** AWS credentials + `OCC_AWS_ENABLE_COST_EXPLORER=true` (costs $0.01/call)
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -159,7 +159,7 @@ Get effective pricing reflecting actual account discounts (Reserved Instances, S
 
 Summarise all active discounts in the AWS account: Savings Plans, Reserved Instances, and utilization metrics.
 
-**Requires:** AWS credentials + `CLOUDCOSTMCP_AWS_ENABLE_COST_EXPLORER=true`
+**Requires:** AWS credentials + `OCC_AWS_ENABLE_COST_EXPLORER=true`
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|

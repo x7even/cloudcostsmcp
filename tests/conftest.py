@@ -8,8 +8,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from cloudcostmcp.cache import CacheManager
-from cloudcostmcp.config import Settings
+from opencloudcosts.cache import CacheManager
+from opencloudcosts.config import Settings
 
 
 @pytest.fixture

@@ -1,6 +1,8 @@
-# CloudCost MCP Server
+# OpenCloudCosts MCP
 
-An MCP server that gives AI assistants accurate cloud pricing data for AWS (and GCP in Phase 3).
+An open source MCP server that gives AI assistants accurate cloud pricing data for AWS and GCP.
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Supports both **public list pricing** (no credentials needed) and **effective/bespoke pricing** (post-discount: Reserved Instances, Savings Plans, CUDs, EDPs).
 
@@ -42,8 +44,8 @@ See [docs/tools.md](docs/tools.md) for full parameter reference and [docs/finops
 ### Clone & configure
 
 ```bash
-git clone <repo> cloudcostmcp
-cd cloudcostmcp
+git clone https://github.com/x7even/cloudcostsmcp opencloudcosts
+cd opencloudcosts
 cp .env.example .env
 # Edit .env if you want effective pricing / Cost Explorer
 ```
@@ -57,7 +59,7 @@ uv run pytest
 ### Run the server
 
 ```bash
-uv run cloudcostmcp
+uv run opencloudcosts
 ```
 
 ### Connect to Claude Code
@@ -69,7 +71,7 @@ Add to your project's `.mcp.json`:
   "mcpServers": {
     "cloudcost": {
       "command": "uv",
-      "args": ["run", "--directory", "/path/to/cloudcostmcp", "cloudcostmcp"],
+      "args": ["run", "--directory", "/path/to/opencloudcosts", "opencloudcosts"],
       "env": {
         "AWS_PROFILE": "default"
       }
@@ -85,7 +87,7 @@ Or to `~/.claude/settings.json` for global access:
   "mcpServers": {
     "cloudcost": {
       "command": "uv",
-      "args": ["run", "--directory", "/path/to/cloudcostmcp", "cloudcostmcp"]
+      "args": ["run", "--directory", "/path/to/opencloudcosts", "opencloudcosts"]
     }
   }
 }
@@ -94,7 +96,7 @@ Or to `~/.claude/settings.json` for global access:
 ### Test with MCP Inspector
 
 ```bash
-npx @modelcontextprotocol/inspector uv run --directory /path/to/cloudcostmcp cloudcostmcp
+npx @modelcontextprotocol/inspector uv run --directory /path/to/opencloudcosts opencloudcosts
 ```
 
 ## AWS Credentials
@@ -102,7 +104,7 @@ npx @modelcontextprotocol/inspector uv run --directory /path/to/cloudcostmcp clo
 | Feature | Credentials needed |
 |---------|--------------------|
 | Public pricing (EC2, EBS, RDS list prices) | None |
-| Effective pricing (RI / SP discounts) | AWS credentials + `CLOUDCOSTMCP_AWS_ENABLE_COST_EXPLORER=true` |
+| Effective pricing (RI / SP discounts) | AWS credentials + `OCC_AWS_ENABLE_COST_EXPLORER=true` |
 
 Minimal IAM policy for public pricing:
 ```json
@@ -120,18 +122,18 @@ Add these for effective pricing:
 
 ## Configuration
 
-All settings via environment variables (prefix `CLOUDCOSTMCP_`) or `.env` file:
+All settings via environment variables (prefix `OCC_`) or `.env` file:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CLOUDCOSTMCP_CACHE_TTL_HOURS` | 24 | Public price cache TTL |
-| `CLOUDCOSTMCP_AWS_ENABLE_COST_EXPLORER` | false | Enable effective pricing (costs $0.01/call) |
-| `CLOUDCOSTMCP_DEFAULT_REGIONS` | us-east-1,us-west-2 | Default regions |
+| `OCC_CACHE_TTL_HOURS` | 24 | Public price cache TTL |
+| `OCC_AWS_ENABLE_COST_EXPLORER` | false | Enable effective pricing (costs $0.01/call) |
+| `OCC_DEFAULT_REGIONS` | us-east-1,us-west-2 | Default regions |
 | `AWS_PROFILE` | (default chain) | AWS credentials profile |
 
 ## Caching
 
-Prices are cached in SQLite at `~/.cache/cloudcostmcp/pricing.db`. Public list prices are cached for 24 hours — AWS pricing changes infrequently. Use the `refresh_cache` tool to force a refresh.
+Prices are cached in SQLite at `~/.cache/opencloudcosts/pricing.db`. Public list prices are cached for 24 hours — AWS pricing changes infrequently. Use the `refresh_cache` tool to force a refresh.
 
 ## GCP Setup
 
@@ -140,7 +142,7 @@ GCP pricing requires authentication. Either:
 **Option A — API key** (simplest, no service account needed):
 ```bash
 # Create an API key in GCP Console -> APIs & Services -> Credentials
-export CLOUDCOSTMCP_GCP_API_KEY=AIza...
+export OCC_GCP_API_KEY=AIza...
 ```
 
 **Option B — Application Default Credentials**:

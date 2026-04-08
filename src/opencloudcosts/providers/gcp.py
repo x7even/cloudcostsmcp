@@ -18,9 +18,9 @@ from typing import Any
 
 import httpx
 
-from cloudcostmcp.cache import CacheManager
-from cloudcostmcp.config import Settings
-from cloudcostmcp.models import (
+from opencloudcosts.cache import CacheManager
+from opencloudcosts.config import Settings
+from opencloudcosts.models import (
     CloudProvider,
     EffectivePrice,
     InstanceTypeInfo,
@@ -28,16 +28,16 @@ from cloudcostmcp.models import (
     PriceUnit,
     PricingTerm,
 )
-from cloudcostmcp.providers.base import NotConfiguredError
-from cloudcostmcp.utils.gcp_specs import (
+from opencloudcosts.providers.base import NotConfiguredError
+from opencloudcosts.utils.gcp_specs import (
     GCP_FAMILY_SKU,
     GCP_INSTANCE_SPECS,
     GCP_STORAGE_SKU,
     get_machine_family,
     parse_instance_type,
 )
-from cloudcostmcp.utils.regions import list_gcp_regions
-from cloudcostmcp.utils.units import gcp_money_to_decimal
+from opencloudcosts.utils.regions import list_gcp_regions
+from opencloudcosts.utils.units import gcp_money_to_decimal
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +78,7 @@ class GCPProvider:
                     headers["Authorization"] = f"Bearer {creds.token}"
                 except ImportError:
                     raise NotConfiguredError(
-                        "GCP authentication not configured. Set CLOUDCOSTMCP_GCP_API_KEY "
+                        "GCP authentication not configured. Set OCC_GCP_API_KEY "
                         "or install google-auth and configure Application Default Credentials "
                         "(run: gcloud auth application-default login)."
                     )

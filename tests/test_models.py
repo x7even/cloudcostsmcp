@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from cloudcostmcp.models import (
+from opencloudcosts.models import (
     BomEstimate,
     BomLineItem,
     CloudProvider,

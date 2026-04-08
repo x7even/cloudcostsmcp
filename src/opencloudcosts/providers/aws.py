@@ -18,9 +18,9 @@ import boto3
 import botocore.exceptions
 import httpx
 
-from cloudcostmcp.cache import CacheManager
-from cloudcostmcp.config import Settings
-from cloudcostmcp.models import (
+from opencloudcosts.cache import CacheManager
+from opencloudcosts.config import Settings
+from opencloudcosts.models import (
     CloudProvider,
     EffectivePrice,
     InstanceTypeInfo,
@@ -28,9 +28,9 @@ from cloudcostmcp.models import (
     PriceUnit,
     PricingTerm,
 )
-from cloudcostmcp.providers.base import NotConfiguredError
-from cloudcostmcp.utils.regions import aws_region_to_display, list_aws_regions
-from cloudcostmcp.utils.units import parse_aws_unit
+from opencloudcosts.providers.base import NotConfiguredError
+from opencloudcosts.utils.regions import aws_region_to_display, list_aws_regions
+from opencloudcosts.utils.units import parse_aws_unit
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +122,7 @@ class AWSProvider:
             if region is None:
                 return []
             # Bulk API uses region codes, not display names
-            from cloudcostmcp.utils.regions import AWS_DISPLAY_REGION
+            from opencloudcosts.utils.regions import AWS_DISPLAY_REGION
             region_code = AWS_DISPLAY_REGION.get(region, region)
             return self._get_products_bulk(service_code, region_code, filters, max_results)
 
@@ -547,7 +547,7 @@ class AWSProvider:
     ) -> list[EffectivePrice]:
         if not self._settings.aws_enable_cost_explorer or self._ce is None:
             raise NotConfiguredError(
-                "Cost Explorer is disabled. Set CLOUDCOSTMCP_AWS_ENABLE_COST_EXPLORER=true "
+                "Cost Explorer is disabled. Set OCC_AWS_ENABLE_COST_EXPLORER=true "
                 "to enable effective pricing (note: each API call costs $0.01)."
             )
 
@@ -614,7 +614,7 @@ class AWSProvider:
         if not self._settings.aws_enable_cost_explorer or self._sp is None:
             raise NotConfiguredError(
                 "Savings Plans / Cost Explorer APIs require credentials. "
-                "Set CLOUDCOSTMCP_AWS_ENABLE_COST_EXPLORER=true and ensure "
+                "Set OCC_AWS_ENABLE_COST_EXPLORER=true and ensure "
                 "AWS credentials are configured."
             )
 

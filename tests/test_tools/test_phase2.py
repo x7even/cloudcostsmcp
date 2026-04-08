@@ -7,16 +7,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from cloudcostmcp.cache import CacheManager
-from cloudcostmcp.config import Settings
-from cloudcostmcp.models import (
+from opencloudcosts.cache import CacheManager
+from opencloudcosts.config import Settings
+from opencloudcosts.models import (
     CloudProvider,
     NormalizedPrice,
     PriceUnit,
     PricingTerm,
 )
-from cloudcostmcp.providers.aws import AWSProvider
-from cloudcostmcp.providers.base import NotConfiguredError
+from opencloudcosts.providers.aws import AWSProvider
+from opencloudcosts.providers.base import NotConfiguredError
 
 
 def _make_price(region: str, price: str) -> NormalizedPrice:
@@ -163,7 +163,7 @@ async def test_find_cheapest_region_ordering(aws_provider: AWSProvider):
 
     # Replicate what find_cheapest_region does
     import asyncio
-    from cloudcostmcp.models import PriceComparison
+    from opencloudcosts.models import PriceComparison
 
     all_prices = []
     for region in region_prices:
@@ -187,7 +187,7 @@ async def test_find_cheapest_region_filters_unavailable(aws_provider: AWSProvide
     aws_provider.get_compute_price = mock_get_compute_price
 
     import asyncio
-    from cloudcostmcp.models import PriceComparison
+    from opencloudcosts.models import PriceComparison
 
     regions = ["us-east-1", "fake-region-1", "fake-region-2"]
     all_prices = []

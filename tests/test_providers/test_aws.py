@@ -8,10 +8,10 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-from cloudcostmcp.cache import CacheManager
-from cloudcostmcp.config import Settings
-from cloudcostmcp.models import CloudProvider, PricingTerm
-from cloudcostmcp.providers.aws import AWSProvider
+from opencloudcosts.cache import CacheManager
+from opencloudcosts.config import Settings
+from opencloudcosts.models import CloudProvider, PricingTerm
+from opencloudcosts.providers.aws import AWSProvider
 
 # Minimal price list item matching what AWS Pricing API returns
 _M5_XLARGE_PRICE_ITEM = {

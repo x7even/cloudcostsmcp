@@ -7,7 +7,7 @@ from typing import Any
 
 from mcp.server.fastmcp import Context
 
-from cloudcostmcp.models import BomEstimate, BomLineItem, CloudProvider, PricingTerm
+from opencloudcosts.models import BomEstimate, BomLineItem, CloudProvider, PricingTerm
 
 logger = logging.getLogger(__name__)
 

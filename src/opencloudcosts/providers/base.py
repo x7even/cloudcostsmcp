@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from cloudcostmcp.models import (
+from opencloudcosts.models import (
     CloudProvider,
     EffectivePrice,
     InstanceTypeInfo,

@@ -1,6 +1,6 @@
-# CloudCost MCP — FinOps Usage Guide
+# OpenCloudCosts — FinOps Usage Guide
 
-Practical examples of how an AI assistant uses the CloudCost MCP server for common FinOps activities.
+Practical examples of how an AI assistant uses the OpenCloudCosts server for common FinOps activities.
 
 ---
 
@@ -232,26 +232,26 @@ Returns all GCP regions sorted by price. US regions (us-central1, us-east1) are 
 ### Public pricing only (no credentials)
 ```bash
 # No AWS credentials needed — public list prices work out of the box
-uv run cloudcostmcp
+uv run opencloudcosts
 ```
 
 ### With effective pricing (requires credentials)
 ```bash
 export AWS_PROFILE=finops-readonly
-export CLOUDCOSTMCP_AWS_ENABLE_COST_EXPLORER=true
-uv run cloudcostmcp
+export OCC_AWS_ENABLE_COST_EXPLORER=true
+uv run opencloudcosts
 ```
 
 ### GCP with API key (public pricing)
 ```bash
-export CLOUDCOSTMCP_GCP_API_KEY=AIza...
-uv run cloudcostmcp
+export OCC_GCP_API_KEY=AIza...
+uv run opencloudcosts
 ```
 
 ### GCP with Application Default Credentials
 ```bash
 gcloud auth application-default login
-uv run cloudcostmcp
+uv run opencloudcosts
 ```
 
 ### IAM policy for full FinOps access
