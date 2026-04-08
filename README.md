@@ -137,15 +137,21 @@ Prices are cached in SQLite at `~/.cache/opencloudcosts/pricing.db`. Public list
 
 ## GCP Setup
 
-GCP pricing requires authentication. Either:
+Unlike AWS (which has public bulk pricing endpoints), GCP's pricing API always requires at least a free API key. No credit card or billing account is needed.
 
-**Option A — API key** (simplest, no service account needed):
+**Option A — Free API key (recommended, 2 min setup):**
+1. Go to [console.cloud.google.com/apis/credentials](https://console.cloud.google.com/apis/credentials)
+2. Create a Project if you don't have one (free)
+3. Click **Create Credentials → API key**
+4. Set the key:
+
 ```bash
-# Create an API key in GCP Console -> APIs & Services -> Credentials
 export OCC_GCP_API_KEY=AIza...
 ```
 
-**Option B — Application Default Credentials**:
+Or add `OCC_GCP_API_KEY=AIza...` to your `.env` file.
+
+**Option B — Application Default Credentials** (if you already use `gcloud`):
 ```bash
 gcloud auth application-default login
 # or set GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json

@@ -78,9 +78,14 @@ class GCPProvider:
                     headers["Authorization"] = f"Bearer {creds.token}"
                 except ImportError:
                     raise NotConfiguredError(
-                        "GCP authentication not configured. Set OCC_GCP_API_KEY "
-                        "or install google-auth and configure Application Default Credentials "
-                        "(run: gcloud auth application-default login)."
+                        "GCP pricing requires a free API key (unlike AWS, GCP has no "
+                        "unauthenticated public pricing endpoint).\n\n"
+                        "Quickest setup (2 min, no credit card needed):\n"
+                        "  1. Go to https://console.cloud.google.com/apis/credentials\n"
+                        "  2. Create Project (free) if you don't have one\n"
+                        "  3. Click 'Create Credentials' → 'API key'\n"
+                        "  4. Set OCC_GCP_API_KEY=<your-key> in your environment or .env\n\n"
+                        "Alternative: install google-auth and run 'gcloud auth application-default login'"
                     )
             self._http = httpx.AsyncClient(
                 base_url=_CATALOG_BASE,
