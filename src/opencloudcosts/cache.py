@@ -159,10 +159,21 @@ class CacheManager:
         await self.db.commit()
         return prices_deleted + meta_deleted
 
-    async def clear_provider(self, provider: str) -> None:
-        await self.db.execute("DELETE FROM prices WHERE provider = ?", (provider,))
+    async def clear_provider(self, provider: str) -> dict[str, int]:
+        async with self.db.execute(
+            "DELETE FROM prices WHERE provider = ?", (provider,)
+        ) as cur:
+            prices_deleted = cur.rowcount
+        async with self.db.execute(
+            "DELETE FROM metadata WHERE cache_key LIKE ?", (f"{provider}:%",)
+        ) as cur:
+            meta_deleted = cur.rowcount
         await self.db.commit()
-        logger.info("Cleared cache for provider %s", provider)
+        logger.info(
+            "Cleared cache for provider %s: %d price entries, %d metadata entries",
+            provider, prices_deleted, meta_deleted,
+        )
+        return {"prices_deleted": prices_deleted, "metadata_deleted": meta_deleted}
 
     async def stats(self) -> dict[str, Any]:
         async with self.db.execute("SELECT COUNT(*) as n FROM prices") as cur:

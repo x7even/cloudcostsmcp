@@ -672,8 +672,12 @@ def register_lookup_tools(mcp: Any) -> None:
         """
         cache = ctx.request_context.lifespan_context["cache"]
         if provider:
-            await cache.clear_provider(provider)
-            return {"message": f"Cache cleared for provider: {provider}"}
+            counts = await cache.clear_provider(provider)
+            return {
+                "message": f"Cache cleared for provider: {provider}",
+                "prices_deleted": counts["prices_deleted"],
+                "metadata_deleted": counts["metadata_deleted"],
+            }
         else:
             deleted = await cache.purge_expired()
             stats = await cache.stats()
