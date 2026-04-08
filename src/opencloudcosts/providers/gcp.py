@@ -59,7 +59,20 @@ class GCPProvider:
     def __init__(self, settings: Settings, cache: CacheManager) -> None:
         self._settings = settings
         self._cache = cache
-        self._api_key = settings.gcp_api_key
+        api_key = settings.gcp_api_key
+        # OAuth access tokens (ya29.*) are short-lived and need Bearer auth, not ?key=
+        # API keys always start with "AIza" — catch the common mistake early.
+        if api_key and api_key.startswith("ya29."):
+            raise NotConfiguredError(
+                "OCC_GCP_API_KEY looks like an OAuth access token (starts with 'ya29.'), "
+                "not an API key. OAuth tokens are short-lived and must be sent as a Bearer "
+                "header — they won't work as a ?key= parameter.\n\n"
+                "Create a proper API key instead:\n"
+                "  1. console.cloud.google.com/apis/credentials\n"
+                "  2. Create Credentials → API key\n"
+                "  3. The key will start with 'AIza...'"
+            )
+        self._api_key = api_key
         self._http: httpx.AsyncClient | None = None
 
     async def _get_http(self) -> httpx.AsyncClient:
