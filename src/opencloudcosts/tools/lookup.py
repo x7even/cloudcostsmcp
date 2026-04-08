@@ -329,8 +329,49 @@ def register_lookup_tools(mcp: Any) -> None:
         if pvdr is None:
             return {"error": f"Provider '{provider}' not configured."}
 
+        # GCP compute: delegate to get_compute_price using instanceType filter
+        if provider == "gcp" and service in ("compute", "AmazonEC2", "ec2"):
+            instance_type = (filters or {}).get("instanceType", "")
+            if not instance_type:
+                return {
+                    "error": (
+                        "For GCP compute pricing, provide filters={'instanceType': '<type>'} "
+                        "e.g. 'n2-standard-4', 'a3-highgpu-8g'. "
+                        "Or use get_compute_price(provider='gcp', instance_type=..., region=...) directly."
+                    )
+                }
+            try:
+                from opencloudcosts.models import PricingTerm
+                term_str = (filters or {}).get("term", "on_demand")
+                os_str = (filters or {}).get("os", "Linux")
+                pricing_term = PricingTerm(term_str)
+                prices = await pvdr.get_compute_price(instance_type, region, os_str, pricing_term)
+            except Exception as e:
+                logger.error("get_service_price GCP compute delegation error: %s", e)
+                return {"error": f"API error: {e}"}
+            if not prices:
+                return {
+                    "result": "no_prices_found",
+                    "message": f"No pricing found for GCP instance '{instance_type}' in {region}.",
+                    "tip": "Use list_instance_types(provider='gcp', region=...) to discover available types.",
+                }
+            return {
+                "provider": provider,
+                "service": "compute",
+                "region": region,
+                "instance_type": instance_type,
+                "count": len(prices),
+                "results": [p.summary() for p in prices],
+            }
+
         if not hasattr(pvdr, "get_service_price"):
-            return {"error": f"Provider '{provider}' does not support generic service pricing yet."}
+            return {
+                "error": (
+                    f"Provider '{provider}' does not support generic service pricing yet. "
+                    "For GCP compute use get_compute_price(provider='gcp', instance_type=..., region=...). "
+                    "For GCP storage use get_storage_price(provider='gcp', storage_type=..., region=...)."
+                )
+            }
 
         try:
             prices = await pvdr.get_service_price(
