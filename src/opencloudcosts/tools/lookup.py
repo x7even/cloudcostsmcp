@@ -239,10 +239,110 @@ def register_lookup_tools(mcp: Any) -> None:
         }
 
     @mcp.tool()
+    async def get_service_price(
+        ctx: Context,
+        provider: str,
+        service: str,
+        region: str,
+        filters: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Get pricing for a specific AWS/GCP service by service code and optional filters.
+
+        Use this to look up pricing for non-compute services such as CloudWatch, RDS,
+        Lambda, S3, etc. The service code must be a valid AWS service code (e.g.
+        "AmazonCloudWatch", "AmazonRDS") or a recognised alias (e.g. "cloudwatch", "rds").
+
+        Args:
+            provider: Cloud provider — "aws" or "gcp"
+            service: Service code or alias, e.g. "cloudwatch", "AmazonRDS", "lambda"
+            region: Region code, e.g. "us-east-1"
+            filters: Optional dict of attribute filters, e.g. {"group": "Metrics"}
+        """
+        pvdr = _providers(ctx).get(provider)
+        if pvdr is None:
+            return {"error": f"Provider '{provider}' is not configured. Available: {list(_providers(ctx))}"}
+
+        # Alias resolution for common service names
+        _SERVICE_ALIASES: dict[str, str] = {
+            "cloudwatch": "AmazonCloudWatch",
+            "rds": "AmazonRDS",
+            "s3": "AmazonS3",
+            "ec2": "AmazonEC2",
+            "lambda": "AWSLambda",
+            "dynamodb": "AmazonDynamoDB",
+            "sns": "AmazonSNS",
+            "sqs": "AmazonSQS",
+            "elb": "AWSELB",
+            "route53": "AmazonRoute53",
+        }
+        resolved_service = _SERVICE_ALIASES.get(service.lower(), service)
+
+        try:
+            display_name = __import__(
+                "opencloudcosts.utils.regions", fromlist=["aws_region_to_display"]
+            ).aws_region_to_display(region)
+        except (ValueError, Exception):
+            display_name = region
+
+        filter_list: list[dict[str, str]] = [
+            {"Field": "location", "Value": display_name},
+        ]
+        if filters:
+            for k, v in filters.items():
+                filter_list.append({"Field": k, "Value": v})
+
+        try:
+            raw = await pvdr._get_products(resolved_service, filter_list, max_results=20)
+        except Exception as e:
+            logger.error("get_service_price error: %s", e)
+            return {"error": f"API error: {e}"}
+
+        prices = []
+        for item in raw:
+            p = pvdr._item_to_price(item, region, __import__(
+                "opencloudcosts.models", fromlist=["PricingTerm"]
+            ).PricingTerm.ON_DEMAND, service)
+            if p:
+                prices.append(p)
+
+        if not prices:
+            no_results: dict[str, Any] = {
+                "result": "no_results",
+                "provider": provider,
+                "service": service,
+                "region": region,
+                "filters_applied": filters or {},
+                "message": (
+                    f"No pricing found for service '{service}' in {region} "
+                    "with the provided filters."
+                ),
+                "tip": (
+                    f"Try search_pricing(provider='{provider}', service='{service}', query='...') "
+                    "to explore available products and valid filter attribute names. "
+                    "Use list_services() to verify the service code exists."
+                ),
+            }
+            if resolved_service != service:
+                no_results["resolved_service_code"] = resolved_service
+            return no_results
+
+        return {
+            "provider": provider,
+            "service": service,
+            "resolved_service_code": resolved_service if resolved_service != service else service,
+            "region": region,
+            "filters_applied": filters or {},
+            "count": len(prices),
+            "prices": [p.summary() for p in prices],
+        }
+
+    @mcp.tool()
     async def search_pricing(
         ctx: Context,
         provider: str,
         query: str,
+        service: str = "",
         region: str = "",
         max_results: int = 10,
     ) -> dict[str, Any]:
@@ -251,10 +351,13 @@ def register_lookup_tools(mcp: Any) -> None:
 
         Useful for discovering available instance types or finding pricing for
         a category of instances (e.g. all m5 instances, or GPU instances).
+        Optionally filter by service code to search non-compute services.
 
         Args:
             provider: Cloud provider — "aws" or "gcp"
             query: Search query, e.g. "m5", "c6g.xlarge", "gpu", "r5.2xlarge"
+            service: Optional service code to search (default: "ec2"). Use list_services()
+                     to discover valid service codes.
             region: Optional region code to filter results. Leave empty for any region.
             max_results: Maximum number of results to return (default 10, max 50)
         """
@@ -269,12 +372,35 @@ def register_lookup_tools(mcp: Any) -> None:
             logger.error("search_pricing error: %s", e)
             return {"error": f"API error: {e}"}
 
+        results = [p.summary() for p in prices]
+
+        if not results:
+            tip = (
+                "Check the service code with list_services(). "
+                "Try a broader query (e.g. the product family name). "
+            )
+            if service:
+                tip += f"Verify that '{service}' is a valid service code or alias."
+            return {
+                "result": "no_results",
+                "provider": provider,
+                "service": service or "ec2",
+                "query": query,
+                "region": region or "any",
+                "message": (
+                    f"No pricing found matching '{query}'"
+                    + (f" in service '{service}'" if service else "")
+                    + "."
+                ),
+                "tip": tip,
+            }
+
         return {
             "provider": provider,
             "query": query,
             "region": region or "all",
-            "count": len(prices),
-            "results": [p.summary() for p in prices],
+            "count": len(results),
+            "results": results,
         }
 
     @mcp.tool()
