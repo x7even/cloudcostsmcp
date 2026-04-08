@@ -2,12 +2,16 @@
 OpenCloudCosts MCP Server entry point.
 
 Run via:
-    uv run cloudcostmcp          # stdio (default, for MCP clients)
-    uv run cloudcostmcp --help
+    uv run opencloudcosts                          # stdio (default, for MCP clients)
+    uv run opencloudcosts --transport http         # HTTP/streamable-http on port 8080
+    uv run opencloudcosts --transport http --host 0.0.0.0 --port 9000
+    uv run opencloudcosts --help
 """
 from __future__ import annotations
 
+import argparse
 import logging
+import os
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
 
@@ -62,7 +66,7 @@ async def _lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
     logger.info("CloudCost MCP server shut down")
 
 
-def create_server() -> FastMCP:
+def create_server(host: str = "127.0.0.1", port: int = 8080) -> FastMCP:
     mcp = FastMCP(
         name="OpenCloudCosts MCP",
         instructions=(
@@ -73,6 +77,8 @@ def create_server() -> FastMCP:
             "ensure provider credentials are configured."
         ),
         lifespan=_lifespan,
+        host=host,
+        port=port,
     )
 
     # Register tool groups
@@ -88,8 +94,36 @@ def create_server() -> FastMCP:
 
 
 def main() -> None:
-    mcp = create_server()
-    mcp.run()
+    parser = argparse.ArgumentParser(description="OpenCloudCosts MCP server")
+    parser.add_argument(
+        "--transport",
+        choices=["stdio", "http"],
+        default="stdio",
+        help="Transport type (default: stdio)",
+    )
+    parser.add_argument(
+        "--host",
+        default=os.getenv("OCC_HTTP_HOST", "127.0.0.1"),
+        help="HTTP bind address (default: 127.0.0.1, env: OCC_HTTP_HOST)",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=int(os.getenv("OCC_HTTP_PORT", "8080")),
+        help="HTTP port (default: 8080, env: OCC_HTTP_PORT)",
+    )
+    args = parser.parse_args()
+
+    if args.transport == "http":
+        # FastMCP uses streamable-http transport (MCP spec 2025-03-26).
+        # host and port are passed at construction time via FastMCP settings.
+        mcp = create_server(host=args.host, port=args.port)
+        logger.info("Starting HTTP server on %s:%s", args.host, args.port)
+        mcp.run(transport="streamable-http")
+    else:
+        # stdio — default, unchanged behaviour for MCP clients (Claude Code, etc.)
+        mcp = create_server()
+        mcp.run()
 
 
 if __name__ == "__main__":

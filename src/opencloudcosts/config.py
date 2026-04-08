@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -33,6 +33,11 @@ class Settings(BaseSettings):
     gcp_project_id: str | None = None
     gcp_billing_dataset: str | None = None
     gcp_api_key: str | None = None
+
+    # HTTP transport (used with --transport http)
+    http_port: int = Field(default=8080, description="HTTP server port (used with --transport http)")
+    http_host: str = Field(default="127.0.0.1", description="HTTP bind address (used with --transport http)")
+    api_key: str = Field(default="", description="Optional bearer token for HTTP transport authentication")
 
     @field_validator("cache_dir", mode="before")
     @classmethod
