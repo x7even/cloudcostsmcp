@@ -69,6 +69,21 @@ def register_bom_tools(mcp: Any) -> None:
                     prices = await pvdr.get_compute_price(resource_type, region, "Linux", pricing_term)
                 elif service == "storage":
                     prices = await pvdr.get_storage_price(resource_type, region, size_gb)
+                elif service == "database":
+                    if not hasattr(pvdr, "get_service_price"):
+                        errors.append(f"{label}: database pricing not supported for provider '{provider_name}'")
+                        continue
+                    db_filters: dict[str, str] = {"instanceType": resource_type}
+                    # Infer deployment option from term (default Single-AZ)
+                    if "multi" in term_str.lower():
+                        db_filters["deploymentOption"] = "Multi-AZ"
+                    else:
+                        db_filters["deploymentOption"] = "Single-AZ"
+                    prices = await pvdr.get_service_price("rds", region, db_filters, max_results=5)
+                    if not prices and db_filters.get("deploymentOption"):
+                        # Retry without deploymentOption filter
+                        del db_filters["deploymentOption"]
+                        prices = await pvdr.get_service_price("rds", region, db_filters, max_results=5)
                 else:
                     errors.append(f"{label}: unsupported service '{service}'")
                     continue
@@ -162,6 +177,15 @@ def register_bom_tools(mcp: Any) -> None:
                     prices = await pvdr.get_compute_price(resource_type, region, "Linux", pricing_term)
                 elif service == "storage":
                     prices = await pvdr.get_storage_price(resource_type, region, size_gb)
+                elif service == "database":
+                    if not hasattr(pvdr, "get_service_price"):
+                        errors.append(f"{label}: database pricing not supported for provider '{provider_name}'")
+                        continue
+                    db_filters = {"instanceType": resource_type, "deploymentOption": "Single-AZ"}
+                    prices = await pvdr.get_service_price("rds", region, db_filters, max_results=5)
+                    if not prices:
+                        del db_filters["deploymentOption"]
+                        prices = await pvdr.get_service_price("rds", region, db_filters, max_results=5)
                 else:
                     errors.append(f"{label}: unsupported service '{service}'")
                     continue
