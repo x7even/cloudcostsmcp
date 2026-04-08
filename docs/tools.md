@@ -1,24 +1,23 @@
-# OpenCloudCosts — Tool Reference
+# OpenCloudCosts MCP — Tool Reference
 
 ## Provider Notes
 
 ### AWS
 - Instance types: `m5.xlarge`, `c6g.2xlarge`, `r5.4xlarge`, etc.
 - Regions: `us-east-1`, `ap-southeast-2`, `eu-west-1`, etc. (use `list_regions` for full list)
-- Public pricing works with no credentials. Cost Explorer requires `OCC_AWS_ENABLE_COST_EXPLORER=true`.
+- Public pricing works with **no credentials**. Cost Explorer requires `OCC_AWS_ENABLE_COST_EXPLORER=true`.
+- Non-compute services (CloudWatch, data transfer, RDS, Lambda, etc.) available via `get_service_price`.
 
 ### GCP
 - Instance types: `n2-standard-4`, `e2-standard-8`, `c2-standard-16`, etc.
 - Regions: `us-central1`, `us-east1`, `europe-west1`, `asia-southeast1`, etc.
-- Requires a GCP API key (`OCC_GCP_API_KEY`) or Application Default Credentials (`gcloud auth application-default login`).
-- Pricing works by combining per-vCPU and per-GB-RAM SKUs: `total = vcpus × cpu_price + memory_gb × ram_price`
-- CUD (Committed Use Discount) pricing available via `term="cud_1yr"` or `term="cud_3yr"`
-- Supported machine families: `e2`, `n1`, `n2`, `n2d`, `c2`, `c2d`, `t2d`, `t2a`, `m1`
-- Supported storage types: `pd-standard`, `pd-ssd`, `pd-balanced`, `pd-extreme`
+- Requires `OCC_GCP_API_KEY` or Application Default Credentials (`gcloud auth application-default login`).
+- Pricing: per-vCPU + per-GB-RAM SKUs combined — `total = vcpus × cpu_price + memory_gb × ram_price`
+- CUD terms: `cud_1yr`, `cud_3yr`
 
 ---
 
-All tools are callable via MCP `tools/call`. Parameters are JSON-typed. All tools return a JSON object; errors are returned as `{"error": "..."}` rather than exceptions so the LLM can reason about them.
+All tools return JSON. Errors are returned as `{"error": "..."}` so the LLM can reason about them.
 
 ---
 
@@ -31,64 +30,20 @@ Get the price for a specific compute instance type in a cloud region.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `provider` | string | ✓ | `"aws"` or `"gcp"` |
-| `instance_type` | string | ✓ | e.g. `"m5.xlarge"`, `"c6g.2xlarge"`, `"n2-standard-4"` |
-| `region` | string | ✓ | Region code, e.g. `"us-east-1"`, `"ap-southeast-2"` |
+| `instance_type` | string | ✓ | e.g. `"m5.xlarge"`, `"n2-standard-4"` |
+| `region` | string | ✓ | Region code, e.g. `"us-east-1"` |
 | `os` | string | | `"Linux"` (default) or `"Windows"` |
-| `term` | string | | `"on_demand"` (default), `"reserved_1yr"`, `"reserved_3yr"` |
+| `term` | string | | `"on_demand"` (default), `"reserved_1yr"`, `"reserved_3yr"`, `"spot"` |
 
 **Example response:**
 ```json
 {
-  "provider": "aws",
-  "instance_type": "m5.xlarge",
-  "region": "us-east-1",
-  "os": "Linux",
-  "term": "on_demand",
-  "prices": [
-    {
-      "provider": "aws",
-      "description": "m5.xlarge",
-      "region": "us-east-1",
-      "term": "on_demand",
-      "price": "$0.192000 per_hour",
-      "monthly_estimate": "$140.16/mo",
-      "instanceType": "m5.xlarge",
-      "vcpu": "4",
-      "memory": "16 GiB"
-    }
-  ],
-  "count": 1
-}
-```
-
----
-
-### `compare_compute_prices`
-
-Compare the same instance type across multiple regions. Returns results sorted cheapest first with % delta.
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `provider` | string | ✓ | `"aws"` or `"gcp"` |
-| `instance_type` | string | ✓ | e.g. `"m5.xlarge"` |
-| `regions` | list[string] | ✓ | e.g. `["us-east-1", "ap-southeast-2", "eu-west-1"]` |
-| `os` | string | | `"Linux"` (default) or `"Windows"` |
-| `term` | string | | `"on_demand"` (default) |
-
-**Example response:**
-```json
-{
-  "provider": "aws",
-  "instance_type": "m5.xlarge",
-  "term": "on_demand",
-  "cheapest_region": "us-east-1",
-  "most_expensive_region": "ap-southeast-2",
-  "price_delta_pct": 44.79,
-  "prices_by_region": [
-    {"region": "us-east-1", "price": "$0.192000 per_hour", "monthly_estimate": "$140.16/mo"},
-    {"region": "eu-west-1", "price": "$0.214000 per_hour", "monthly_estimate": "$156.22/mo"},
-    {"region": "ap-southeast-2", "price": "$0.278000 per_hour", "monthly_estimate": "$202.94/mo"}
-  ]
+  "provider": "aws", "instance_type": "m5.xlarge", "region": "us-east-1",
+  "prices": [{
+    "region": "us-east-1", "region_name": "US East (N. Virginia)",
+    "price": "$0.192000 per_hour", "monthly_estimate": "$140.16/mo",
+    "vcpu": "4", "memory": "16 GiB"
+  }]
 }
 ```
 
@@ -96,33 +51,117 @@ Compare the same instance type across multiple regions. Returns results sorted c
 
 ### `get_storage_price`
 
-Get block/object storage pricing in a region.
+Get block or object storage pricing in a region.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `provider` | string | ✓ | `"aws"` or `"gcp"` |
-| `storage_type` | string | ✓ | AWS: `"gp3"`, `"gp2"`, `"io1"`, `"io2"`, `"st1"`, `"sc1"`. GCP: `"pd-ssd"`, `"pd-balanced"`, `"pd-standard"` |
+| `storage_type` | string | ✓ | AWS: `"gp3"`, `"gp2"`, `"io1"`, `"io2"`, `"st1"`, `"sc1"`, `"s3"`. GCP: `"pd-ssd"`, `"pd-balanced"`, `"pd-standard"`, `"pd-extreme"` |
 | `region` | string | ✓ | Region code |
 | `size_gb` | float | | Size for monthly cost estimate (default `100`) |
 
 ---
 
-### `search_pricing`
+### `get_service_price`
 
-Free-text search across the pricing catalog. Useful for exploring instance families.
+**Generic pricing for any AWS service** — CloudWatch, data transfer, RDS, Lambda, ELB, CloudFront, Route53, DynamoDB, EFS, ElastiCache, and 250+ others.
+
+Use `list_services()` to discover service codes, and `search_pricing(service=...)` to explore product attributes before filtering.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `provider` | string | ✓ | `"aws"` |
+| `service` | string | ✓ | Service code or alias (see table below) |
+| `region` | string | ✓ | Region code, e.g. `"us-east-1"` |
+| `filters` | object | | Attribute key/value pairs to narrow results |
+| `max_results` | int | | Max results (default `20`) |
+
+**Common service aliases:**
+
+| Alias | Canonical code | Example filters |
+|-------|---------------|-----------------|
+| `cloudwatch` | AmazonCloudWatch | `{"group": "Metric"}` |
+| `data_transfer` | AWSDataTransfer | `{"transferType": "AWS Outbound"}` |
+| `rds` | AmazonRDS | `{"databaseEngine": "MySQL", "instanceType": "db.r5.large"}` |
+| `lambda` | AWSLambda | `{"group": "AWS-Lambda-Duration"}` |
+| `elb` | AWSELB | `{"productFamily": "Load Balancer"}` |
+| `cloudfront` | AmazonCloudFront | `{"productFamily": "Data Transfer"}` |
+| `route53` | AmazonRoute53 | `{"productFamily": "DNS Query"}` |
+| `dynamodb` | AmazonDynamoDB | `{"group": "DDB-WriteUnits"}` |
+| `efs` | AmazonEFS | `{"productFamily": "Storage"}` |
+| `elasticache` | AmazonElastiCache | `{"cacheEngine": "Redis"}` |
+| `sqs` | AmazonSQS | `{"productFamily": "Queue"}` |
+| `redshift` | AmazonRedshift | `{"instanceType": "dc2.large"}` |
+
+**Example — CloudWatch metric pricing:**
+```
+get_service_price(provider="aws", service="cloudwatch",
+                  region="us-east-1", filters={"group": "Metric"})
+```
+
+**Example — Data transfer us-east-1 to eu-west-1:**
+```
+get_service_price(provider="aws", service="data_transfer", region="us-east-1",
+                  filters={"fromRegionCode": "us-east-1", "toRegionCode": "eu-west-1"})
+```
+
+**Example — RDS MySQL db.r5.large:**
+```
+get_service_price(provider="aws", service="rds", region="us-east-1",
+                  filters={"databaseEngine": "MySQL", "instanceType": "db.r5.large",
+                            "deploymentOption": "Single-AZ"})
+```
+
+---
+
+### `get_prices_batch`
+
+Get prices for multiple instance types in a single region in one call. Fetches concurrently, returns sorted cheapest first.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `provider` | string | ✓ | `"aws"` or `"gcp"` |
-| `query` | string | ✓ | e.g. `"m5"`, `"c6g"`, `"gpu"`, `"r5.2xlarge"` |
+| `instance_types` | list[string] | ✓ | e.g. `["m5.xlarge", "c5.xlarge", "r5.large"]` |
+| `region` | string | ✓ | Region code |
+| `os` | string | | `"Linux"` (default) or `"Windows"` |
+| `term` | string | | `"on_demand"` (default), `"reserved_1yr"`, `"spot"` |
+
+---
+
+### `compare_compute_prices`
+
+Compare the same compute instance type across multiple regions. Fetches concurrently, returns sorted cheapest first.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `provider` | string | ✓ | `"aws"` or `"gcp"` |
+| `instance_type` | string | ✓ | e.g. `"m5.xlarge"` |
+| `regions` | list[string] | ✓ | Region codes to compare |
+| `os` | string | | `"Linux"` (default) or `"Windows"` |
+| `term` | string | | `"on_demand"` (default) |
+| `baseline_region` | string | | Region for delta comparison, e.g. `"us-east-1"` |
+
+---
+
+### `search_pricing`
+
+Search the pricing catalog by keyword. Defaults to EC2 compute — set `service` to search any other AWS service.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `provider` | string | ✓ | `"aws"` or `"gcp"` |
+| `query` | string | ✓ | Keyword, e.g. `"m5"`, `"metric"`, `"MySQL"`, `"egress"` |
 | `region` | string | | Filter to a specific region |
+| `service` | string | | AWS service to search (default: `"ec2"`). Use `list_services()` to discover options. |
 | `max_results` | int | | Max results (default `10`, max `50`) |
 
 ---
 
+## Effective & Discount Pricing
+
 ### `get_effective_price`
 
-Get effective pricing reflecting actual account discounts (Reserved Instances, Savings Plans, CUDs, EDPs). Returns the effective hourly rate and % discount vs on-demand.
+Get effective rate after account discounts (Reserved Instances, Savings Plans, CUDs, EDPs).
 
 **Requires:** AWS credentials + `OCC_AWS_ENABLE_COST_EXPLORER=true` (costs $0.01/call)
 
@@ -133,31 +172,11 @@ Get effective pricing reflecting actual account discounts (Reserved Instances, S
 | `instance_type` | string | ✓ | e.g. `"m5.xlarge"` |
 | `region` | string | ✓ | Region code |
 
-**Example response:**
-```json
-{
-  "provider": "aws",
-  "instance_type": "m5.xlarge",
-  "region": "us-east-1",
-  "effective_prices": [
-    {
-      "on_demand_rate": "$0.192000/per_hour",
-      "effective_rate": "$0.124800/per_hour",
-      "discount_type": "Blended (RI/SP/EDP)",
-      "discount_pct": "35.0%",
-      "savings": "$0.067200/per_hour",
-      "commitment": null,
-      "source": "cost_explorer"
-    }
-  ]
-}
-```
-
 ---
 
 ### `get_discount_summary`
 
-Summarise all active discounts in the AWS account: Savings Plans, Reserved Instances, and utilization metrics.
+List all active Savings Plans and Reserved Instances with utilization metrics.
 
 **Requires:** AWS credentials + `OCC_AWS_ENABLE_COST_EXPLORER=true`
 
@@ -165,52 +184,38 @@ Summarise all active discounts in the AWS account: Savings Plans, Reserved Insta
 |-----------|------|----------|-------------|
 | `provider` | string | | `"aws"` (default) |
 
-**Example response:**
-```json
-{
-  "sp_count": 2,
-  "ri_count": 8,
-  "savings_plans": [
-    {
-      "id": "sp-abc123",
-      "type": "Compute",
-      "payment_option": "No Upfront",
-      "commitment_usd_per_hour": "1.50",
-      "term_years": "1",
-      "end": "2026-01-01T00:00:00Z",
-      "utilization_pct": "92.5"
-    }
-  ],
-  "reserved_instances": [
-    {
-      "instance_type": "m5.xlarge",
-      "count": 5,
-      "offering_type": "No Upfront",
-      "duration_years": "1",
-      "days_remaining": 180
-    }
-  ],
-  "utilization": {
-    "savings_plans": {
-      "utilization_pct": "92.0",
-      "net_savings": "312.50"
-    }
-  }
-}
-```
+---
+
+## Discovery
+
+### `list_services`
+
+List all AWS services that have pricing data (260+ services). Returns service codes and short aliases for use with `get_service_price`.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `provider` | string | | `"aws"` (default) |
 
 ---
 
-## Availability & Discovery
-
 ### `list_regions`
 
-List all regions where a service is available.
+List all regions for a provider/service with friendly display names.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `provider` | string | ✓ | `"aws"` or `"gcp"` |
 | `service` | string | | `"compute"` (default), `"storage"`, `"database"` |
+
+**Example response:**
+```json
+{
+  "regions": [
+    {"code": "us-east-1", "name": "US East (N. Virginia)"},
+    {"code": "eu-west-1", "name": "Europe (Ireland)"}
+  ]
+}
+```
 
 ---
 
@@ -222,7 +227,7 @@ List available compute instance types in a region with optional filters.
 |-----------|------|----------|-------------|
 | `provider` | string | ✓ | `"aws"` or `"gcp"` |
 | `region` | string | ✓ | Region code |
-| `family` | string | | Instance family prefix, e.g. `"m5"`, `"c6g"`, `"r5"` |
+| `family` | string | | Instance family prefix, e.g. `"m5"`, `"c6g"`, `"n2"` |
 | `min_vcpus` | int | | Minimum vCPU count |
 | `min_memory_gb` | float | | Minimum memory in GB |
 | `gpu` | bool | | If `true`, only return GPU instances |
@@ -232,20 +237,22 @@ List available compute instance types in a region with optional filters.
 
 ### `check_availability`
 
-Check if a specific instance type or SKU is available in a region.
+Check if a specific instance type or storage SKU is available in a region.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `provider` | string | ✓ | `"aws"` or `"gcp"` |
-| `service` | string | ✓ | `"compute"`, `"storage"` |
-| `sku_or_type` | string | ✓ | e.g. `"m5.xlarge"`, `"gp3"` |
+| `service` | string | ✓ | `"compute"` or `"storage"` |
+| `sku_or_type` | string | ✓ | e.g. `"c6a.xlarge"`, `"gp3"` |
 | `region` | string | ✓ | Region code |
 
 ---
 
+## Region Analysis
+
 ### `find_cheapest_region`
 
-Find the cheapest region for an instance type by querying all (or specified) regions concurrently.
+Find the cheapest region for an instance type across all (or specified) regions. Queries concurrently, returns sorted cheapest first.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -253,76 +260,66 @@ Find the cheapest region for an instance type by querying all (or specified) reg
 | `instance_type` | string | ✓ | e.g. `"m5.xlarge"` |
 | `os` | string | | `"Linux"` (default) or `"Windows"` |
 | `term` | string | | `"on_demand"` (default), `"reserved_1yr"`, `"reserved_3yr"` |
-| `regions` | list[string] | | Specific regions to compare. Omit for all regions. |
+| `regions` | list[string] | | Regions to compare. Omit for major regions (faster). Pass `["all"]` for exhaustive. |
+| `baseline_region` | string | | Region for delta comparison, e.g. `"us-east-1"` |
 
-**Example response:**
-```json
-{
-  "provider": "aws",
-  "instance_type": "m5.xlarge",
-  "cheapest_region": "us-east-1",
-  "cheapest_price": "$0.192000/hr",
-  "most_expensive_region": "ap-southeast-2",
-  "most_expensive_price": "$0.278000/hr",
-  "price_delta_pct": 44.79,
-  "all_regions_sorted": [
-    {"region": "us-east-1", "price_per_hour": "$0.192000", "monthly_estimate": "$140.16"},
-    {"region": "us-east-2", "price_per_hour": "$0.192000", "monthly_estimate": "$140.16"},
-    ...
-  ]
-}
+---
+
+### `find_available_regions`
+
+Find every region where an instance type is available, with prices, region names, and optional baseline deltas. Designed to answer "where can I run X and what does it cost?" in a single call.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `provider` | string | ✓ | `"aws"` or `"gcp"` |
+| `instance_type` | string | ✓ | e.g. `"c6a.xlarge"`, `"n2-standard-4"` |
+| `os` | string | | `"Linux"` (default) or `"Windows"` |
+| `term` | string | | `"on_demand"` (default), `"reserved_1yr"`, `"spot"` |
+| `include_prices` | bool | | Include per-hour price (default `true`) |
+| `regions` | list[string] | | Regions to search. Omit for major regions. Pass `["all"]` for exhaustive. |
+| `baseline_region` | string | | Region for delta comparison, e.g. `"us-east-1"` |
+
+**Example — find all regions for c6a.xlarge with us-east-1 deltas:**
+```
+find_available_regions(provider="aws", instance_type="c6a.xlarge",
+                       regions=["all"], baseline_region="us-east-1")
 ```
 
 ---
 
-## TCO & BoM Estimation
+## Cost Estimation
 
 ### `estimate_bom`
 
-Calculate Total Cost of Ownership for a Bill of Materials. Each item represents a cloud resource.
+Calculate Total Cost of Ownership for a Bill of Materials.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `items` | list[object] | ✓ | List of BoM line items (see below) |
+| `items` | list[object] | ✓ | List of BoM line items |
 
 **BoM line item fields:**
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `provider` | string | `"aws"` | Cloud provider |
-| `service` | string | | `"compute"` or `"storage"` |
-| `type` | string | | Instance/storage type, e.g. `"m5.xlarge"`, `"gp3"` |
-| `region` | string | `"us-east-1"` | Region code |
-| `quantity` | int | `1` | Number of units |
-| `hours_per_month` | float | `730` | Hours/month (730 = always-on) |
-| `term` | string | `"on_demand"` | Pricing term |
-| `description` | string | | Human-readable label |
-| `size_gb` | float | `100` | For storage items only |
-
-**Example request:**
-```json
-{
-  "items": [
-    {"provider": "aws", "service": "compute", "type": "m5.xlarge", "region": "us-east-1", "quantity": 3, "description": "API servers"},
-    {"provider": "aws", "service": "compute", "type": "r5.2xlarge", "region": "us-east-1", "quantity": 2, "description": "DB servers"},
-    {"provider": "aws", "service": "storage", "type": "gp3", "region": "us-east-1", "quantity": 1, "size_gb": 500, "description": "Primary EBS volume"}
-  ]
-}
-```
+| Field | Default | Description |
+|-------|---------|-------------|
+| `provider` | `"aws"` | Cloud provider |
+| `service` | | `"compute"` or `"storage"` |
+| `type` | | Instance/storage type, e.g. `"m5.xlarge"`, `"gp3"` |
+| `region` | `"us-east-1"` | Region code |
+| `quantity` | `1` | Number of units |
+| `hours_per_month` | `730` | Hours/month (730 = always-on) |
+| `term` | `"on_demand"` | Pricing term |
+| `description` | | Human-readable label |
+| `size_gb` | `100` | For storage items |
 
 **Example response:**
 ```json
 {
+  "totals": {"monthly": "$1196.32", "annual": "$14355.84"},
   "line_items": [
-    {"description": "API servers", "quantity": 3, "unit_price": "$0.192000/per_hour", "monthly_cost": "$420.48", "annual_cost": "$5045.76"},
-    {"description": "DB servers", "quantity": 2, "unit_price": "$0.504000/per_hour", "monthly_cost": "$735.84", "annual_cost": "$8830.08"},
-    {"description": "Primary EBS volume", "quantity": 1, "unit_price": "$0.080000/per_gb_month", "monthly_cost": "$40.00", "annual_cost": "$480.00"}
-  ],
-  "totals": {
-    "monthly": "$1196.32",
-    "annual": "$14355.84",
-    "currency": "USD"
-  }
+    {"description": "API servers", "quantity": 3, "monthly_cost": "$420.48"},
+    {"description": "DB servers",  "quantity": 2, "monthly_cost": "$735.84"},
+    {"description": "EBS storage", "quantity": 1, "monthly_cost": "$40.00"}
+  ]
 }
 ```
 
@@ -330,24 +327,13 @@ Calculate Total Cost of Ownership for a Bill of Materials. Each item represents 
 
 ### `estimate_unit_economics`
 
-Estimate cost per user, per request, or per transaction given a BoM and expected monthly volume.
+Estimate cost per user, request, or transaction given a BoM and monthly volume.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `items` | list[object] | ✓ | Same format as `estimate_bom` |
-| `units_per_month` | float | ✓ | Monthly volume (e.g. `50000` users) |
-| `unit_label` | string | | Label for units: `"user"`, `"request"`, `"transaction"` (default `"user"`) |
-
-**Example response:**
-```json
-{
-  "infrastructure_monthly": "$1196.32",
-  "infrastructure_annual": "$14355.84",
-  "volume": "50,000 users/month",
-  "cost_per_unit": "$0.0239 per user",
-  "cost_per_unit_annual": "$0.2871 per user/year"
-}
-```
+| `units_per_month` | float | ✓ | Monthly volume, e.g. `50000` |
+| `unit_label` | string | | `"user"`, `"request"`, `"transaction"` (default `"user"`) |
 
 ---
 
@@ -355,7 +341,7 @@ Estimate cost per user, per request, or per transaction given a BoM and expected
 
 ### `refresh_cache`
 
-Invalidate the pricing cache to force fresh API data on the next request.
+Invalidate the pricing cache to force fresh data on next request.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -363,6 +349,6 @@ Invalidate the pricing cache to force fresh API data on the next request.
 
 ### `cache_stats`
 
-Return statistics about the local SQLite pricing cache.
+Return cache statistics: entry counts and SQLite DB size.
 
-Returns: `{"price_entries": 142, "metadata_entries": 8, "db_size_mb": 0.45, "db_path": "..."}`
+Returns: `{"price_entries": 142, "metadata_entries": 8, "db_size_mb": 0.45}`

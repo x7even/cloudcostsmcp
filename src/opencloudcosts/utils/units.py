@@ -16,6 +16,22 @@ AWS_UNIT_MAP: dict[str, PriceUnit] = {
     "IOPS-Mo": PriceUnit.PER_IOPS_MONTH,
     "Requests": PriceUnit.PER_REQUEST,
     "Request": PriceUnit.PER_REQUEST,
+    "queries": PriceUnit.PER_REQUEST,
+    "Queries": PriceUnit.PER_QUERY,
+    "Lambda-GB-Second": PriceUnit.PER_GB_SECOND,
+    "seconds": PriceUnit.PER_UNIT,   # some services report in seconds
+    "Units": PriceUnit.PER_UNIT,
+    "unit": PriceUnit.PER_UNIT,
+    "vCPU-Hours": PriceUnit.PER_HOUR,
+    "ACU-Hr": PriceUnit.PER_HOUR,
+    "RCU": PriceUnit.PER_UNIT,        # DynamoDB read capacity units
+    "WCU": PriceUnit.PER_UNIT,        # DynamoDB write capacity units
+    "IOs": PriceUnit.PER_REQUEST,
+    "Rule": PriceUnit.PER_UNIT,
+    "Alarm": PriceUnit.PER_UNIT,
+    "Metrics": PriceUnit.PER_UNIT,
+    "Events": PriceUnit.PER_REQUEST,
+    "Messages": PriceUnit.PER_REQUEST,
 }
 
 # GCP Billing Catalog API usageUnit strings -> our PriceUnit enum

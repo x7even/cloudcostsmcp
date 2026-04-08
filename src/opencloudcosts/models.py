@@ -32,7 +32,9 @@ class PriceUnit(str, Enum):
     PER_GB = "per_gb"
     PER_IOPS_MONTH = "per_iops_month"
     PER_REQUEST = "per_request"
-    PER_UNIT = "per_unit"
+    PER_GB_SECOND = "per_gb_second"    # Lambda duration
+    PER_QUERY = "per_query"            # Route53, Athena
+    PER_UNIT = "per_unit"              # generic fallback
 
 
 class NormalizedPrice(BaseModel):

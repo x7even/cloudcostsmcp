@@ -197,3 +197,131 @@ async def test_bulk_fallback_filters_correctly(aws_provider: AWSProvider):
     # Should only return m5.xlarge, not c5.xlarge
     assert len(prices) == 1
     assert prices[0].attributes["instanceType"] == "m5.xlarge"
+
+
+# ------------------------------------------------------------------
+# Generic service pricing
+# ------------------------------------------------------------------
+
+_CLOUDWATCH_PRICE_ITEM = {
+    "product": {
+        "sku": "CW123456",
+        "productFamily": "Amazon CloudWatch Metrics",
+        "attributes": {
+            "group": "Metric",
+            "groupDescription": "Custom and cross-account metrics",
+            "location": "US East (N. Virginia)",
+        },
+    },
+    "terms": {
+        "OnDemand": {
+            "CW123456.JRTCKXETXF": {
+                "priceDimensions": {
+                    "CW123456.JRTCKXETXF.6YS6EN2CT7": {
+                        "unit": "Metrics",
+                        "pricePerUnit": {"USD": "0.3000000000"},
+                        "description": "$0.30 per metric per month",
+                    }
+                },
+                "termAttributes": {},
+            }
+        }
+    },
+}
+
+
+async def test_get_service_price_cloudwatch(aws_provider: AWSProvider):
+    """get_service_price resolves 'cloudwatch' alias and returns normalized prices."""
+    with patch.object(aws_provider, "_get_products", return_value=[_CLOUDWATCH_PRICE_ITEM]):
+        prices = await aws_provider.get_service_price(
+            "cloudwatch", "us-east-1", {"group": "Metric"}
+        )
+
+    assert len(prices) == 1
+    p = prices[0]
+    assert p.price_per_unit == Decimal("0.3000000000")
+    # description should fall back to groupDescription or group
+    assert p.description
+
+
+async def test_get_service_price_alias_resolution(aws_provider: AWSProvider):
+    """Alias 'cloudwatch' should resolve to 'AmazonCloudWatch' before calling _get_products."""
+    captured_args = {}
+
+    async def mock_get_products(service_code, filters, max_results=100):
+        captured_args["service_code"] = service_code
+        return [_CLOUDWATCH_PRICE_ITEM]
+
+    with patch.object(aws_provider, "_get_products", side_effect=mock_get_products):
+        await aws_provider.get_service_price("cloudwatch", "us-east-1", {})
+
+    assert captured_args["service_code"] == "AmazonCloudWatch"
+
+
+async def test_get_service_price_passthrough_unknown_alias(aws_provider: AWSProvider):
+    """Unknown service codes should be passed through as-is."""
+    captured_args = {}
+
+    async def mock_get_products(service_code, filters, max_results=100):
+        captured_args["service_code"] = service_code
+        return []
+
+    with patch.object(aws_provider, "_get_products", side_effect=mock_get_products):
+        await aws_provider.get_service_price("MyCustomServiceCode", "us-east-1", {})
+
+    assert captured_args["service_code"] == "MyCustomServiceCode"
+
+
+async def test_get_service_price_generic_attributes(aws_provider: AWSProvider):
+    """_item_to_price should include all non-noise attributes in the result."""
+    with patch.object(aws_provider, "_get_products", return_value=[_CLOUDWATCH_PRICE_ITEM]):
+        prices = await aws_provider.get_service_price("cloudwatch", "us-east-1", {})
+
+    assert len(prices) == 1
+    attrs = prices[0].attributes
+    # group should be present (not a noise key)
+    assert "group" in attrs
+    # location should be removed (noise key)
+    assert "location" not in attrs
+
+
+async def test_list_services(aws_provider: AWSProvider):
+    """list_services should fetch the index and return service codes with aliases."""
+    mock_index = {
+        "offers": {
+            "AmazonEC2": {"currentVersionUrl": "/offers/v1.0/aws/AmazonEC2/current/index.json"},
+            "AmazonCloudWatch": {"currentVersionUrl": "..."},
+            "AWSLambda": {"currentVersionUrl": "..."},
+        }
+    }
+
+    import httpx
+
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json.return_value = mock_index
+
+    with patch("httpx.get", return_value=mock_response):
+        services = await aws_provider.list_services()
+
+    # Should return list of service entries
+    assert isinstance(services, list)
+    assert len(services) > 0
+    # Check that AmazonEC2 appears
+    codes = [s["service_code"] for s in services]
+    assert "AmazonEC2" in codes
+    # Check that aliases are populated for known services
+    ec2_entry = next(s for s in services if s["service_code"] == "AmazonEC2")
+    assert "aliases" in ec2_entry
+    assert "ec2" in ec2_entry["aliases"]
+
+
+async def test_search_pricing_generic_service(aws_provider: AWSProvider):
+    """search_pricing with service='cloudwatch' should search via get_service_price."""
+    with patch.object(
+        aws_provider, "_get_products", return_value=[_CLOUDWATCH_PRICE_ITEM]
+    ):
+        results = await aws_provider.search_pricing("metric", service_code="AmazonCloudWatch")
+
+    assert isinstance(results, list)
+    assert len(results) >= 1

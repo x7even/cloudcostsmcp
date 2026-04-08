@@ -58,12 +58,55 @@ _RESERVED_FILTERS: dict[PricingTerm, dict[str, str]] = {
 _BULK_BASE = "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws"
 _BULK_URL = "{base}/{service}/current/{region}/index.json"
 
-# Service code -> bulk offer code
-_BULK_SERVICE: dict[str, str] = {
-    "AmazonEC2": "AmazonEC2",
-    "AmazonS3": "AmazonS3",
-    "AmazonRDS": "AmazonRDS",
+# Human-friendly aliases -> canonical AWS service offer codes.
+# The bulk URL uses the offer code directly; aliases allow callers to use
+# short names like "cloudwatch" or "data_transfer".
+_SERVICE_ALIASES: dict[str, str] = {
+    # compute / infra
+    "ec2": "AmazonEC2",
+    "s3": "AmazonS3",
+    "rds": "AmazonRDS",
+    "cloudwatch": "AmazonCloudWatch",
+    "lambda": "AWSLambda",
+    "data_transfer": "AWSDataTransfer",
+    "transfer": "AWSDataTransfer",
+    "elb": "AWSELB",
+    "load_balancer": "AWSELB",
+    "cloudfront": "AmazonCloudFront",
+    "cdn": "AmazonCloudFront",
+    "route53": "AmazonRoute53",
+    "dns": "AmazonRoute53",
+    "dynamodb": "AmazonDynamoDB",
+    "efs": "AmazonEFS",
+    "fsx": "AmazonFSx",
+    "elasticache": "AmazonElastiCache",
+    "redis": "AmazonElastiCache",
+    "sqs": "AmazonSQS",
+    "sns": "AmazonSNS",
+    "redshift": "AmazonRedshift",
+    "cloudtrail": "AWSCloudTrail",
+    "config": "AWSConfig",
+    "backup": "AWSBackup",
+    "ecs": "AmazonECS",
+    "eks": "AmazonEKS",
+    "ecr": "AmazonECR",
+    "secretsmanager": "AWSSecretsManager",
+    "kms": "awskms",
+    "waf": "awswaf",
+    "shield": "AWSShield",
+    "kinesis": "AmazonKinesis",
+    "glue": "AWSGlue",
+    "athena": "AmazonAthena",
+    "sagemaker": "AmazonSageMaker",
 }
+
+# Index of services available in the AWS bulk pricing API (cached after first fetch)
+_AWS_SERVICE_INDEX_URL = f"{_BULK_BASE}/index.json"
+
+
+def _resolve_service_code(service: str) -> str:
+    """Resolve alias or pass through as-is (AWS offer codes are case-sensitive)."""
+    return _SERVICE_ALIASES.get(service.lower(), service)
 
 
 def _boto_session(settings: Settings) -> boto3.Session:
@@ -174,7 +217,7 @@ class AWSProvider:
         """
         url = _BULK_URL.format(
             base=_BULK_BASE,
-            service=_BULK_SERVICE.get(service_code, service_code),
+            service=_resolve_service_code(service_code),
             region=region_code,
         )
         logger.debug("Bulk pricing fetch: %s", url)
@@ -269,22 +312,30 @@ class AWSProvider:
             return None
         price_decimal, unit_str = result
 
+        # Build a meaningful description from whichever attribute is most specific.
+        # Fallback chain covers compute, storage, database, and generic services.
+        _desc_keys = (
+            "instanceType", "databaseEngine", "groupDescription",
+            "group", "transferType", "volumeType",
+        )
+        description = next(
+            (attrs[k] for k in _desc_keys if k in attrs),
+            product.get("productFamily") or sku,
+        )
+
+        # Pass all attributes through, stripping only the high-noise keys that
+        # duplicate information already present at the response level.
+        _noise = {"location", "locationType", "servicecode", "servicename",
+                  "regionCode", "usagetype"}
+
         return NormalizedPrice(
             provider=CloudProvider.AWS,
             service=service,
             sku_id=sku,
             product_family=product.get("productFamily", ""),
-            description=attrs.get("instanceType", attrs.get("volumeType", sku)),
+            description=description,
             region=region,
-            attributes={
-                k: v for k, v in attrs.items()
-                if k in (
-                    "instanceType", "vcpu", "memory", "operatingSystem",
-                    "tenancy", "storage", "networkPerformance",
-                    "volumeType", "maxIopsvolume", "maxThroughputvolume",
-                    "databaseEngine", "deploymentOption",
-                )
-            },
+            attributes={k: v for k, v in attrs.items() if k not in _noise},
             pricing_term=term,
             price_per_unit=price_decimal,
             unit=parse_aws_unit(unit_str),
@@ -399,16 +450,94 @@ class AWSProvider:
         }
         return mapping.get(storage_type.lower(), storage_type)
 
+    async def get_service_price(
+        self,
+        service: str,
+        region: str,
+        filters: dict[str, str],
+        max_results: int = 20,
+    ) -> list[NormalizedPrice]:
+        """
+        Generic pricing lookup for any AWS service by service code or alias.
+
+        service: canonical offer code (e.g. "AmazonCloudWatch") or alias
+                 (e.g. "cloudwatch", "data_transfer", "rds").
+        filters: attribute key/value pairs to narrow results, e.g.
+                 {"group": "Metric"} for CloudWatch,
+                 {"fromRegionCode": "us-east-1", "toRegionCode": "eu-west-1"}
+                 for data transfer.
+        """
+        service_code = _resolve_service_code(service)
+        try:
+            display_name = aws_region_to_display(region)
+        except ValueError:
+            display_name = region  # pass through unknown regions
+
+        filter_list: list[dict[str, str]] = [
+            {"Field": "location", "Value": display_name}
+        ]
+        for k, v in filters.items():
+            filter_list.append({"Field": k, "Value": v})
+
+        raw = await self._get_products(service_code, filter_list, max_results=max_results)
+        prices = []
+        for item in raw:
+            p = self._item_to_price(item, region, PricingTerm.ON_DEMAND, service.lower())
+            if p:
+                prices.append(p)
+        return prices
+
+    async def list_services(self) -> list[dict[str, str]]:
+        """Return all available AWS pricing services with their offer codes and aliases."""
+        cache_key = "aws:service_index"
+        cached = await self._cache.get_metadata(cache_key)
+        if cached is not None:
+            return cached
+
+        try:
+            resp = await asyncio.to_thread(
+                httpx.get, _AWS_SERVICE_INDEX_URL, timeout=30, follow_redirects=True
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            offers = data.get("offers", {})
+        except Exception as e:
+            logger.warning("Could not fetch AWS service index: %s", e)
+            # Fall back to known aliases
+            offers = {v: {} for v in set(_SERVICE_ALIASES.values())}
+
+        # Reverse-map aliases for display
+        alias_for: dict[str, list[str]] = {}
+        for alias, code in _SERVICE_ALIASES.items():
+            alias_for.setdefault(code, []).append(alias)
+
+        services = [
+            {
+                "service_code": code,
+                "aliases": alias_for.get(code, []),
+            }
+            for code in sorted(offers.keys())
+        ]
+        await self._cache.set_metadata(
+            cache_key, services, ttl_hours=self._settings.metadata_ttl_days * 24
+        )
+        return services
+
     async def search_pricing(
         self,
         query: str,
         region: str | None = None,
         max_results: int = 20,
+        service_code: str = "AmazonEC2",
     ) -> list[NormalizedPrice]:
         """
-        Searches EC2 compute instances by instance type prefix/family.
-        query examples: "m5", "c6g", "r5.xlarge", "gpu"
+        Search pricing catalog by keyword across any AWS service.
+
+        For EC2 (default), applies compute-specific filters so results are
+        meaningful instance-type matches. For other services, performs a
+        broad text search across all product attributes.
         """
+        resolved = _resolve_service_code(service_code)
         filters: list[dict[str, str]] = []
         if region:
             try:
@@ -416,36 +545,53 @@ class AWSProvider:
                 filters.append({"Field": "location", "Value": display_name})
             except ValueError:
                 pass
-        filters += [
-            {"Field": "tenancy", "Value": "Shared"},
-            {"Field": "operatingSystem", "Value": "Linux"},
-            {"Field": "preInstalledSw", "Value": "NA"},
-            {"Field": "capacitystatus", "Value": "Used"},
-        ]
 
-        # If query looks like a specific instance type, filter on it
-        if "." in query and not query.startswith("gpu"):
-            filters.append({"Field": "instanceType", "Value": query})
+        if resolved == "AmazonEC2":
+            # Keep existing compute-specific filters for backward compatibility
+            filters += [
+                {"Field": "tenancy", "Value": "Shared"},
+                {"Field": "operatingSystem", "Value": "Linux"},
+                {"Field": "preInstalledSw", "Value": "NA"},
+                {"Field": "capacitystatus", "Value": "Used"},
+            ]
+            if "." in query and not query.startswith("gpu"):
+                filters.append({"Field": "instanceType", "Value": query})
 
-        raw = await self._get_products("AmazonEC2", filters, max_results=max_results * 3)
-
-        prices = []
-        query_lower = query.lower()
-        for item in raw:
-            attrs = item.get("product", {}).get("attributes", {})
-            instance_type = attrs.get("instanceType", "")
-            if query_lower not in instance_type.lower() and query_lower not in attrs.get("vcpu", ""):
-                if "gpu" in query_lower and attrs.get("gpu", "0") == "0":
+            raw = await self._get_products(resolved, filters, max_results=max_results * 3)
+            prices = []
+            query_lower = query.lower()
+            for item in raw:
+                attrs = item.get("product", {}).get("attributes", {})
+                instance_type = attrs.get("instanceType", "")
+                if "gpu" in query_lower:
+                    if attrs.get("gpu", "0") == "0":
+                        continue
+                elif query_lower not in instance_type.lower():
                     continue
-                elif "gpu" not in query_lower and query_lower not in instance_type.lower():
+                p = self._item_to_price(item, region or "us-east-1", PricingTerm.ON_DEMAND, "compute")
+                if p:
+                    prices.append(p)
+                if len(prices) >= max_results:
+                    break
+            return prices
+        else:
+            # Generic service search: fetch up to max_results * 5 products and
+            # text-match query against all attribute values
+            raw = await self._get_products(resolved, filters, max_results=max_results * 5)
+            prices = []
+            query_lower = query.lower()
+            svc_label = service_code.lower().replace("amazon", "").replace("aws", "").strip()
+            for item in raw:
+                attrs = item.get("product", {}).get("attributes", {})
+                haystack = " ".join(str(v) for v in attrs.values()).lower()
+                if query_lower not in haystack:
                     continue
-            p = self._item_to_price(item, region or "us-east-1", PricingTerm.ON_DEMAND, "compute")
-            if p:
-                prices.append(p)
-            if len(prices) >= max_results:
-                break
-
-        return prices
+                p = self._item_to_price(item, region or "us-east-1", PricingTerm.ON_DEMAND, svc_label)
+                if p:
+                    prices.append(p)
+                if len(prices) >= max_results:
+                    break
+            return prices
 
     async def list_regions(self, service: str = "compute") -> list[str]:
         return list_aws_regions()

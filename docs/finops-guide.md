@@ -227,6 +227,152 @@ Returns all GCP regions sorted by price. US regions (us-central1, us-east1) are 
 
 ---
 
+## 13. Non-Compute Service Pricing
+
+### CloudWatch Metrics
+
+**Use case:** "How much does it cost to send custom metrics to CloudWatch in us-east-1?"
+
+```
+get_service_price(
+  provider="aws",
+  service="cloudwatch",
+  region="us-east-1",
+  filters={"group": "Metric"}
+)
+```
+
+Returns metric ingestion, storage, and alarm pricing. CloudWatch charges per custom metric per month; pricing tiers reduce the per-metric cost at scale.
+
+---
+
+### Data Transfer Between Regions
+
+**Use case:** "What does it cost to transfer data from us-east-1 to eu-west-1?"
+
+```
+get_service_price(
+  provider="aws",
+  service="data_transfer",
+  region="us-east-1",
+  filters={"fromRegionCode": "us-east-1", "toRegionCode": "eu-west-1"}
+)
+```
+
+Or search for all egress options:
+```
+search_pricing(
+  provider="aws",
+  service="data_transfer",
+  query="egress"
+)
+```
+
+Typical AWS inter-region transfer: $0.02/GB. This is often overlooked in architecture cost estimates — for high-throughput workloads (analytics pipelines, cross-region replication) data transfer can rival compute costs.
+
+---
+
+### RDS Instance Pricing
+
+**Use case:** "What's the on-demand cost for a MySQL db.r5.large in us-east-1 Single-AZ?"
+
+```
+get_service_price(
+  provider="aws",
+  service="rds",
+  region="us-east-1",
+  filters={
+    "databaseEngine": "MySQL",
+    "instanceType": "db.r5.large",
+    "deploymentOption": "Single-AZ"
+  }
+)
+```
+
+To compare Multi-AZ:
+```
+get_service_price(
+  provider="aws",
+  service="rds",
+  region="us-east-1",
+  filters={
+    "databaseEngine": "MySQL",
+    "instanceType": "db.r5.large",
+    "deploymentOption": "Multi-AZ"
+  }
+)
+```
+
+Multi-AZ doubles the instance cost but provides automatic failover — worth factoring into production architecture TCO.
+
+---
+
+### Load Balancer Pricing
+
+**Use case:** "What does an Application Load Balancer cost in us-east-1?"
+
+```
+get_service_price(
+  provider="aws",
+  service="elb",
+  region="us-east-1",
+  filters={"productFamily": "Load Balancer"}
+)
+```
+
+ALB pricing is per LCU (Load Balancer Capacity Unit) per hour plus a fixed hourly charge. For most web applications, load balancer costs are $15–50/mo per ALB depending on traffic.
+
+---
+
+### Lambda Pricing
+
+**Use case:** "What does Lambda cost per GB-second and per request?"
+
+```
+get_service_price(
+  provider="aws",
+  service="lambda",
+  region="us-east-1",
+  filters={"group": "AWS-Lambda-Duration"}
+)
+```
+
+Lambda's first 1M requests/month and 400,000 GB-seconds/month are free. For serverless architecture TCO, factor both duration and request counts.
+
+---
+
+### Discovering All Pricing for a Service
+
+**Use case:** "What pricing attributes does DynamoDB expose?"
+
+Use `search_pricing` to explore first:
+```
+search_pricing(
+  provider="aws",
+  service="dynamodb",
+  query="write",
+  region="us-east-1"
+)
+```
+
+This returns DynamoDB Write Capacity Unit pricing, On-Demand write request pricing, and Global Table replication pricing — giving you the filter keys to use in `get_service_price`.
+
+---
+
+### Full Non-Compute TCO
+
+**Use case:** "What's the total monthly cost for our stack including compute, RDS, and data transfer?"
+
+The AI combines multiple tool calls:
+1. `estimate_bom` — compute + storage
+2. `get_service_price(service="rds", ...)` — database
+3. `get_service_price(service="data_transfer", ...)` — egress estimate
+4. `get_service_price(service="elb", ...)` — load balancer
+
+Then sums them manually to produce a complete infrastructure cost picture.
+
+---
+
 ## Configuration for Different FinOps Scenarios
 
 ### Public pricing only (no credentials)

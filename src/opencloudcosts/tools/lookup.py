@@ -244,19 +244,23 @@ def register_lookup_tools(mcp: Any) -> None:
         provider: str,
         query: str,
         region: str = "",
+        service: str = "",
         max_results: int = 10,
     ) -> dict[str, Any]:
         """
-        Search the cloud pricing catalog by instance family, type, or keyword.
+        Search the cloud pricing catalog by keyword across any service.
 
-        Useful for discovering available instance types or finding pricing for
-        a category of instances (e.g. all m5 instances, or GPU instances).
+        For AWS, defaults to EC2 compute search. Set service to search other
+        AWS services (e.g. "cloudwatch", "rds", "data_transfer", "lambda").
+        For GCP, searches compute instance types.
 
         Args:
             provider: Cloud provider — "aws" or "gcp"
-            query: Search query, e.g. "m5", "c6g.xlarge", "gpu", "r5.2xlarge"
-            region: Optional region code to filter results. Leave empty for any region.
-            max_results: Maximum number of results to return (default 10, max 50)
+            query: Search keyword, e.g. "m5", "metric", "MySQL", "egress"
+            region: Optional region code to filter results
+            service: AWS service to search (default: "ec2"). Use list_services()
+                     to discover available service codes.
+            max_results: Maximum results to return (default 10, max 50)
         """
         pvdr = _providers(ctx).get(provider)
         if pvdr is None:
@@ -264,7 +268,11 @@ def register_lookup_tools(mcp: Any) -> None:
 
         max_results = min(max_results, 50)
         try:
-            prices = await pvdr.search_pricing(query, region or None, max_results)
+            kwargs: dict[str, Any] = {"query": query, "region": region or None,
+                                      "max_results": max_results}
+            if service and provider == "aws":
+                kwargs["service_code"] = service
+            prices = await pvdr.search_pricing(**kwargs)
         except Exception as e:
             logger.error("search_pricing error: %s", e)
             return {"error": f"API error: {e}"}
@@ -272,7 +280,81 @@ def register_lookup_tools(mcp: Any) -> None:
         return {
             "provider": provider,
             "query": query,
+            "service": service or "ec2",
             "region": region or "all",
+            "count": len(prices),
+            "results": [p.summary() for p in prices],
+        }
+
+    @mcp.tool()
+    async def get_service_price(
+        ctx: Context,
+        provider: str,
+        service: str,
+        region: str,
+        filters: dict[str, str] | None = None,
+        max_results: int = 20,
+    ) -> dict[str, Any]:
+        """
+        Get pricing for any cloud service by service code and attribute filters.
+
+        This is the generic pricing tool — use it for services not covered by
+        get_compute_price or get_storage_price: CloudWatch, data transfer, RDS,
+        Lambda, ELB, CloudFront, Route53, DynamoDB, EFS, ElastiCache, etc.
+
+        Use list_services() to discover available service codes.
+        Use search_pricing(service=...) to explore available products and their
+        filter attributes before calling this tool.
+
+        Common service aliases (AWS):
+          cloudwatch, data_transfer, rds, lambda, elb, cloudfront, route53,
+          dynamodb, efs, elasticache, sqs, sns, redshift, cloudtrail, backup
+
+        Example filters:
+          CloudWatch metrics: {"group": "Metric"}
+          Data transfer (egress to internet): {"transferType": "AWS Outbound"}
+          Data transfer between regions: {"fromRegionCode": "us-east-1",
+                                          "toRegionCode": "eu-west-1"}
+          RDS MySQL: {"databaseEngine": "MySQL", "instanceType": "db.r5.large"}
+          Lambda: {"group": "AWS-Lambda-Duration"}
+
+        Args:
+            provider: Cloud provider — "aws" (GCP generic service pricing coming soon)
+            service: Service code or alias, e.g. "cloudwatch", "AmazonCloudWatch"
+            region: Region code, e.g. "us-east-1"
+            filters: Attribute key/value pairs to narrow results (optional)
+            max_results: Maximum results to return (default 20)
+        """
+        pvdr = _providers(ctx).get(provider)
+        if pvdr is None:
+            return {"error": f"Provider '{provider}' not configured."}
+
+        if not hasattr(pvdr, "get_service_price"):
+            return {"error": f"Provider '{provider}' does not support generic service pricing yet."}
+
+        try:
+            prices = await pvdr.get_service_price(
+                service, region, filters or {}, max_results
+            )
+        except Exception as e:
+            logger.error("get_service_price error: %s", e)
+            return {"error": f"API error: {e}"}
+
+        if not prices:
+            return {
+                "result": "no_prices_found",
+                "message": (
+                    f"No pricing found for service '{service}' in {region} "
+                    f"with filters {filters}. "
+                    "Try search_pricing() to explore available products and attributes."
+                ),
+            }
+
+        return {
+            "provider": provider,
+            "service": service,
+            "region": region,
+            "filters_applied": filters or {},
             "count": len(prices),
             "results": [p.summary() for p in prices],
         }

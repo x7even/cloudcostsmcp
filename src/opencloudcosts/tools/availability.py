@@ -413,6 +413,49 @@ def register_availability_tools(mcp: Any) -> None:
         return result
 
     @mcp.tool()
+    async def list_services(
+        ctx: Context,
+        provider: str = "aws",
+    ) -> dict[str, Any]:
+        """
+        List all cloud services that have pricing data available.
+
+        For AWS, returns all 260+ services in the AWS bulk pricing catalog
+        (EC2, RDS, CloudWatch, Lambda, data transfer, ELB, Route53, etc.)
+        along with short aliases you can use with get_service_price().
+
+        Use this to discover what services are available before calling
+        get_service_price() or search_pricing(service=...).
+
+        Args:
+            provider: Cloud provider — "aws" (default)
+        """
+        pvdr = ctx.request_context.lifespan_context["providers"].get(provider)
+        if pvdr is None:
+            return {"error": f"Provider '{provider}' not configured."}
+
+        if not hasattr(pvdr, "list_services"):
+            return {"error": f"Provider '{provider}' does not support list_services yet."}
+
+        try:
+            services = await pvdr.list_services()
+        except Exception as e:
+            logger.error("list_services error: %s", e)
+            return {"error": str(e)}
+
+        return {
+            "provider": provider,
+            "count": len(services),
+            "services": services,
+            "tip": (
+                "Use service_code or any alias with get_service_price() or "
+                "search_pricing(service=...). "
+                "Example: get_service_price(service='cloudwatch', region='us-east-1', "
+                "filters={'group': 'Metric'})"
+            ),
+        }
+
+    @mcp.tool()
     async def cache_stats(ctx: Context) -> dict[str, Any]:
         """Return statistics about the local pricing cache (entry counts, DB size)."""
         cache = ctx.request_context.lifespan_context["cache"]

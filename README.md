@@ -18,20 +18,51 @@ Supports both **public list pricing** (no credentials needed) and **effective/be
 
 | Tool | Description |
 |------|-------------|
+**Pricing Lookup**
+
+| Tool | Description |
+|------|-------------|
 | `get_compute_price` | Price for a specific instance type in a region |
-| `get_prices_batch` | Prices for multiple instance types in one region, one call |
-| `compare_compute_prices` | Compare same instance across multiple regions |
-| `find_cheapest_region` | Find cheapest region for an instance type |
-| `find_available_regions` | All regions where an instance type is available (with prices) |
 | `get_storage_price` | EBS/S3/GCS storage pricing |
-| `search_pricing` | Free-text search across pricing catalog |
+| `get_service_price` | **Generic pricing for any AWS service** — CloudWatch, data transfer, RDS, Lambda, ELB, Route53, DynamoDB, EFS, and 250+ others |
+| `get_prices_batch` | Prices for multiple instance types in one call (concurrent) |
+| `compare_compute_prices` | Compare same instance across multiple regions with optional baseline deltas |
+| `search_pricing` | Search pricing catalog by keyword — any service, not just EC2 |
+
+**Effective & Discount Pricing**
+
+| Tool | Description |
+|------|-------------|
 | `get_effective_price` | Effective rate after account discounts (requires credentials) |
 | `get_discount_summary` | All active RIs and Savings Plans with utilization % |
-| `list_regions` | All regions for a provider/service |
-| `list_instance_types` | Available instance types with filters |
+
+**Discovery**
+
+| Tool | Description |
+|------|-------------|
+| `list_services` | All 260+ AWS services with pricing data |
+| `list_regions` | All regions with friendly names |
+| `list_instance_types` | Available instance types with vCPU/memory filters |
 | `check_availability` | Is a SKU available in a region? |
+
+**Region Analysis**
+
+| Tool | Description |
+|------|-------------|
+| `find_cheapest_region` | Cheapest region for an instance type with optional baseline deltas |
+| `find_available_regions` | Every region where an instance exists — prices, region names, deltas |
+
+**Cost Estimation**
+
+| Tool | Description |
+|------|-------------|
 | `estimate_bom` | TCO for a Bill of Materials |
 | `estimate_unit_economics` | Cost per user/request/transaction |
+
+**Cache**
+
+| Tool | Description |
+|------|-------------|
 | `refresh_cache` | Invalidate pricing cache |
 | `cache_stats` | Cache entry counts and DB size |
 
