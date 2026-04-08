@@ -18,6 +18,10 @@ class PricingTerm(str, Enum):
     ON_DEMAND = "on_demand"
     RESERVED_1YR = "reserved_1yr"
     RESERVED_3YR = "reserved_3yr"
+    RESERVED_1YR_PARTIAL = "reserved_1yr_partial"
+    RESERVED_1YR_ALL = "reserved_1yr_all"
+    RESERVED_3YR_PARTIAL = "reserved_3yr_partial"
+    RESERVED_3YR_ALL = "reserved_3yr_all"
     SPOT = "spot"
     SAVINGS_PLAN = "savings_plan"  # AWS
     CUD_1YR = "cud_1yr"           # GCP Committed Use Discount 1yr

@@ -163,6 +163,95 @@ async def test_bulk_fallback_on_no_credentials(aws_provider: AWSProvider):
     assert prices[0].price_per_unit == Decimal("0.1920000000")
 
 
+# ------------------------------------------------------------------
+# Partial Upfront and All Upfront Reserved Instance tests
+# ------------------------------------------------------------------
+
+_PARTIAL_UPFRONT_ITEM = {
+    "product": _M5_XLARGE_PRICE_ITEM["product"],
+    "terms": {
+        "Reserved": {
+            "KEY.PARTIAL": {
+                "priceDimensions": {
+                    "dim1": {
+                        "unit": "Hrs",
+                        "pricePerUnit": {"USD": "0.0530000000"},
+                        "description": "$0.053 per Reserved Linux m5.xlarge Instance Hour",
+                    },
+                    "dim2": {
+                        "unit": "Quantity",
+                        "pricePerUnit": {"USD": "280.0000000000"},
+                        "description": "Upfront Fee",
+                    },
+                },
+                "termAttributes": {
+                    "LeaseContractLength": "1yr",
+                    "PurchaseOption": "Partial Upfront",
+                    "OfferingClass": "standard",
+                },
+            }
+        }
+    },
+}
+
+_ALL_UPFRONT_ITEM = {
+    "product": _M5_XLARGE_PRICE_ITEM["product"],
+    "terms": {
+        "Reserved": {
+            "KEY.ALL": {
+                "priceDimensions": {
+                    "dim1": {
+                        "unit": "Hrs",
+                        "pricePerUnit": {"USD": "0.0000000000"},
+                        "description": "$0.00 per Reserved Linux m5.xlarge Instance Hour",
+                    },
+                    "dim2": {
+                        "unit": "Quantity",
+                        "pricePerUnit": {"USD": "560.0000000000"},
+                        "description": "Upfront Fee",
+                    },
+                },
+                "termAttributes": {
+                    "LeaseContractLength": "1yr",
+                    "PurchaseOption": "All Upfront",
+                    "OfferingClass": "standard",
+                },
+            }
+        }
+    },
+}
+
+
+async def test_reserved_1yr_partial_upfront(aws_provider: AWSProvider):
+    with patch.object(aws_provider, "_get_products", return_value=[_PARTIAL_UPFRONT_ITEM]):
+        prices = await aws_provider.get_compute_price(
+            "m5.xlarge", "us-east-1", term=PricingTerm.RESERVED_1YR_PARTIAL
+        )
+    assert len(prices) == 1
+    p = prices[0]
+    assert p.pricing_term == PricingTerm.RESERVED_1YR_PARTIAL
+    # Effective hourly: $0.053/hr + $280/8760 ≈ $0.0850/hr — must be > raw $0.053
+    assert p.price_per_unit > Decimal("0.05")
+    # upfront_cost stored in attributes for transparency
+    assert "upfront_cost" in p.attributes
+    assert Decimal(p.attributes["upfront_cost"]) == Decimal("280.0000000000")
+
+
+async def test_reserved_1yr_all_upfront_normalised(aws_provider: AWSProvider):
+    with patch.object(aws_provider, "_get_products", return_value=[_ALL_UPFRONT_ITEM]):
+        prices = await aws_provider.get_compute_price(
+            "m5.xlarge", "us-east-1", term=PricingTerm.RESERVED_1YR_ALL
+        )
+    assert len(prices) == 1
+    p = prices[0]
+    assert p.pricing_term == PricingTerm.RESERVED_1YR_ALL
+    # $560 / 8760 ≈ $0.0639/hr  (not $0)
+    expected = Decimal("560") / Decimal("8760")
+    assert abs(p.price_per_unit - expected) < Decimal("0.000001")
+    assert "upfront_cost" in p.attributes
+    assert Decimal(p.attributes["upfront_cost"]) == Decimal("560.0000000000")
+
+
 async def test_bulk_fallback_filters_correctly(aws_provider: AWSProvider):
     """Bulk fallback applies TERM_MATCH filters in-memory."""
     import botocore.exceptions

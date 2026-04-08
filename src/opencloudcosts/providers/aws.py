@@ -43,13 +43,21 @@ _TERM_KEY: dict[PricingTerm, str] = {
     PricingTerm.ON_DEMAND: "OnDemand",
     PricingTerm.RESERVED_1YR: "Reserved",
     PricingTerm.RESERVED_3YR: "Reserved",
+    PricingTerm.RESERVED_1YR_PARTIAL: "Reserved",
+    PricingTerm.RESERVED_1YR_ALL: "Reserved",
+    PricingTerm.RESERVED_3YR_PARTIAL: "Reserved",
+    PricingTerm.RESERVED_3YR_ALL: "Reserved",
     PricingTerm.SAVINGS_PLAN: "Reserved",  # handled separately via SP API
 }
 
 # Reserved term qualifiers (LeaseContractLength + PurchaseOption)
 _RESERVED_FILTERS: dict[PricingTerm, dict[str, str]] = {
-    PricingTerm.RESERVED_1YR: {"LeaseContractLength": "1yr", "PurchaseOption": "No Upfront"},
-    PricingTerm.RESERVED_3YR: {"LeaseContractLength": "3yr", "PurchaseOption": "No Upfront"},
+    PricingTerm.RESERVED_1YR:         {"LeaseContractLength": "1yr", "PurchaseOption": "No Upfront"},
+    PricingTerm.RESERVED_3YR:         {"LeaseContractLength": "3yr", "PurchaseOption": "No Upfront"},
+    PricingTerm.RESERVED_1YR_PARTIAL: {"LeaseContractLength": "1yr", "PurchaseOption": "Partial Upfront"},
+    PricingTerm.RESERVED_1YR_ALL:     {"LeaseContractLength": "1yr", "PurchaseOption": "All Upfront"},
+    PricingTerm.RESERVED_3YR_PARTIAL: {"LeaseContractLength": "3yr", "PurchaseOption": "Partial Upfront"},
+    PricingTerm.RESERVED_3YR_ALL:     {"LeaseContractLength": "3yr", "PurchaseOption": "All Upfront"},
 }
 
 
@@ -233,8 +241,18 @@ class AWSProvider:
     def _extract_reserved_price(
         item: dict[str, Any],
         term: PricingTerm,
-    ) -> tuple[Decimal, str] | None:
-        """Return (price_per_unit, unit_str) for a Reserved term, or None."""
+    ) -> tuple[Decimal, str, Decimal] | None:
+        """Return (effective_price_per_unit, unit_str, upfront_cost) for a Reserved term, or None.
+
+        For Partial Upfront and All Upfront terms the priceDimensions contain both
+        an "Hrs" dimension (recurring hourly) and a "Quantity" dimension (one-time
+        upfront payment). We normalise the upfront to an effective hourly rate so
+        that all terms are comparable on a per-hour basis:
+
+            effective_hourly = recurring_hourly + upfront / (8760 * term_years)
+
+        upfront_cost is the raw one-time payment (for transparency in attributes).
+        """
         qualifiers = _RESERVED_FILTERS.get(term, {})
         terms = item.get("terms", {}).get("Reserved", {})
         for offer_term in terms.values():
@@ -243,10 +261,25 @@ class AWSProvider:
                 attrs.get("LeaseContractLength") == qualifiers.get("LeaseContractLength")
                 and attrs.get("PurchaseOption") == qualifiers.get("PurchaseOption")
             ):
-                for dim in offer_term.get("priceDimensions", {}).values():
-                    usd = dim.get("pricePerUnit", {}).get("USD", "0")
-                    if usd and usd != "0.0000000000":
-                        return Decimal(usd), dim.get("unit", "Hrs")
+                price_dims = offer_term.get("priceDimensions", {})
+                hourly = Decimal("0")
+                upfront = Decimal("0")
+                for dim in price_dims.values():
+                    unit = dim.get("unit", "")
+                    usd = Decimal(dim.get("pricePerUnit", {}).get("USD", "0"))
+                    if unit == "Hrs":
+                        hourly = usd
+                    elif unit == "Quantity":
+                        upfront = usd
+
+                # Normalise upfront to effective hourly rate
+                if upfront > 0:
+                    years = 3 if "3yr" in str(term.value) else 1
+                    term_hours = Decimal(str(8760 * years))
+                    hourly += upfront / term_hours
+
+                if hourly > 0:
+                    return hourly, "Hrs", upfront
         return None
 
     def _item_to_price(
@@ -260,14 +293,21 @@ class AWSProvider:
         attrs = product.get("attributes", {})
         sku = product.get("sku", "")
 
+        upfront_cost: Decimal | None = None
         if term == PricingTerm.ON_DEMAND:
             result = self._extract_on_demand_price(item)
+            if result is None:
+                return None
+            price_decimal, unit_str = result
         else:
-            result = self._extract_reserved_price(item, term)
+            reserved_result = self._extract_reserved_price(item, term)
+            if reserved_result is None:
+                return None
+            price_decimal, unit_str, upfront_cost = reserved_result
 
-        if result is None:
-            return None
-        price_decimal, unit_str = result
+        extra_attrs: dict[str, str] = {}
+        if upfront_cost is not None and upfront_cost > 0:
+            extra_attrs["upfront_cost"] = str(upfront_cost)
 
         return NormalizedPrice(
             provider=CloudProvider.AWS,
@@ -277,13 +317,16 @@ class AWSProvider:
             description=attrs.get("instanceType", attrs.get("volumeType", sku)),
             region=region,
             attributes={
-                k: v for k, v in attrs.items()
-                if k in (
-                    "instanceType", "vcpu", "memory", "operatingSystem",
-                    "tenancy", "storage", "networkPerformance",
-                    "volumeType", "maxIopsvolume", "maxThroughputvolume",
-                    "databaseEngine", "deploymentOption",
-                )
+                **{
+                    k: v for k, v in attrs.items()
+                    if k in (
+                        "instanceType", "vcpu", "memory", "operatingSystem",
+                        "tenancy", "storage", "networkPerformance",
+                        "volumeType", "maxIopsvolume", "maxThroughputvolume",
+                        "databaseEngine", "deploymentOption",
+                    )
+                },
+                **extra_attrs,
             },
             pricing_term=term,
             price_per_unit=price_decimal,
