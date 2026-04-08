@@ -270,6 +270,88 @@ def register_availability_tools(mcp: Any) -> None:
         return result
 
     @mcp.tool()
+    async def find_available_regions(
+        ctx: Context,
+        provider: str,
+        instance_type: str,
+        os: str = "Linux",
+        term: str = "on_demand",
+        include_prices: bool = True,
+    ) -> dict[str, Any]:
+        """
+        Find all regions where a specific compute instance type is available.
+
+        Queries all regions concurrently and returns the ones where pricing exists.
+        Optionally includes the price in each available region, sorted cheapest first.
+
+        For AWS without credentials, searches major regions by default (faster).
+        Pass the full region list explicitly if you need exhaustive coverage.
+
+        Args:
+            provider: Cloud provider — "aws" or "gcp"
+            instance_type: Instance type, e.g. "c6a.xlarge" or "n2-standard-4"
+            os: Operating system — "Linux" (default) or "Windows"
+            term: Pricing term — "on_demand" (default), "reserved_1yr", "spot"
+            include_prices: If true (default), include per-hour price for each region
+        """
+        pvdr = ctx.request_context.lifespan_context["providers"].get(provider)
+        if pvdr is None:
+            return {"error": f"Provider '{provider}' not configured."}
+
+        try:
+            pricing_term = PricingTerm(term)
+        except ValueError:
+            return {"error": f"Unknown term '{term}'."}
+
+        all_regions = await pvdr.list_regions("compute")
+        # For AWS, default to major regions to avoid cold-cache timeouts
+        search_regions = (
+            _AWS_MAJOR_REGIONS if provider == "aws" else all_regions
+        )
+        scoped = provider == "aws" and search_regions is _AWS_MAJOR_REGIONS
+
+        semaphore = asyncio.Semaphore(10)
+
+        async def probe(region: str) -> tuple[str, list]:
+            async with semaphore:
+                try:
+                    prices = await pvdr.get_compute_price(
+                        instance_type, region, os, pricing_term
+                    )
+                    return region, prices
+                except Exception:
+                    return region, []
+
+        raw = await asyncio.gather(*[probe(r) for r in search_regions])
+
+        available = []
+        for region, prices in raw:
+            if prices:
+                entry: dict[str, Any] = {"region": region}
+                if include_prices:
+                    p = prices[0]
+                    entry["price_per_hour"] = f"${p.price_per_unit:.6f}"
+                    entry["monthly_estimate"] = f"${p.monthly_cost:.2f}/mo"
+                available.append(entry)
+
+        if include_prices:
+            available.sort(key=lambda x: x.get("price_per_hour", ""))
+
+        result: dict[str, Any] = {
+            "provider": provider,
+            "instance_type": instance_type,
+            "term": term,
+            "available_region_count": len(available),
+            "available_regions": available,
+        }
+        if scoped:
+            result["note"] = (
+                f"Searched {len(search_regions)} major regions. "
+                "Pass the full list from list_regions() for exhaustive coverage."
+            )
+        return result
+
+    @mcp.tool()
     async def cache_stats(ctx: Context) -> dict[str, Any]:
         """Return statistics about the local pricing cache (entry counts, DB size)."""
         cache = ctx.request_context.lifespan_context["cache"]

@@ -1,6 +1,7 @@
 """Price lookup MCP tools."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -310,6 +311,79 @@ def register_lookup_tools(mcp: Any) -> None:
         except Exception as e:
             logger.error("get_discount_summary error: %s", e)
             return {"error": f"API error: {e}"}
+
+    @mcp.tool()
+    async def get_prices_batch(
+        ctx: Context,
+        provider: str,
+        instance_types: list[str],
+        region: str,
+        os: str = "Linux",
+        term: str = "on_demand",
+    ) -> dict[str, Any]:
+        """
+        Get prices for multiple instance types in a single region in one call.
+
+        Fetches all prices concurrently. Useful for comparing a shortlist of
+        candidate instance types (e.g. m5.xlarge vs c5.xlarge vs r5.xlarge)
+        without making separate tool calls.
+
+        Args:
+            provider: Cloud provider — "aws" or "gcp"
+            instance_types: List of instance types, e.g. ["m5.xlarge", "c5.xlarge", "r5.large"]
+            region: Region code, e.g. "us-east-1" or "us-central1"
+            os: Operating system — "Linux" (default) or "Windows"
+            term: Pricing term — "on_demand" (default), "reserved_1yr", "reserved_3yr", "spot"
+        """
+        pvdr = _providers(ctx).get(provider)
+        if pvdr is None:
+            return {"error": f"Provider '{provider}' not configured."}
+
+        try:
+            pricing_term = PricingTerm(term)
+        except ValueError:
+            return {"error": f"Unknown term '{term}'. Valid: {[t.value for t in PricingTerm]}"}
+
+        async def fetch_one(itype: str) -> tuple[str, list | str]:
+            try:
+                prices = await pvdr.get_compute_price(itype, region, os, pricing_term)
+                return itype, prices
+            except Exception as e:
+                return itype, str(e)
+
+        raw = await asyncio.gather(*[fetch_one(t) for t in instance_types])
+
+        results = []
+        errors = {}
+        for itype, outcome in raw:
+            if isinstance(outcome, str):
+                errors[itype] = outcome
+            elif not outcome:
+                errors[itype] = "no pricing found"
+            else:
+                p = outcome[0]
+                results.append({
+                    "instance_type": itype,
+                    "price_per_hour": f"${p.price_per_unit:.6f}",
+                    "monthly_estimate": f"${p.monthly_cost:.2f}/mo",
+                    **{k: v for k, v in p.summary().items()
+                       if k in ("vcpu", "memory", "description")},
+                })
+
+        # Sort by price ascending
+        results.sort(key=lambda x: x["price_per_hour"])
+
+        out: dict[str, Any] = {
+            "provider": provider,
+            "region": region,
+            "os": os,
+            "term": term,
+            "count": len(results),
+            "results": results,
+        }
+        if errors:
+            out["errors"] = errors
+        return out
 
     @mcp.tool()
     async def refresh_cache(

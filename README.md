@@ -19,8 +19,10 @@ Supports both **public list pricing** (no credentials needed) and **effective/be
 | Tool | Description |
 |------|-------------|
 | `get_compute_price` | Price for a specific instance type in a region |
+| `get_prices_batch` | Prices for multiple instance types in one region, one call |
 | `compare_compute_prices` | Compare same instance across multiple regions |
-| `find_cheapest_region` | Find cheapest region for an instance type across all regions |
+| `find_cheapest_region` | Find cheapest region for an instance type |
+| `find_available_regions` | All regions where an instance type is available (with prices) |
 | `get_storage_price` | EBS/S3/GCS storage pricing |
 | `search_pricing` | Free-text search across pricing catalog |
 | `get_effective_price` | Effective rate after account discounts (requires credentials) |
