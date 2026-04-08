@@ -215,6 +215,37 @@ GCP 3yr CUD ~$0.086/hr vs AWS 3yr reserved ~$0.091/hr — GCP typically edges ou
 
 ---
 
+## 13. AWS vs GCP vs Azure 3-Way Comparison
+
+**Use case:** "Compare the same 4-vCPU / 16-GB general-purpose instance across all three clouds."
+
+```
+get_compute_price(provider="aws", instance_type="m5.xlarge", region="us-east-1")
+get_compute_price(provider="gcp", instance_type="n2-standard-4", region="us-central1")
+get_compute_price(provider="azure", instance_type="Standard_D4s_v3", region="eastus")
+```
+
+All three are approximately 4 vCPU / 16 GB general-purpose instances. Compare on-demand hourly rates and reserved/committed-use rates:
+
+```
+# 1-year reserved / committed
+get_compute_price(provider="aws", instance_type="m5.xlarge",
+                  region="us-east-1", term="reserved_1yr")
+get_compute_price(provider="gcp", instance_type="n2-standard-4",
+                  region="us-central1", term="cud_1yr")
+get_compute_price(provider="azure", instance_type="Standard_D4s_v3",
+                  region="eastus", term="reserved_1yr")
+```
+
+**Typical output:**
+> "On-demand: AWS $0.192/hr, GCP ~$0.190/hr, Azure $0.192/hr — all roughly equivalent.
+> 1-year reserved: AWS ~$0.118/hr (38% off), GCP ~$0.128/hr (33% off), Azure ~$0.116/hr (40% off).
+> Azure 1yr reserved edges out slightly at list pricing; GCP 3yr CUDs often win at maximum commitment."
+
+Azure requires no credentials — pricing is fetched from the public Azure Retail Prices API.
+
+---
+
 ## 12. GCP Region Pricing Variation
 
 **Use case:** "Where is the cheapest GCP region for n2-standard-8?"

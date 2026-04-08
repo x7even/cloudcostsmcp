@@ -103,6 +103,49 @@ GCP_REGION_DISPLAY: dict[str, str] = {
 
 GCP_DISPLAY_REGION: dict[str, str] = {v: k for k, v in GCP_REGION_DISPLAY.items()}
 
+# Azure: ARM region name -> human-readable display name
+AZURE_REGION_DISPLAY: dict[str, str] = {
+    # North America
+    "eastus": "East US",
+    "eastus2": "East US 2",
+    "westus": "West US",
+    "westus2": "West US 2",
+    "westus3": "West US 3",
+    "centralus": "Central US",
+    "northcentralus": "North Central US",
+    "southcentralus": "South Central US",
+    "westcentralus": "West Central US",
+    "canadacentral": "Canada Central",
+    "canadaeast": "Canada East",
+    # South America
+    "brazilsouth": "Brazil South",
+    # Europe
+    "northeurope": "North Europe",
+    "westeurope": "West Europe",
+    "uksouth": "UK South",
+    "ukwest": "UK West",
+    "francecentral": "France Central",
+    "germanywestcentral": "Germany West Central",
+    "norwayeast": "Norway East",
+    "switzerlandnorth": "Switzerland North",
+    # Asia Pacific
+    "eastasia": "East Asia",
+    "southeastasia": "Southeast Asia",
+    "japaneast": "Japan East",
+    "japanwest": "Japan West",
+    "australiaeast": "Australia East",
+    "australiasoutheast": "Australia Southeast",
+    "centralindia": "Central India",
+    "southindia": "South India",
+    "westindia": "West India",
+    "koreacentral": "Korea Central",
+    # Middle East & Africa
+    "southafricanorth": "South Africa North",
+    "uaenorth": "UAE North",
+}
+
+AZURE_DISPLAY_REGION: dict[str, str] = {v: k for k, v in AZURE_REGION_DISPLAY.items()}
+
 
 def aws_region_to_display(region_code: str) -> str:
     """Convert AWS region code to the display name used by the Pricing API."""
@@ -140,6 +183,12 @@ def normalize_region(provider: str, value: str) -> str:
         if value in GCP_DISPLAY_REGION:
             return GCP_DISPLAY_REGION[value]
         raise ValueError(f"Unknown GCP region: {value!r}")
+    if provider == "azure":
+        if value in AZURE_REGION_DISPLAY:
+            return value
+        if value in AZURE_DISPLAY_REGION:
+            return AZURE_DISPLAY_REGION[value]
+        raise ValueError(f"Unknown Azure region: {value!r}")
     return value
 
 
@@ -151,10 +200,16 @@ def list_gcp_regions() -> list[str]:
     return sorted(GCP_REGION_DISPLAY.keys())
 
 
+def list_azure_regions() -> list[str]:
+    return sorted(AZURE_REGION_DISPLAY.keys())
+
+
 def region_display_name(provider: str, region_code: str) -> str:
     """Return the friendly display name for a region code, or the code itself if unknown."""
     if provider == "aws":
         return AWS_REGION_DISPLAY.get(region_code, region_code)
     if provider == "gcp":
         return GCP_REGION_DISPLAY.get(region_code, region_code)
+    if provider == "azure":
+        return AZURE_REGION_DISPLAY.get(region_code, region_code)
     return region_code

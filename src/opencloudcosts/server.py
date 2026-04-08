@@ -50,6 +50,14 @@ async def _lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
     except Exception as e:
         logger.warning("Could not initialise GCP provider: %s", e)
 
+    # Azure provider — always available (public pricing requires no credentials)
+    try:
+        from opencloudcosts.providers.azure import AzureProvider
+        providers["azure"] = AzureProvider(settings, cache)
+        logger.info("Azure provider initialised (public pricing, no credentials needed)")
+    except Exception as e:
+        logger.warning("Could not initialise Azure provider: %s", e)
+
     logger.info("Configured providers: %s", list(providers))
 
     yield {"settings": settings, "cache": cache, "providers": providers}
@@ -67,10 +75,10 @@ def create_server() -> FastMCP:
         name="OpenCloudCosts MCP",
         instructions=(
             "OpenCloudCosts MCP provides accurate public and effective cloud pricing data. "
-            "Use it to look up compute, storage, and database pricing on AWS and GCP; "
-            "compare prices across regions; estimate TCO from a Bill of Materials; "
+            "Use it to look up compute, storage, and database pricing on AWS, GCP, and Azure; "
+            "compare prices across regions and providers; estimate TCO from a Bill of Materials; "
             "and calculate unit economics. For effective/bespoke pricing (post-discount), "
-            "ensure provider credentials are configured."
+            "ensure provider credentials are configured. Azure pricing requires no credentials."
         ),
         lifespan=_lifespan,
     )

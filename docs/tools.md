@@ -16,6 +16,15 @@
 - Supported machine families: `e2`, `n1`, `n2`, `n2d`, `c2`, `c2d`, `t2d`, `t2a`, `m1`
 - Supported storage types: `pd-standard`, `pd-ssd`, `pd-balanced`, `pd-extreme`
 
+### Azure
+- Instance types use ARM SKU names: `Standard_D4s_v3`, `Standard_E8s_v3`, `Standard_B2ms`, `Standard_NC6s_v3` (GPU), etc.
+- Regions use ARM region names (lowercase, no spaces): `eastus`, `eastus2`, `westeurope`, `southeastasia`, `australiaeast`, etc.
+- **Public pricing — no credentials needed.** Uses the Azure Retail Prices REST API.
+- Pricing terms: `on_demand` (default), `reserved_1yr`, `reserved_3yr`, `spot`
+- Windows pricing: pass `os="Windows"` to `get_compute_price`
+- Supported storage types: `premium-ssd`, `standard-ssd`, `standard-hdd`, `ultra-ssd`, `blob`
+- Note: `list_instance_types` returns instance names only — vCPU/memory metadata is not available from the Retail Prices API. Use [Azure VM sizes docs](https://learn.microsoft.com/en-us/azure/virtual-machines/sizes) for specs.
+
 ---
 
 All tools are callable via MCP `tools/call`. Parameters are JSON-typed. All tools return a JSON object; errors are returned as `{"error": "..."}` rather than exceptions so the LLM can reason about them.
@@ -30,8 +39,8 @@ Get the price for a specific compute instance type in a cloud region.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `provider` | string | ✓ | `"aws"` or `"gcp"` |
-| `instance_type` | string | ✓ | e.g. `"m5.xlarge"`, `"c6g.2xlarge"`, `"n2-standard-4"` |
+| `provider` | string | ✓ | `"aws"`, `"gcp"`, or `"azure"` |
+| `instance_type` | string | ✓ | e.g. `"m5.xlarge"`, `"c6g.2xlarge"`, `"n2-standard-4"`, `"Standard_D4s_v3"` |
 | `region` | string | ✓ | Region code, e.g. `"us-east-1"`, `"ap-southeast-2"` |
 | `os` | string | | `"Linux"` (default) or `"Windows"` |
 | `term` | string | | `"on_demand"` (default), `"reserved_1yr"`, `"reserved_3yr"` |
