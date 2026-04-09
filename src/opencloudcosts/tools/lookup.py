@@ -650,6 +650,16 @@ def register_lookup_tools(mcp: Any) -> None:
         if pvdr is None:
             return {"error": f"Provider '{provider}' not configured."}
 
+        if provider == "gcp":
+            return {
+                "error": (
+                    "GCP effective pricing via BigQuery billing export is planned for Phase 4 "
+                    "and not yet available. "
+                    "For committed-use discount list prices, use: "
+                    "get_compute_price(provider='gcp', term='cud_1yr') or term='cud_3yr'."
+                )
+            }
+
         try:
             effective = await pvdr.get_effective_price(service, instance_type, region)
         except NotConfiguredError as e:
@@ -699,6 +709,16 @@ def register_lookup_tools(mcp: Any) -> None:
         pvdr = _providers(ctx).get(provider)
         if pvdr is None:
             return {"error": f"Provider '{provider}' not configured."}
+
+        if provider == "gcp":
+            return {
+                "error": (
+                    "GCP discount summary via BigQuery billing export is planned for Phase 4 "
+                    "and not yet available. "
+                    "GCP committed-use discounts (CUDs) are available as list prices via "
+                    "get_compute_price(provider='gcp', term='cud_1yr' or 'cud_3yr')."
+                )
+            }
 
         try:
             return await pvdr.get_discount_summary()
