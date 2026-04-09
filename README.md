@@ -1,10 +1,10 @@
 # OpenCloudCosts MCP
 
-An open source MCP server that gives AI assistants accurate cloud pricing data for AWS and GCP.
+An open source MCP server that gives AI assistants accurate cloud pricing data for AWS, GCP, and Azure.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Supports both **public list pricing** (no credentials needed) and **effective/bespoke pricing** (post-discount: Reserved Instances, Savings Plans, CUDs, EDPs).
+Supports both **public list pricing** (no credentials needed for AWS and Azure; GCP requires a free API key) and **effective/bespoke pricing** (post-discount: Reserved Instances, Savings Plans, CUDs, EDPs).
 
 ## Key Use Cases
 
@@ -233,6 +233,21 @@ gcloud auth application-default login
 
 **GCP instance type format:** `{family}-{series}-{vcpus}` e.g. `n2-standard-4`, `e2-highmem-8`, `c2-standard-16`
 
+## Azure Setup
+
+Azure pricing is fully public — no credentials, API key, or subscription needed.
+
+```bash
+# No configuration needed — works out of the box
+uv run opencloudcosts
+```
+
+**Azure instance type format:** ARM SKU names e.g. `Standard_D4s_v3`, `Standard_E8s_v3`, `Standard_B2ms`
+
+**Azure pricing terms:** `on_demand` (default), `reserved_1yr`, `reserved_3yr`, `spot`
+
+**Azure regions:** ARM region names e.g. `eastus`, `westeurope`, `southeastasia` (use `list_regions` for full list)
+
 **GCP pricing terms:** `on_demand` (default), `spot` (preemptible), `cud_1yr`, `cud_3yr`
 
 ## Phases
@@ -240,6 +255,6 @@ gcloud auth application-default login
 - **Phase 1** ✅ AWS public pricing (EC2, EBS, list instances)
 - **Phase 2** ✅ AWS effective pricing (Cost Explorer, Savings Plans, Reserved Instances)
 - **Phase 3** ✅ GCP public pricing (Compute Engine families, Persistent Disk, CUDs)
-- **Phase 4**: GCP effective pricing (BigQuery billing export) + RDS/database pricing
-- **Phase 4+** ✅ HTTP/SSE transport (`--transport http`), Dockerfile
-- **Phase 5**: Azure, GCP effective pricing, spot price history
+- **Phase 4** ✅ Azure public pricing (Retail Prices API, no credentials)
+- **Phase 4** ✅ HTTP/SSE transport (`--transport http`), Dockerfile
+- **Phase 5**: GCP effective pricing (BigQuery billing export), spot price history
