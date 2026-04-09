@@ -344,7 +344,6 @@ def register_lookup_tools(mcp: Any) -> None:
         query: str,
         service: str = "",
         region: str = "",
-        service: str = "",
         max_results: int = 10,
     ) -> dict[str, Any]:
         """

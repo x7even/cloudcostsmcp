@@ -375,7 +375,7 @@ class AWSProvider:
             product_family=product.get("productFamily", ""),
             description=description,
             region=region,
-            attributes={k: v for k, v in attrs.items() if k not in _noise},
+            attributes={**{k: v for k, v in attrs.items() if k not in _noise}, **extra_attrs},
             pricing_term=term,
             price_per_unit=price_decimal,
             unit=parse_aws_unit(unit_str),
