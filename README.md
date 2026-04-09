@@ -95,6 +95,46 @@ uv run pytest
 uv run opencloudcosts
 ```
 
+### Run as HTTP server
+
+HTTP transport enables shared/remote deployments — one server, many clients.
+
+```bash
+# Localhost only (default)
+uv run opencloudcosts --transport http --port 8080
+
+# Bind to all interfaces (e.g. for Docker or remote access)
+uv run opencloudcosts --transport http --host 0.0.0.0 --port 8080
+```
+
+Environment variable equivalents: `OCC_HTTP_HOST` and `OCC_HTTP_PORT`.
+
+Connect to Claude Code via `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "cloudcost": {
+      "transport": "http",
+      "url": "http://localhost:8080/mcp/v1"
+    }
+  }
+}
+```
+
+### Docker
+
+```bash
+docker build -t opencloudcosts .
+docker run -p 8080:8080 \
+  -e OCC_GCP_API_KEY=AIza... \
+  -v ~/.aws:/root/.aws:ro \
+  opencloudcosts
+```
+
+The container starts in HTTP transport mode by default (bound to `0.0.0.0:8080`).
+Pass cloud credentials via `-e` flags or mount your AWS credentials directory.
+
 ### Connect to Claude Code
 
 Add to your project's `.mcp.json`:
@@ -201,4 +241,5 @@ gcloud auth application-default login
 - **Phase 2** ✅ AWS effective pricing (Cost Explorer, Savings Plans, Reserved Instances)
 - **Phase 3** ✅ GCP public pricing (Compute Engine families, Persistent Disk, CUDs)
 - **Phase 4**: GCP effective pricing (BigQuery billing export) + RDS/database pricing
-- **Phase 5**: Azure, HTTP transport, spot price history
+- **Phase 4+** ✅ HTTP/SSE transport (`--transport http`), Dockerfile
+- **Phase 5**: Azure, GCP effective pricing, spot price history
