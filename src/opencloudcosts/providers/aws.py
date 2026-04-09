@@ -72,6 +72,7 @@ _BULK_URL = "{base}/{service}/current/{region}/index.json"
 _SERVICE_ALIASES: dict[str, str] = {
     # compute / infra
     "ec2": "AmazonEC2",
+    "ebs": "AmazonEC2",   # EBS pricing lives under AmazonEC2 service
     "s3": "AmazonS3",
     "rds": "AmazonRDS",
     "cloudwatch": "AmazonCloudWatch",
@@ -629,11 +630,14 @@ class AWSProvider:
                     p = p.model_copy(update={"unit": PriceUnit.PER_GB_MONTH})
                 prices.append(p)
 
-        await self._cache.set_prices(
-            "aws", "storage", region, cache_extras,
-            [p.model_dump(mode="json") for p in prices],
-            ttl_hours=self._settings.cache_ttl_hours,
-        )
+        # Only cache non-empty results — empty likely means a transient failure
+        # or a bug (like the productFamily filter issue) that we don't want to bake in.
+        if prices:
+            await self._cache.set_prices(
+                "aws", "storage", region, cache_extras,
+                [p.model_dump(mode="json") for p in prices],
+                ttl_hours=self._settings.cache_ttl_hours,
+            )
         return prices
 
     @staticmethod
@@ -745,7 +749,26 @@ class AWSProvider:
             except ValueError:
                 pass
 
-        if resolved == "AmazonEC2":
+        _EBS_TYPES = {"gp2", "gp3", "io1", "io2", "st1", "sc1", "standard"}
+        if resolved == "AmazonEC2" and query.lower() in _EBS_TYPES:
+            # EBS volume type query — use storage-specific filters, not compute filters
+            volume_type = self._map_ebs_type(query.lower())
+            filters += [
+                {"Field": "productFamily", "Value": "Storage"},
+                {"Field": "volumeType", "Value": volume_type},
+            ]
+            raw = await self._get_products(resolved, filters, max_results=max_results)
+            prices = []
+            for item in raw:
+                p = self._item_to_price(item, region or "us-east-1", PricingTerm.ON_DEMAND, "storage")
+                if p:
+                    if p.unit == PriceUnit.PER_UNIT:
+                        p = p.model_copy(update={"unit": PriceUnit.PER_GB_MONTH})
+                    prices.append(p)
+                if len(prices) >= max_results:
+                    break
+            return prices
+        elif resolved == "AmazonEC2":
             # Keep existing compute-specific filters for backward compatibility
             filters += [
                 {"Field": "tenancy", "Value": "Shared"},
