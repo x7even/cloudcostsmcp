@@ -51,7 +51,8 @@ def register_bom_tools(mcp: Any) -> None:
             try:
                 provider_name = item.get("provider", "aws")
                 service = item.get("service", "compute")
-                resource_type = item.get("type", "")
+                # Accept both "type" and "storage_type"/"instance_type" keys
+                resource_type = item.get("type") or item.get("storage_type") or item.get("instance_type", "")
                 region = item.get("region", "us-east-1")
                 quantity = int(item.get("quantity", 1))
                 hours_per_month = float(item.get("hours_per_month", 730.0))
@@ -99,6 +100,7 @@ def register_bom_tools(mcp: Any) -> None:
                     price=prices[0],
                     quantity=quantity,
                     hours_per_month=hours_per_month,
+                    size_gb=size_gb,
                 )
                 line_items.append(bom_item)
 
@@ -161,7 +163,7 @@ def register_bom_tools(mcp: Any) -> None:
             try:
                 provider_name = item.get("provider", "aws")
                 service = item.get("service", "compute")
-                resource_type = item.get("type", "")
+                resource_type = item.get("type") or item.get("storage_type") or item.get("instance_type", "")
                 region = item.get("region", "us-east-1")
                 quantity = int(item.get("quantity", 1))
                 hours_per_month = float(item.get("hours_per_month", 730.0))
@@ -198,7 +200,7 @@ def register_bom_tools(mcp: Any) -> None:
                     errors.append(f"{label}: no pricing found")
                     continue
 
-                line_items.append(BomLineItem.from_price(description, prices[0], quantity, hours_per_month))
+                line_items.append(BomLineItem.from_price(description, prices[0], quantity, hours_per_month, size_gb))
 
             except (ValueError, KeyError) as e:
                 errors.append(f"{label}: {e}")

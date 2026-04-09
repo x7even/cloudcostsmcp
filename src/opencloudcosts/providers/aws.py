@@ -604,13 +604,18 @@ class AWSProvider:
         display_name = aws_region_to_display(region)
 
         # EBS volume types
-        ebs_types = {"gp2", "gp3", "io1", "io2", "st1", "sc1", "standard"}
-        if storage_type.lower() in ebs_types:
+        # volumeApiName disambiguates gp2 vs gp3 (both share volumeType="General Purpose")
+        _EBS_API_NAMES = {"gp2", "gp3", "io1", "io2", "st1", "sc1", "standard"}
+        if storage_type.lower() in _EBS_API_NAMES:
             filters = [
                 {"Field": "volumeType", "Value": self._map_ebs_type(storage_type)},
                 {"Field": "location", "Value": display_name},
                 {"Field": "productFamily", "Value": "Storage"},
             ]
+            # gp2 and gp3 share volumeType="General Purpose" — use volumeApiName to
+            # get only the specific type's storage-per-GB SKU (not IOPS/throughput add-ons)
+            if storage_type.lower() in {"gp2", "gp3"}:
+                filters.append({"Field": "volumeApiName", "Value": storage_type.lower()})
             raw = await self._get_products("AmazonEC2", filters, max_results=5)
         else:
             # S3 standard storage as fallback

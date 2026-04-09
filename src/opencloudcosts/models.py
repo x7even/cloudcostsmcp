@@ -138,9 +138,12 @@ class BomLineItem(BaseModel):
         price: NormalizedPrice,
         quantity: int,
         hours_per_month: float = 730.0,
+        size_gb: float = 1.0,
     ) -> "BomLineItem":
         if price.unit == PriceUnit.PER_HOUR:
             monthly = price.price_per_unit * Decimal(str(hours_per_month)) * quantity
+        elif price.unit == PriceUnit.PER_GB_MONTH:
+            monthly = price.price_per_unit * Decimal(str(size_gb)) * quantity
         elif price.unit == PriceUnit.PER_MONTH:
             monthly = price.price_per_unit * quantity
         else:
