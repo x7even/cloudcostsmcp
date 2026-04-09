@@ -159,6 +159,19 @@ class CacheManager:
         await self.db.commit()
         return prices_deleted + meta_deleted
 
+    async def clear_all(self) -> dict[str, int]:
+        """Delete all cached prices and metadata — called on server startup."""
+        async with self.db.execute("DELETE FROM prices") as cur:
+            prices_deleted = cur.rowcount
+        async with self.db.execute("DELETE FROM metadata") as cur:
+            meta_deleted = cur.rowcount
+        await self.db.commit()
+        logger.info(
+            "Cache cleared on startup: %d price entries, %d metadata entries",
+            prices_deleted, meta_deleted,
+        )
+        return {"prices_deleted": prices_deleted, "metadata_deleted": meta_deleted}
+
     async def clear_provider(self, provider: str) -> dict[str, int]:
         async with self.db.execute(
             "DELETE FROM prices WHERE provider = ?", (provider,)

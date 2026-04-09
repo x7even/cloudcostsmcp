@@ -32,6 +32,7 @@ async def _lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
 
     cache = CacheManager(settings.cache_dir)
     await cache.initialize()
+    await cache.clear_all()  # Always start fresh — avoids stale entries across code changes
 
     providers: dict[str, Any] = {}
 
