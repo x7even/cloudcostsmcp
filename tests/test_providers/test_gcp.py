@@ -57,6 +57,9 @@ FAKE_SKUS = [
     # N2 CUD 1yr
     _make_sku("Committed Use Discount for N2 VCPU in Americas", "Commit1Yr", ["us-central1", "us-east1"], 19560000),     # $0.019560/core-hr
     _make_sku("Committed Use Discount for N2 Memory in Americas", "Commit1Yr", ["us-central1", "us-east1"], 2626000),    # $0.002626/GB-hr
+    # N2 Windows license SKUs (T31: per-vCPU and per-GB-RAM on top of base Linux)
+    _make_sku("N2 Instance Core running Windows", "OnDemand", ["us-central1", "us-east1"], 45000000),                    # $0.045/core-hr
+    _make_sku("N2 Instance Ram running Windows",  "OnDemand", ["us-central1", "us-east1"], 6000000),                     # $0.006/GB-hr
     # E2 on-demand
     _make_sku("E2 Instance Core running in Americas", "OnDemand", ["us-central1", "us-east1"], 21840000),                # $0.021840/core-hr
     _make_sku("E2 Instance Ram running in Americas",  "OnDemand", ["us-central1", "us-east1"], 2923000),                 # $0.002923/GB-hr
@@ -258,6 +261,78 @@ async def test_effective_price_not_implemented(gcp_provider: GCPProvider):
 # ---------------------------------------------------------------------------
 # Cross-provider comparison smoke test
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# T31: Windows pricing tests
+# ---------------------------------------------------------------------------
+
+async def test_get_compute_price_gcp_windows_higher_than_linux(gcp_provider: GCPProvider):
+    """Windows price should be higher than Linux for a supported family (N2)."""
+    with patch.object(gcp_provider, "_fetch_skus", AsyncMock(return_value=FAKE_SKUS)):
+        windows_prices = await gcp_provider.get_compute_price(
+            "n2-standard-4", "us-central1", os="Windows"
+        )
+        linux_prices = await gcp_provider.get_compute_price(
+            "n2-standard-4", "us-central1", os="Linux"
+        )
+
+    assert len(windows_prices) == 1
+    assert len(linux_prices) == 1
+
+    win_price = windows_prices[0].price_per_unit
+    lin_price = linux_prices[0].price_per_unit
+    assert win_price > lin_price, (
+        f"Windows price ({win_price}) should be higher than Linux price ({lin_price})"
+    )
+
+    # Verify attributes reflect Windows OS
+    assert windows_prices[0].attributes["operatingSystem"] == "Windows"
+
+    # Sanity check: Windows license adds 4 * $0.045 + 16 * $0.006 = $0.180 + $0.096 = $0.276 extra
+    expected_linux = Decimal("4") * Decimal("0.031611") + Decimal("16") * Decimal("0.004237")
+    expected_windows_license = Decimal("4") * Decimal("0.045") + Decimal("16") * Decimal("0.006")
+    expected_windows = expected_linux + expected_windows_license
+    assert abs(win_price - expected_windows) < Decimal("0.000001")
+
+
+async def test_get_compute_price_gcp_windows_e2_not_supported(gcp_provider: GCPProvider):
+    """E2 instances don't support Windows — should return [] not Linux price."""
+    with patch.object(gcp_provider, "_fetch_skus", AsyncMock(return_value=FAKE_SKUS)):
+        prices = await gcp_provider.get_compute_price(
+            "e2-standard-4", "us-central1", os="Windows"
+        )
+    assert prices == [], (
+        "E2 + Windows should return empty list, not silently return Linux price"
+    )
+
+
+async def test_get_compute_price_gcp_linux_unchanged(gcp_provider: GCPProvider):
+    """os='Linux' default behaviour must be unchanged after T31 changes."""
+    with patch.object(gcp_provider, "_fetch_skus", AsyncMock(return_value=FAKE_SKUS)):
+        prices_default = await gcp_provider.get_compute_price("n2-standard-4", "us-central1")
+        prices_explicit = await gcp_provider.get_compute_price(
+            "n2-standard-4", "us-central1", os="Linux"
+        )
+
+    assert len(prices_default) == 1
+    assert len(prices_explicit) == 1
+    # Both should return identical Linux-only price
+    assert prices_default[0].price_per_unit == prices_explicit[0].price_per_unit
+    # Price should match the Linux-only calculation (no Windows uplift)
+    expected = Decimal("4") * Decimal("0.031611") + Decimal("16") * Decimal("0.004237")
+    assert abs(prices_default[0].price_per_unit - expected) < Decimal("0.000001")
+
+
+async def test_get_compute_price_gcp_windows_sku_not_found_returns_empty(gcp_provider: GCPProvider):
+    """If Windows SKUs are not in the catalog for the region, return [] gracefully."""
+    # Use a SKU set that has no Windows SKUs (just the base Linux ones)
+    skus_without_windows = [s for s in FAKE_SKUS if "running Windows" not in s["description"]]
+    with patch.object(gcp_provider, "_fetch_skus", AsyncMock(return_value=skus_without_windows)):
+        prices = await gcp_provider.get_compute_price(
+            "n2-standard-4", "us-central1", os="Windows"
+        )
+    assert prices == [], "Missing Windows SKU should return [] not raise an exception"
+
 
 async def test_gcp_cheaper_than_aws_for_equivalent(gcp_provider: GCPProvider):
     """

@@ -802,6 +802,74 @@ def register_lookup_tools(mcp: Any) -> None:
         return out
 
     @mcp.tool()
+    async def get_spot_history(
+        ctx: Context,
+        provider: str,
+        instance_type: str,
+        region: str,
+        availability_zone: str = "",
+        os: str = "Linux",
+        hours: int = 24,
+    ) -> dict[str, Any]:
+        """
+        Get spot price history and stability analysis for an AWS instance type.
+
+        Returns per-AZ spot price statistics (current, min, max, avg, sample count),
+        overall volatility ratio, a stability label (stable/moderate/volatile), and
+        an actionable recommendation. Requires AWS credentials.
+
+        Args:
+            provider: Cloud provider — must be "aws"
+            instance_type: Instance type, e.g. "m5.xlarge"
+            region: Region code, e.g. "us-east-1"
+            availability_zone: Filter to a specific AZ, e.g. "us-east-1a". Empty = all AZs.
+            os: Operating system — "Linux" (default) or "Windows"
+            hours: Lookback window in hours (default 24, max 720)
+        """
+        if provider != "aws":
+            return {
+                "error": (
+                    f"get_spot_history only supports provider='aws'. "
+                    f"Got '{provider}'."
+                )
+            }
+
+        pvdr = _providers(ctx).get(provider)
+        if pvdr is None:
+            return {"error": f"Provider '{provider}' is not configured. Available: {list(_providers(ctx))}"}
+
+        try:
+            result = await pvdr._get_spot_history(
+                instance_type=instance_type,
+                region=region,
+                os=os,
+                availability_zone=availability_zone,
+                hours=hours,
+            )
+        except ValueError as e:
+            return {"error": str(e)}
+        except Exception as e:
+            logger.error("get_spot_history error: %s", e)
+            return {"error": f"API error: {e}"}
+
+        if not result:
+            from opencloudcosts.utils.regions import region_display_name as _rdn
+            return {
+                "result": "no_data",
+                "message": (
+                    f"No spot price history found for {instance_type} in {region}. "
+                    "Check instance type spelling or try a different region."
+                ),
+                "provider": provider,
+                "region_name": _rdn(provider, region),
+            }
+
+        from opencloudcosts.utils.regions import region_display_name as _rdn
+        result["provider"] = provider
+        result["region_name"] = _rdn(provider, region)
+        return result
+
+    @mcp.tool()
     async def refresh_cache(
         ctx: Context,
         provider: str = "",

@@ -71,6 +71,21 @@ Get the price for a specific compute instance type in a cloud region.
 
 ---
 
+### `get_spot_history`
+
+Get spot price history and stability analysis. **Requires AWS credentials.**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `provider` | string | ✓ | `"aws"` |
+| `instance_type` | string | ✓ | e.g. `"m5.xlarge"` |
+| `region` | string | ✓ | Region code |
+| `availability_zone` | string | | Filter to specific AZ, e.g. `"us-east-1a"`. Empty = all AZs. |
+| `os` | string | | `"Linux"` (default) or `"Windows"` |
+| `hours` | int | | Lookback window in hours (default `24`, max `720`) |
+
+---
+
 ### `get_storage_price`
 
 Get block or object storage pricing in a region.

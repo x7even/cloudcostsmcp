@@ -442,6 +442,103 @@ class AWSProvider:
             },
         )]
 
+    async def _get_spot_history(
+        self,
+        instance_type: str,
+        region: str,
+        os: str = "Linux",
+        availability_zone: str = "",
+        hours: int = 24,
+    ) -> dict:
+        from datetime import datetime, timezone, timedelta
+        from collections import defaultdict
+
+        start_time = datetime.now(timezone.utc) - timedelta(hours=min(hours, 720))
+        product_desc = "Linux/UNIX" if os == "Linux" else "Windows"
+
+        def _fetch():
+            kwargs: dict = {
+                "InstanceTypes": [instance_type],
+                "ProductDescriptions": [product_desc],
+                "StartTime": start_time,
+                "MaxResults": 300,
+            }
+            if availability_zone:
+                kwargs["AvailabilityZone"] = availability_zone
+            ec2 = boto3.client("ec2", region_name=region)
+            resp = ec2.describe_spot_price_history(**kwargs)
+            return resp.get("SpotPriceHistory", [])
+
+        try:
+            items = await asyncio.to_thread(_fetch)
+        except (
+            botocore.exceptions.NoCredentialsError,
+            botocore.exceptions.PartialCredentialsError,
+        ):
+            raise ValueError(
+                "Spot price history requires AWS credentials. "
+                "Set AWS_PROFILE or AWS_ACCESS_KEY_ID."
+            )
+
+        if not items:
+            return {}
+
+        # Group prices by AZ
+        by_az: dict[str, list[Decimal]] = defaultdict(list)
+        for item in items:
+            by_az[item["AvailabilityZone"]].append(Decimal(item["SpotPrice"]))
+
+        all_prices = [p for ps in by_az.values() for p in ps]
+        overall_avg = sum(all_prices) / len(all_prices)
+        overall_min = min(all_prices)
+        overall_max = max(all_prices)
+
+        # Volatility: stddev / mean
+        if len(all_prices) > 1:
+            variance = sum((p - overall_avg) ** 2 for p in all_prices) / len(all_prices)
+            stddev = variance ** Decimal("0.5")
+        else:
+            stddev = Decimal("0")
+        volatility_ratio = stddev / overall_avg if overall_avg > 0 else Decimal("0")
+
+        if volatility_ratio < Decimal("0.05"):
+            stability = "stable"
+            recommendation = "Low interruption risk. Good candidate for fault-tolerant batch workloads."
+        elif volatility_ratio < Decimal("0.15"):
+            stability = "moderate"
+            recommendation = "Moderate price variation. Use with checkpointing for long-running jobs."
+        else:
+            stability = "volatile"
+            recommendation = "High volatility. Consider on-demand or reserved instances for reliable workloads."
+
+        az_stats = {}
+        for az, prices in sorted(by_az.items()):
+            az_avg = sum(prices) / len(prices)
+            az_stats[az] = {
+                "current": f"${prices[0]:.6f}",   # most recent (API returns newest first)
+                "min": f"${min(prices):.6f}",
+                "max": f"${max(prices):.6f}",
+                "avg": f"${az_avg:.6f}",
+                "sample_count": len(prices),
+            }
+
+        return {
+            "instance_type": instance_type,
+            "region": region,
+            "os": os,
+            "lookback_hours": hours,
+            "stability": stability,
+            "volatility_ratio": f"{volatility_ratio:.4f}",
+            "overall": {
+                "min": f"${overall_min:.6f}",
+                "max": f"${overall_max:.6f}",
+                "avg": f"${overall_avg:.6f}",
+                "sample_count": len(all_prices),
+            },
+            "by_availability_zone": az_stats,
+            "recommendation": recommendation,
+        }
+
     async def get_compute_price(
         self,
         instance_type: str,

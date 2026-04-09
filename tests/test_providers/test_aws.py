@@ -222,6 +222,61 @@ async def test_get_spot_price_empty_response(aws_provider: AWSProvider):
 
 
 # ------------------------------------------------------------------
+# Spot price history tests (T30)
+# ------------------------------------------------------------------
+
+_SPOT_HISTORY_MULTI_AZ = {
+    "SpotPriceHistory": [
+        {"AvailabilityZone": "us-east-1a", "SpotPrice": "0.039", "InstanceType": "m5.xlarge"},
+        {"AvailabilityZone": "us-east-1a", "SpotPrice": "0.040", "InstanceType": "m5.xlarge"},
+        {"AvailabilityZone": "us-east-1b", "SpotPrice": "0.038", "InstanceType": "m5.xlarge"},
+        {"AvailabilityZone": "us-east-1b", "SpotPrice": "0.037", "InstanceType": "m5.xlarge"},
+    ]
+}
+
+
+async def test_get_spot_history_returns_stats(aws_provider: AWSProvider):
+    mock_ec2 = MagicMock()
+    mock_ec2.describe_spot_price_history.return_value = _SPOT_HISTORY_MULTI_AZ
+    with patch("boto3.client", return_value=mock_ec2):
+        result = await aws_provider._get_spot_history("m5.xlarge", "us-east-1")
+    assert "stability" in result
+    assert "by_availability_zone" in result
+    assert "us-east-1a" in result["by_availability_zone"]
+    assert "us-east-1b" in result["by_availability_zone"]
+    assert result["overall"]["sample_count"] == 4
+
+
+async def test_get_spot_history_stable(aws_provider: AWSProvider):
+    # All same price → stability = "stable"
+    mock_ec2 = MagicMock()
+    mock_ec2.describe_spot_price_history.return_value = {
+        "SpotPriceHistory": [
+            {"AvailabilityZone": "us-east-1a", "SpotPrice": "0.039"},
+            {"AvailabilityZone": "us-east-1a", "SpotPrice": "0.039"},
+        ]
+    }
+    with patch("boto3.client", return_value=mock_ec2):
+        result = await aws_provider._get_spot_history("m5.xlarge", "us-east-1")
+    assert result["stability"] == "stable"
+
+
+async def test_get_spot_history_no_credentials(aws_provider: AWSProvider):
+    import botocore.exceptions
+    with patch("boto3.client", side_effect=botocore.exceptions.NoCredentialsError()):
+        with pytest.raises(ValueError, match="requires AWS credentials"):
+            await aws_provider._get_spot_history("m5.xlarge", "us-east-1")
+
+
+async def test_get_spot_history_empty_returns_empty_dict(aws_provider: AWSProvider):
+    mock_ec2 = MagicMock()
+    mock_ec2.describe_spot_price_history.return_value = {"SpotPriceHistory": []}
+    with patch("boto3.client", return_value=mock_ec2):
+        result = await aws_provider._get_spot_history("m5.xlarge", "us-east-1")
+    assert result == {}
+
+
+# ------------------------------------------------------------------
 # Partial Upfront and All Upfront Reserved Instance tests
 # ------------------------------------------------------------------
 

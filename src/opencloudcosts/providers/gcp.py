@@ -9,6 +9,14 @@ GCP pricing differs from AWS: there is no single per-instance-type SKU.
 Instead, each machine family has separate per-vCPU and per-GB-RAM SKUs.
 We fetch all Compute Engine SKUs once per region, build an index, then
 compute instance prices as: vcpus * cpu_price + memory_gb * ram_price.
+
+Windows pricing (T31):
+    GCP charges an additional Windows Server license fee on top of base Linux compute.
+    Windows SKUs have descriptions like "N2 Instance Core running Windows" (per vCPU)
+    and "N2 Instance Ram running Windows" (per GB RAM).
+    Total Windows price = base_linux_price + windows_license_price.
+    Not all families support Windows; E2 and families without Windows SKU mappings
+    return empty results rather than silently returning Linux price.
 """
 from __future__ import annotations
 
@@ -51,6 +59,27 @@ _TERM_USAGE_TYPE: dict[PricingTerm, tuple[str, str, str]] = {
     PricingTerm.CUD_1YR:     ("Commit1Yr",  "cud_cpu_desc",      "cud_ram_desc"),
     PricingTerm.CUD_3YR:     ("Commit3Yr",  "cud_cpu_desc",      "cud_ram_desc"),
 }
+
+
+def _windows_sku_suffix(family: str) -> tuple[str, str] | None:
+    """
+    Return (cpu_desc_fragment, ram_desc_fragment) for Windows SKU lookup, or None if unsupported.
+
+    GCP Windows pricing adds a per-vCPU and per-GB-RAM Windows Server license cost
+    on top of the base Linux compute price. These descriptions match the GCP Billing
+    Catalog API SKU descriptions for Windows license charges.
+
+    Families without Windows support (E2, C2D, T2D, T2A, M1, A2, etc.) return None.
+    """
+    _MAP: dict[str, tuple[str, str]] = {
+        "n1":  ("N1 Predefined Instance Core running Windows",  "N1 Predefined Instance Ram running Windows"),
+        "n2":  ("N2 Instance Core running Windows",              "N2 Instance Ram running Windows"),
+        "n2d": ("N2D AMD Instance Core running Windows",         "N2D AMD Instance Ram running Windows"),
+        "c2":  ("Compute optimized Core running Windows",        "Compute optimized Ram running Windows"),
+        # E2: cost-optimised, no Windows support
+        # C2D, T2D, T2A, M1, A2: no Windows support
+    }
+    return _MAP.get(family.lower())
 
 
 class GCPProvider:
@@ -293,6 +322,33 @@ class GCPProvider:
             Decimal(str(vcpus)) * cpu_price
             + Decimal(str(memory_gb)) * ram_price
         )
+
+        # Windows pricing: add Windows Server license cost on top of base Linux price
+        if os == "Windows":
+            win_skus = _windows_sku_suffix(family)
+            if win_skus is None:
+                logger.warning(
+                    "GCP: Windows pricing not supported for machine family '%s'. "
+                    "Supported Windows families: n1, n2, n2d, c2.",
+                    family,
+                )
+                return []
+            win_cpu_desc, win_ram_desc = win_skus
+            win_cpu_price = self._lookup_price(index, win_cpu_desc, "OnDemand")
+            win_ram_price = self._lookup_price(index, win_ram_desc, "OnDemand")
+            if win_cpu_price is None or win_ram_price is None:
+                logger.warning(
+                    "GCP: could not find Windows SKU for %s in %s. "
+                    "Win CPU found: %s, Win RAM found: %s",
+                    instance_type, region,
+                    win_cpu_price is not None, win_ram_price is not None,
+                )
+                return []
+            windows_license = (
+                Decimal(str(vcpus)) * win_cpu_price
+                + Decimal(str(memory_gb)) * win_ram_price
+            )
+            total_price = total_price + windows_license
 
         price = NormalizedPrice(
             provider=CloudProvider.GCP,
