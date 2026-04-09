@@ -13,14 +13,14 @@ Each task has a detailed plan file in `docs/plans/`:
 | T21 — refresh_cache metadata | [T21-refresh-cache-metadata.md](plans/T21-refresh-cache-metadata.md) | **done** |
 | T22 — GCP major regions | [T22-gcp-major-regions.md](plans/T22-gcp-major-regions.md) | **done** |
 | T23 — Phase 4 error messages | [T23-phase4-error-messages.md](plans/T23-phase4-error-messages.md) | **done** |
-| T24 — Test coverage expansion | [T24-test-coverage.md](plans/T24-test-coverage.md) | pending |
+| T24 — Test coverage expansion | [T24-test-coverage.md](plans/T24-test-coverage.md) | **done** |
 | T25 — No-results hints | [T25-no-results-hints.md](plans/T25-no-results-hints.md) | **done** |
 | T26 — GCP effective pricing (BigQuery) | [T26-gcp-effective-pricing.md](plans/T26-gcp-effective-pricing.md) | pending |
 | T27 — get_database_price tool | [T27-get-database-price-tool.md](plans/T27-get-database-price-tool.md) | **done** |
 | T28 — Azure provider | [T28-azure-provider.md](plans/T28-azure-provider.md) | **done** |
 | T29 — HTTP/SSE transport | [T29-http-transport.md](plans/T29-http-transport.md) | **done** |
-| T30 — Spot price history tool | [T30-spot-price-history.md](plans/T30-spot-price-history.md) | pending |
-| T31 — GCP Windows pricing | [T31-gcp-windows-pricing.md](plans/T31-gcp-windows-pricing.md) | pending |
+| T30 — Spot price history tool | [T30-spot-price-history.md](plans/T30-spot-price-history.md) | **done** |
+| T31 — GCP Windows pricing | [T31-gcp-windows-pricing.md](plans/T31-gcp-windows-pricing.md) | **done** |
 
 ---
 
