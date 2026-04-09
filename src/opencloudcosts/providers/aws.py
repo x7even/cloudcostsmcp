@@ -250,8 +250,10 @@ class AWSProvider:
         results: list[dict[str, Any]] = []
         for sku, product in products.items():
             attrs = product.get("attributes", {})
-            # Apply all TERM_MATCH filters
-            if not all(attrs.get(k) == v for k, v in field_filters.items()):
+            # Apply all TERM_MATCH filters.
+            # productFamily and productGroup sit at the product top level, not inside
+            # attributes — check both so filters like productFamily="Storage" work.
+            if not all(attrs.get(k, product.get(k)) == v for k, v in field_filters.items()):
                 continue
 
             # Reconstruct the same shape get_products returns

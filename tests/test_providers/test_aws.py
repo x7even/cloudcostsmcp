@@ -527,3 +527,51 @@ async def test_search_pricing_generic_service(aws_provider: AWSProvider):
 
     assert isinstance(results, list)
     assert len(results) >= 1
+
+
+# Minimal EBS gp3 price item matching AWS bulk pricing JSON shape.
+# productFamily is a TOP-LEVEL product field, NOT inside attributes.
+_GP3_PRICE_ITEM = {
+    "product": {
+        "sku": "ABC123GP3",
+        "productFamily": "Storage",
+        "attributes": {
+            "volumeType": "General Purpose",
+            "volumeApiName": "gp3",
+            "location": "US East (N. Virginia)",
+            "storageMedia": "SSD-backed",
+            "usagetype": "EBS:VolumeUsage.gp3",
+        },
+    },
+    "terms": {
+        "OnDemand": {
+            "ABC123GP3.JRTCKXETXF": {
+                "priceDimensions": {
+                    "ABC123GP3.JRTCKXETXF.6YS6EN2CT7": {
+                        "unit": "GB-Mo",
+                        "pricePerUnit": {"USD": "0.0800000000"},
+                        "description": "$0.08 per GB-month of General Purpose (gp3) provisioned storage",
+                    }
+                },
+                "termAttributes": {},
+            }
+        }
+    },
+}
+
+
+async def test_get_storage_price_gp3(aws_provider: AWSProvider):
+    """get_storage_price gp3 should return results.
+
+    Regression test: productFamily is a top-level product field in AWS bulk
+    pricing JSON, not inside attributes. _get_products_bulk previously only
+    checked attrs, causing productFamily='Storage' filter to always fail.
+    """
+    with patch.object(aws_provider, "_get_products", return_value=[_GP3_PRICE_ITEM]):
+        prices = await aws_provider.get_storage_price("gp3", "us-east-1")
+
+    assert len(prices) == 1
+    p = prices[0]
+    assert p.provider == "aws"
+    assert p.region == "us-east-1"
+    assert float(p.price_per_unit) == pytest.approx(0.08)
