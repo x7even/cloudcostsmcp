@@ -42,5 +42,8 @@ htmlcov/
 # Claude Code local state
 .claude/
 
+# Local LLM test harness — results, traces, scratch work
+local-test-harness/
+
 # macOS
 .DS_Store
