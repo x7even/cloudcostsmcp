@@ -27,7 +27,7 @@ Each task has a detailed plan file in `docs/plans/`:
 ## Quick wins — can build in parallel immediately
 
 ### T20 · Add `os` field to `estimate_bom` / `estimate_unit_economics`
-**Status:** pending  
+**Status:** done  
 **Effort:** Small (2 files)  
 **Files:** `src/opencloudcosts/tools/bom.py`, `docs/tools.md`
 
@@ -41,7 +41,7 @@ Each task has a detailed plan file in `docs/plans/`:
 ---
 
 ### T21 · Fix `refresh_cache` to also clear metadata entries for a provider
-**Status:** pending  
+**Status:** done  
 **Effort:** Small (1 file)  
 **Files:** `src/opencloudcosts/cache.py`
 
@@ -61,7 +61,7 @@ Option B is simpler and avoids schema migration. Ensure `list_services()`, `list
 ---
 
 ### T22 · Add GCP major-regions default (mirror `_AWS_MAJOR_REGIONS`)
-**Status:** pending  
+**Status:** done  
 **Effort:** Small (1 file)  
 **Files:** `src/opencloudcosts/tools/availability.py`
 
@@ -89,7 +89,7 @@ Apply the same scoped-search logic: default to major regions for GCP, `regions=[
 ---
 
 ### T23 · Explicit error messages for Phase 4 features
-**Status:** pending  
+**Status:** done  
 **Effort:** Small (1 file)  
 **Files:** `src/opencloudcosts/tools/lookup.py`
 
@@ -106,7 +106,7 @@ Apply the same scoped-search logic: default to major regions for GCP, `regions=[
 ---
 
 ### T25 · `search_pricing` and `get_service_price`: helpful no-results response
-**Status:** pending  
+**Status:** done  
 **Effort:** Small (2 files)  
 **Files:** `src/opencloudcosts/tools/lookup.py`, `src/opencloudcosts/providers/aws.py`
 
@@ -122,7 +122,7 @@ When called with an invalid/unknown service code or filters that match nothing, 
 ## Medium complexity — parallel
 
 ### T18 · AWS spot pricing via EC2 SpotPrice API
-**Status:** pending  
+**Status:** done  
 **Effort:** Medium  
 **Files:** `src/opencloudcosts/providers/aws.py`, `tests/test_providers/test_aws.py`
 
@@ -141,7 +141,7 @@ The AWS bulk pricing API doesn't include spot prices — they're time-varying an
 ---
 
 ### T19 · AWS Reserved Instance upfront options (Partial/All Upfront)
-**Status:** pending  
+**Status:** done  
 **Effort:** Medium  
 **Files:** `src/opencloudcosts/models.py`, `src/opencloudcosts/providers/aws.py`, `docs/tools.md`
 
@@ -159,7 +159,7 @@ The AWS bulk pricing API doesn't include spot prices — they're time-varying an
 ---
 
 ### T24 · Expand test coverage
-**Status:** pending  
+**Status:** done  
 **Effort:** Medium  
 **Files:** `tests/test_tools/` (new files)
 
@@ -180,7 +180,7 @@ Current coverage has no tests for: BoM database items, region analysis tools, ca
 ---
 
 ### T31 · GCP Windows pricing support
-**Status:** pending  
+**Status:** done  
 **Effort:** Medium (requires catalog research)  
 **Files:** `src/opencloudcosts/providers/gcp.py`, `tests/test_providers/test_gcp.py`
 
@@ -201,7 +201,7 @@ GCP accepts `os="Windows"` but ignores it — all pricing returns Linux rates. G
 ## Phase 4 — larger features
 
 ### T27 · Dedicated `get_database_price` tool
-**Status:** pending  
+**Status:** done  
 **Effort:** Medium  
 **Files:** `src/opencloudcosts/tools/lookup.py`, `docs/tools.md`
 
@@ -258,7 +258,7 @@ Implement GCP `get_effective_price()` and `get_discount_summary()` using BigQuer
 ## Phase 5 — new providers & transport
 
 ### T28 · Azure provider (compute + storage public pricing)
-**Status:** pending  
+**Status:** done  
 **Effort:** Large  
 **Files:** `src/opencloudcosts/providers/azure.py` (new), `src/opencloudcosts/server.py`, `README.md`, `docs/tools.md`, `docs/finops-guide.md`
 
@@ -286,7 +286,7 @@ Azure Retail Prices API requires no credentials — fully public REST endpoint.
 ---
 
 ### T29 · HTTP/SSE transport support
-**Status:** pending  
+**Status:** done  
 **Effort:** Medium  
 **Files:** `src/opencloudcosts/server.py`, `src/opencloudcosts/config.py`, `Dockerfile` (new), `README.md`
 
@@ -313,7 +313,7 @@ Currently only stdio MCP transport is supported. HTTP+SSE enables remote/shared 
 ---
 
 ### T30 · AWS spot price history tool
-**Status:** pending  
+**Status:** done  
 **Effort:** Medium (depends on T18)  
 **Files:** `src/opencloudcosts/tools/lookup.py`, `src/opencloudcosts/providers/aws.py`, `docs/tools.md`
 

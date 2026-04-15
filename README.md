@@ -257,4 +257,5 @@ uv run opencloudcosts
 - **Phase 3** ✅ GCP public pricing (Compute Engine families, Persistent Disk, CUDs)
 - **Phase 4** ✅ Azure public pricing (Retail Prices API, no credentials)
 - **Phase 4** ✅ HTTP/SSE transport (`--transport http`), Dockerfile
-- **Phase 5**: GCP effective pricing (BigQuery billing export), spot price history
+- **Phase 4** ✅ Spot price history tool (`get_spot_history`), GCP Windows pricing
+- **Phase 5**: GCP effective pricing (BigQuery billing export)

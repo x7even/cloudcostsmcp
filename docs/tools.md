@@ -92,8 +92,8 @@ Get block or object storage pricing in a region.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `provider` | string | ✓ | `"aws"` or `"gcp"` |
-| `storage_type` | string | ✓ | AWS: `"gp3"`, `"gp2"`, `"io1"`, `"io2"`, `"st1"`, `"sc1"`, `"s3"`. GCP: `"pd-ssd"`, `"pd-balanced"`, `"pd-standard"`, `"pd-extreme"` |
+| `provider` | string | ✓ | `"aws"`, `"gcp"`, or `"azure"` |
+| `storage_type` | string | ✓ | AWS: `"gp3"`, `"gp2"`, `"io1"`, `"io2"`, `"st1"`, `"sc1"`, `"s3"`. GCP: `"pd-ssd"`, `"pd-balanced"`, `"pd-standard"`, `"pd-extreme"`. Azure: `"premium-ssd"`, `"standard-ssd"`, `"standard-hdd"`, `"ultra-ssd"`, `"blob"` |
 | `region` | string | ✓ | Region code |
 | `size_gb` | float | | Size for monthly cost estimate (default `100`) |
 
@@ -187,7 +187,7 @@ Get prices for multiple instance types in a single region in one call. Fetches c
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `provider` | string | ✓ | `"aws"` or `"gcp"` |
+| `provider` | string | ✓ | `"aws"`, `"gcp"`, or `"azure"` |
 | `instance_types` | list[string] | ✓ | e.g. `["m5.xlarge", "c5.xlarge", "r5.large"]` |
 | `region` | string | ✓ | Region code |
 | `os` | string | | `"Linux"` (default) or `"Windows"` |
@@ -201,7 +201,7 @@ Compare the same compute instance type across multiple regions. Fetches concurre
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `provider` | string | ✓ | `"aws"` or `"gcp"` |
+| `provider` | string | ✓ | `"aws"`, `"gcp"`, or `"azure"` |
 | `instance_type` | string | ✓ | e.g. `"m5.xlarge"` |
 | `regions` | list[string] | ✓ | Region codes to compare |
 | `os` | string | | `"Linux"` (default) or `"Windows"` |
@@ -216,8 +216,8 @@ Search the pricing catalog by keyword. Defaults to EC2 compute — set `service`
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `provider` | string | ✓ | `"aws"` or `"gcp"` |
-| `query` | string | ✓ | Keyword, e.g. `"m5"`, `"metric"`, `"MySQL"`, `"egress"` |
+| `provider` | string | ✓ | `"aws"`, `"gcp"`, or `"azure"` |
+| `query` | string | ✓ | Keyword, e.g. `"m5"`, `"metric"`, `"MySQL"`, `"egress"`, `"Standard_D"` |
 | `region` | string | | Filter to a specific region |
 | `service` | string | | AWS service to search (default: `"ec2"`). Use `list_services()` to discover options. |
 | `max_results` | int | | Max results (default `10`, max `50`) |
@@ -271,7 +271,7 @@ List all regions for a provider/service with friendly display names.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `provider` | string | ✓ | `"aws"` or `"gcp"` |
+| `provider` | string | ✓ | `"aws"`, `"gcp"`, or `"azure"` |
 | `service` | string | | `"compute"` (default), `"storage"`, `"database"` |
 
 **Example response:**
@@ -292,9 +292,9 @@ List available compute instance types in a region with optional filters.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `provider` | string | ✓ | `"aws"` or `"gcp"` |
+| `provider` | string | ✓ | `"aws"`, `"gcp"`, or `"azure"` |
 | `region` | string | ✓ | Region code |
-| `family` | string | | Instance family prefix, e.g. `"m5"`, `"c6g"`, `"n2"` |
+| `family` | string | | Instance family prefix, e.g. `"m5"`, `"c6g"`, `"n2"`, `"Standard_D"` |
 | `min_vcpus` | int | | Minimum vCPU count |
 | `min_memory_gb` | float | | Minimum memory in GB |
 | `gpu` | bool | | If `true`, only return GPU instances |
@@ -308,9 +308,9 @@ Check if a specific instance type or storage SKU is available in a region.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `provider` | string | ✓ | `"aws"` or `"gcp"` |
+| `provider` | string | ✓ | `"aws"`, `"gcp"`, or `"azure"` |
 | `service` | string | ✓ | `"compute"` or `"storage"` |
-| `sku_or_type` | string | ✓ | e.g. `"c6a.xlarge"`, `"gp3"` |
+| `sku_or_type` | string | ✓ | e.g. `"c6a.xlarge"`, `"gp3"`, `"Standard_D4s_v3"` |
 | `region` | string | ✓ | Region code |
 
 ---
@@ -323,7 +323,7 @@ Find the cheapest region for an instance type across all (or specified) regions.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `provider` | string | ✓ | `"aws"` or `"gcp"` |
+| `provider` | string | ✓ | `"aws"`, `"gcp"`, or `"azure"` |
 | `instance_type` | string | ✓ | e.g. `"m5.xlarge"` |
 | `os` | string | | `"Linux"` (default) or `"Windows"` |
 | `term` | string | | `"on_demand"` (default), `"reserved_1yr"`, `"reserved_1yr_partial"`, `"reserved_1yr_all"`, `"reserved_3yr"`, `"reserved_3yr_partial"`, `"reserved_3yr_all"` |
@@ -338,7 +338,7 @@ Find every region where an instance type is available, with prices, region names
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `provider` | string | ✓ | `"aws"` or `"gcp"` |
+| `provider` | string | ✓ | `"aws"`, `"gcp"`, or `"azure"` |
 | `instance_type` | string | ✓ | e.g. `"c6a.xlarge"`, `"n2-standard-4"` |
 | `os` | string | | `"Linux"` (default) or `"Windows"` |
 | `term` | string | | `"on_demand"` (default), `"reserved_1yr"`, `"spot"` |
