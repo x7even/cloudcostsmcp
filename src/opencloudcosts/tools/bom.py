@@ -20,25 +20,33 @@ def register_bom_tools(mcp: Any) -> None:
         items: list[dict[str, Any]],
     ) -> dict[str, Any]:
         """
-        Calculate the Total Cost of Ownership (TCO) for a Bill of Materials.
+        Use this tool for any question about total infrastructure cost, TCO, monthly spend
+        for a multi-resource stack, or cost comparison between two architectures.
 
-        Each item in the BoM specifies a cloud resource. Returns per-item and total
-        monthly/annual costs using real public pricing data.
+        Handles compute + storage + database together in a single call — do NOT call
+        get_compute_price / get_storage_price / get_database_price individually for
+        multi-resource questions; use this tool instead.
 
-        Each item should be a dict with:
+        Returns per-item and total monthly/annual costs using real public pricing data,
+        plus a `not_included` field with actionable follow-up tool calls for hidden costs
+        such as egress, load balancers, NAT Gateway, CloudWatch monitoring, and RDS backups.
+
+        Each item in the BoM should be a dict with:
           - provider: "aws", "gcp", or "azure"
           - service: "compute", "storage", or "database"
-          - type: instance type or storage type, e.g. "m5.xlarge", "gp3"
+          - type: instance type or storage type, e.g. "m5.xlarge", "gp3", "db.r6g.large"
           - region: region code, e.g. "us-east-1"
           - quantity: number of units (default 1)
           - hours_per_month: hours/month for compute (default 730 = always-on)
           - term: pricing term (default "on_demand")
           - description: optional label for this line item
           - os: "Linux" (default) or "Windows"
+          - size_gb: storage size in GB for storage items (default 100)
 
-        Example items:
+        Example — full monthly TCO for a realistic stack (3 app servers + RDS + EBS):
           [
             {"provider": "aws", "service": "compute", "type": "m5.xlarge", "region": "us-east-1", "quantity": 3},
+            {"provider": "aws", "service": "database", "type": "db.r6g.large", "region": "us-east-1", "quantity": 1},
             {"provider": "aws", "service": "storage", "type": "gp3", "region": "us-east-1", "quantity": 1, "size_gb": 500}
           ]
         """
