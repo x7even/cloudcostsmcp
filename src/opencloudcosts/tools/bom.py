@@ -26,7 +26,7 @@ def register_bom_tools(mcp: Any) -> None:
         monthly/annual costs using real public pricing data.
 
         Each item should be a dict with:
-          - provider: "aws" or "gcp"
+          - provider: "aws", "gcp", or "azure"
           - service: "compute", "storage", or "database"
           - type: instance type or storage type, e.g. "m5.xlarge", "gp3"
           - region: region code, e.g. "us-east-1"
@@ -112,6 +112,50 @@ def register_bom_tools(mcp: Any) -> None:
 
         estimate = BomEstimate.from_items(line_items)
 
+        # Detect which services/providers appear in the BoM so we can surface
+        # relevant unpriced extras with the exact tool call to look them up.
+        services_in_bom = {li.service for li in estimate.items}
+        providers_in_bom = {li.provider.value for li in estimate.items}
+        # Pick a representative AWS region for suggested calls
+        aws_regions = [li.region for li in estimate.items if li.provider.value == "aws"]
+        sample_region = aws_regions[0] if aws_regions else "us-east-1"
+
+        not_included: list[dict[str, str]] = []
+        if "aws" in providers_in_bom:
+            if "compute" in services_in_bom or "database" in services_in_bom:
+                not_included.append({
+                    "item": "Data transfer (egress)",
+                    "why": "Outbound traffic to the internet or cross-region — varies by workload",
+                    "how_to_price": f'get_service_price(provider="aws", service="data_transfer", region="{sample_region}", filters={{"transferType": "AWS Outbound"}})',
+                })
+                not_included.append({
+                    "item": "Load balancer (ALB/NLB)",
+                    "why": "Typically needed in front of compute clusters",
+                    "how_to_price": f'get_service_price(provider="aws", service="elb", region="{sample_region}", filters={{"productFamily": "Load Balancer"}})',
+                })
+                not_included.append({
+                    "item": "NAT Gateway",
+                    "why": "Required if EC2 instances are in private subnets",
+                    "how_to_price": f'get_service_price(provider="aws", service="AmazonVPC", region="{sample_region}", filters={{"productFamily": "NAT Gateway"}})',
+                })
+            not_included.append({
+                "item": "CloudWatch monitoring",
+                "why": "Logs, metrics, alarms — scales with number of instances and log volume",
+                "how_to_price": f'get_service_price(provider="aws", service="cloudwatch", region="{sample_region}", filters={{"group": "Metric"}})',
+            })
+            if "database" in services_in_bom:
+                not_included.append({
+                    "item": "RDS automated backups",
+                    "why": "Free for storage equal to DB size; extra storage charged beyond that",
+                    "how_to_price": f'get_service_price(provider="aws", service="rds", region="{sample_region}", filters={{"productFamily": "Storage Snapshot"}})',
+                })
+            if "storage" in services_in_bom:
+                not_included.append({
+                    "item": "EBS snapshots",
+                    "why": "Point-in-time backups stored in S3 — charged per GB-month",
+                    "how_to_price": f'get_service_price(provider="aws", service="AmazonEC2", region="{sample_region}", filters={{"productFamily": "Storage Snapshot"}})',
+                })
+
         return {
             "line_items": [
                 {
@@ -131,6 +175,7 @@ def register_bom_tools(mcp: Any) -> None:
                 "annual": f"${estimate.total_annual:.2f}",
                 "currency": estimate.currency,
             },
+            "not_included": not_included if not_included else None,
             "errors": errors if errors else None,
         }
 

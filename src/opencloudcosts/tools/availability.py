@@ -67,7 +67,7 @@ def register_availability_tools(mcp: Any) -> None:
         Returns region codes and their friendly display names.
 
         Args:
-            provider: Cloud provider — "aws" or "gcp"
+            provider: Cloud provider — "aws", "gcp", or "azure"
             service: Service type — "compute" (default), "storage", "database"
         """
         pvdr = ctx.request_context.lifespan_context["providers"].get(provider)
@@ -108,9 +108,10 @@ def register_availability_tools(mcp: Any) -> None:
         or for finding instances that meet specific vCPU/memory/GPU requirements.
 
         Args:
-            provider: Cloud provider — "aws" or "gcp"
-            region: Region code, e.g. "us-east-1"
-            family: Optional instance family prefix, e.g. "m5", "c6g", "r5" (AWS) or "n2", "c2" (GCP)
+            provider: Cloud provider — "aws", "gcp", or "azure"
+            region: Region code, e.g. "us-east-1" (AWS), "us-central1" (GCP), "eastus" (Azure)
+            family: Optional instance family prefix, e.g. "m5", "c6g" (AWS), "n2", "c2" (GCP),
+                    or "Standard_D", "Standard_E" (Azure)
             min_vcpus: Minimum number of vCPUs (0 = no filter)
             min_memory_gb: Minimum memory in GB (0 = no filter)
             gpu: If true, only return GPU instances
@@ -133,7 +134,23 @@ def register_availability_tools(mcp: Any) -> None:
             return {"error": str(e)}
 
         instances.sort(key=lambda i: (i.vcpu, i.memory_gb))
+        total_found = len(instances)
+        truncated = total_found > max_results
         instances = instances[:max_results]
+
+        # Suggest a get_prices_batch call so the LLM can immediately price the results.
+        # Cap the suggested batch at 10 types to keep the follow-up call fast.
+        _PRICE_BATCH_CAP = 10
+        batch_types = [i.instance_type for i in instances[:_PRICE_BATCH_CAP]]
+        next_steps: list[str] = [
+            f'get_prices_batch(provider="{provider}", instance_types={batch_types}, '
+            f'region="{region}") — price these instances sorted cheapest first',
+        ]
+        if truncated:
+            next_steps.append(
+                f"Increase max_results (currently {max_results}) or add family/min_vcpus "
+                f"filters to narrow the {total_found}+ matching types."
+            )
 
         return {
             "provider": provider,
@@ -146,6 +163,7 @@ def register_availability_tools(mcp: Any) -> None:
                 "gpu": gpu,
             },
             "count": len(instances),
+            "truncated": truncated,
             "instance_types": [
                 {
                     "instance_type": i.instance_type,
@@ -158,6 +176,7 @@ def register_availability_tools(mcp: Any) -> None:
                 }
                 for i in instances
             ],
+            "next_steps": next_steps,
         }
 
     @mcp.tool()
@@ -172,10 +191,11 @@ def register_availability_tools(mcp: Any) -> None:
         Check whether a specific instance type or SKU is available in a given region.
 
         Args:
-            provider: Cloud provider — "aws" or "gcp"
+            provider: Cloud provider — "aws", "gcp", or "azure"
             service: Service type — "compute", "storage"
-            sku_or_type: Instance type or SKU ID, e.g. "m5.xlarge" or "gp3"
-            region: Region code, e.g. "us-east-1"
+            sku_or_type: Instance type or SKU ID, e.g. "m5.xlarge" (AWS), "n2-standard-4" (GCP),
+                         "Standard_D4s_v3" (Azure), or "gp3" (storage)
+            region: Region code, e.g. "us-east-1" (AWS), "us-central1" (GCP), "eastus" (Azure)
         """
         pvdr = ctx.request_context.lifespan_context["providers"].get(provider)
         if pvdr is None:
@@ -216,8 +236,9 @@ def register_availability_tools(mcp: Any) -> None:
         to show delta $/% vs that reference point.
 
         Args:
-            provider: Cloud provider — "aws" or "gcp"
-            instance_type: Instance type, e.g. "m5.xlarge" or "c5.2xlarge"
+            provider: Cloud provider — "aws", "gcp", or "azure"
+            instance_type: Instance type, e.g. "m5.xlarge" (AWS), "n2-standard-4" (GCP),
+                           or "Standard_D4s_v3" (Azure)
             os: Operating system — "Linux" (default) or "Windows"
             term: Pricing term — "on_demand" (default), "reserved_1yr", "reserved_3yr"
             regions: List of region codes to compare. Omit for major regions (faster).
@@ -344,8 +365,9 @@ def register_availability_tools(mcp: Any) -> None:
         Pass regions=["all"] to search every available region.
 
         Args:
-            provider: Cloud provider — "aws" or "gcp"
-            instance_type: Instance type, e.g. "c6a.xlarge" or "n2-standard-4"
+            provider: Cloud provider — "aws", "gcp", or "azure"
+            instance_type: Instance type, e.g. "c6a.xlarge" (AWS), "n2-standard-4" (GCP),
+                           or "Standard_D4s_v3" (Azure)
             os: Operating system — "Linux" (default) or "Windows"
             term: Pricing term — "on_demand" (default), "reserved_1yr", "spot"
             include_prices: If true (default), include per-hour price and monthly estimate

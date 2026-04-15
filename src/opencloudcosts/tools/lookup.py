@@ -40,9 +40,11 @@ def register_lookup_tools(mcp: Any) -> None:
         Supports both public on-demand and reserved pricing terms.
 
         Args:
-            provider: Cloud provider — "aws" or "gcp"
-            instance_type: Instance type, e.g. "m5.xlarge" (AWS) or "n2-standard-4" (GCP)
-            region: Region code, e.g. "us-east-1" (AWS) or "us-east1" (GCP)
+            provider: Cloud provider — "aws", "gcp", or "azure"
+            instance_type: Instance type, e.g. "m5.xlarge" (AWS), "n2-standard-4" (GCP),
+                           or "Standard_D4s_v3" (Azure)
+            region: Region code, e.g. "us-east-1" (AWS), "us-east1" (GCP),
+                    or "eastus" (Azure)
             os: Operating system — "Linux" (default) or "Windows"
             term: Pricing term — "on_demand" (default), "reserved_1yr", "reserved_3yr", "spot"
         """
@@ -70,7 +72,7 @@ def register_lookup_tools(mcp: Any) -> None:
                            "Check instance type spelling or try search_pricing.",
             }
 
-        return {
+        result: dict[str, Any] = {
             "provider": provider,
             "instance_type": instance_type,
             "region": region,
@@ -79,6 +81,36 @@ def register_lookup_tools(mcp: Any) -> None:
             "prices": [p.summary() for p in prices],
             "count": len(prices),
         }
+
+        # When a reserved term is returned, surface the sibling payment options so
+        # the LLM knows to fetch them for a proper upfront vs no-upfront comparison.
+        _TERM_LABEL = {
+            "reserved_1yr":         "No Upfront",
+            "reserved_1yr_partial": "Partial Upfront",
+            "reserved_1yr_all":     "All Upfront",
+            "reserved_3yr":         "No Upfront",
+            "reserved_3yr_partial": "Partial Upfront",
+            "reserved_3yr_all":     "All Upfront",
+        }
+        _RESERVED_SIBLINGS: dict[str, list[str]] = {
+            "reserved_1yr":         ["reserved_1yr_partial", "reserved_1yr_all"],
+            "reserved_1yr_partial": ["reserved_1yr", "reserved_1yr_all"],
+            "reserved_1yr_all":     ["reserved_1yr", "reserved_1yr_partial"],
+            "reserved_3yr":         ["reserved_3yr_partial", "reserved_3yr_all"],
+            "reserved_3yr_partial": ["reserved_3yr", "reserved_3yr_all"],
+            "reserved_3yr_all":     ["reserved_3yr", "reserved_3yr_partial"],
+        }
+        if term in _RESERVED_SIBLINGS and provider == "aws":
+            siblings = _RESERVED_SIBLINGS[term]
+            result["see_also"] = (
+                f"This is the {_TERM_LABEL[term]} rate. "
+                f"To compare all payment options call get_compute_price with "
+                f"term='{siblings[0]}' ({_TERM_LABEL[siblings[0]]}) and "
+                f"term='{siblings[1]}' ({_TERM_LABEL[siblings[1]]}). "
+                f"Each returns an effective hourly rate with the upfront cost normalised in."
+            )
+
+        return result
 
     @mcp.tool()
     async def compare_compute_prices(
@@ -100,8 +132,9 @@ def register_lookup_tools(mcp: Any) -> None:
         to show delta $/% vs that reference point.
 
         Args:
-            provider: Cloud provider — "aws" or "gcp"
-            instance_type: Instance type, e.g. "m5.xlarge"
+            provider: Cloud provider — "aws", "gcp", or "azure"
+            instance_type: Instance type, e.g. "m5.xlarge" (AWS), "n2-standard-4" (GCP),
+                           or "Standard_D4s_v3" (Azure)
             regions: List of region codes to compare, e.g. ["us-east-1", "ap-southeast-2"]
             os: Operating system — "Linux" (default) or "Windows"
             term: Pricing term — "on_demand" (default), "reserved_1yr", "reserved_3yr"
@@ -186,6 +219,32 @@ def register_lookup_tools(mcp: Any) -> None:
             result["baseline_region"] = baseline_region
         if errors:
             result["errors"] = errors
+
+        # Detect cross-geography comparisons and surface data transfer pricing hint.
+        # AWS region prefixes map to broad geographies; different prefixes = cross-geo.
+        if provider == "aws" and len(regions) >= 2:
+            def _geo(r: str) -> str:
+                if r.startswith("us-") or r.startswith("ca-"):
+                    return "americas"
+                if r.startswith("eu-") or r.startswith("me-") or r.startswith("af-") or r.startswith("il-"):
+                    return "emea"
+                if r.startswith("ap-") or r.startswith("sa-"):
+                    return "apac"
+                return r  # unknown — treat as unique
+
+            geos = {_geo(r) for r in regions}
+            if len(geos) > 1:
+                # Pick the two regions to suggest for data transfer lookup
+                src = baseline_region if baseline_region and baseline_region in regions else regions[0]
+                dst = next(r for r in regions if r != src)
+                result["migration_note"] = (
+                    f"These regions span different geographies. "
+                    f"Cross-region data egress adds to your total cost — "
+                    f"use get_service_price(provider=\"aws\", service=\"data_transfer\", "
+                    f"region=\"{src}\", filters={{\"fromRegionCode\": \"{src}\", "
+                    f"\"toRegionCode\": \"{dst}\"}}) to price outbound transfer."
+                )
+
         return result
 
     @mcp.tool()
@@ -201,10 +260,11 @@ def register_lookup_tools(mcp: Any) -> None:
 
         AWS storage types: gp3, gp2, io1, io2, st1, sc1, standard (EBS), or s3 (object storage).
         GCP storage types: pd-ssd, pd-balanced, pd-standard, pd-extreme.
+        Azure storage types: premium-ssd, standard-ssd, standard-hdd, ultra-ssd, blob.
 
         Args:
-            provider: Cloud provider — "aws" or "gcp"
-            storage_type: Storage type, e.g. "gp3", "io2", "pd-ssd"
+            provider: Cloud provider — "aws", "gcp", or "azure"
+            storage_type: Storage type, e.g. "gp3" (AWS), "pd-ssd" (GCP), "premium-ssd" (Azure)
             region: Region code, e.g. "us-east-1"
             size_gb: Storage size in GB for monthly cost estimation (default 100)
         """
@@ -354,11 +414,11 @@ def register_lookup_tools(mcp: Any) -> None:
         For GCP, searches compute instance types.
 
         Args:
-            provider: Cloud provider — "aws" or "gcp"
-            query: Search keyword, e.g. "m5", "metric", "MySQL", "egress"
+            provider: Cloud provider — "aws", "gcp", or "azure"
+            query: Search keyword, e.g. "m5", "D4s", "Standard_D", "egress"
             region: Optional region code to filter results
             service: AWS service to search (default: "ec2"). Use list_services()
-                     to discover available service codes.
+                     to discover available service codes. Ignored for GCP and Azure.
             max_results: Maximum results to return (default 10, max 50)
         """
         pvdr = _providers(ctx).get(provider)
@@ -467,19 +527,21 @@ def register_lookup_tools(mcp: Any) -> None:
         engine_normalized = _RDS_ENGINE_MAP.get(engine.lower(), engine)
         deployment_option = "Multi-AZ" if deployment.lower() == "multi-az" else "Single-AZ"
 
+        try:
+            pricing_term = PricingTerm(term)
+        except ValueError:
+            return {"error": f"Unknown term '{term}'. Valid: {[t.value for t in PricingTerm]}"}
+
+        # Only product-level attributes go into filters; term routing is handled by
+        # the `term` parameter so that _item_to_price reads the right bucket.
         filters: dict[str, str] = {
             "instanceType": instance_type,
             "databaseEngine": engine_normalized,
             "deploymentOption": deployment_option,
         }
 
-        if term.startswith("reserved"):
-            filters["termType"] = "Reserved"
-            filters["leaseContractLength"] = "1yr" if "1yr" in term else "3yr"
-            filters["purchaseOption"] = "No Upfront"
-
         try:
-            prices = await pvdr.get_service_price("rds", region, filters, max_results=5)
+            prices = await pvdr.get_service_price("rds", region, filters, max_results=5, term=pricing_term)
         except Exception as e:
             logger.error("get_database_price error: %s", e)
             return {"error": f"API error: {e}"}

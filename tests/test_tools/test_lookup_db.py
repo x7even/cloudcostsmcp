@@ -217,9 +217,14 @@ async def test_get_database_price_reserved_1yr(mock_aws_provider):
 
     assert result["term"] == "reserved_1yr"
     call_kwargs = mock_aws_provider.get_service_price.call_args
+    # Term-level attributes must NOT appear in product filters — they're passed
+    # via the `term` keyword argument so _item_to_price reads the right bucket.
     filters_passed = call_kwargs[0][2]
-    assert filters_passed.get("termType") == "Reserved"
-    assert filters_passed.get("leaseContractLength") == "1yr"
+    assert "termType" not in filters_passed
+    assert "leaseContractLength" not in filters_passed
+    assert "purchaseOption" not in filters_passed
+    # The term kwarg must be the PricingTerm enum value
+    assert call_kwargs[1]["term"] == PricingTerm.RESERVED_1YR
 
 
 async def test_get_database_price_reserved_3yr(mock_aws_provider):
@@ -233,4 +238,5 @@ async def test_get_database_price_reserved_3yr(mock_aws_provider):
 
     call_kwargs = mock_aws_provider.get_service_price.call_args
     filters_passed = call_kwargs[0][2]
-    assert filters_passed.get("leaseContractLength") == "3yr"
+    assert "leaseContractLength" not in filters_passed
+    assert call_kwargs[1]["term"] == PricingTerm.RESERVED_3YR

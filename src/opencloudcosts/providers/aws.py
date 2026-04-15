@@ -664,17 +664,26 @@ class AWSProvider:
         region: str,
         filters: dict[str, str],
         max_results: int = 20,
+        term: PricingTerm = PricingTerm.ON_DEMAND,
     ) -> list[NormalizedPrice]:
         """
         Generic pricing lookup for any AWS service by service code or alias.
 
         service: canonical offer code (e.g. "AmazonCloudWatch") or alias
                  (e.g. "cloudwatch", "data_transfer", "rds").
-        filters: attribute key/value pairs to narrow results, e.g.
+        filters: product attribute key/value pairs to narrow results, e.g.
                  {"group": "Metric"} for CloudWatch,
                  {"fromRegionCode": "us-east-1", "toRegionCode": "eu-west-1"}
                  for data transfer.
+        term: pricing term — controls which term bucket is extracted from the response.
+              Term-level attributes (termType, leaseContractLength, purchaseOption) must
+              NOT be passed in filters; they are derived from the term parameter.
         """
+        # Term-level attributes are not product attributes — strip them so they
+        # don't corrupt the TERM_MATCH filter sent to the pricing API.
+        _TERM_ATTRS = {"termType", "leaseContractLength", "purchaseOption"}
+        product_filters = {k: v for k, v in filters.items() if k not in _TERM_ATTRS}
+
         service_code = _resolve_service_code(service)
         try:
             display_name = aws_region_to_display(region)
@@ -684,13 +693,13 @@ class AWSProvider:
         filter_list: list[dict[str, str]] = [
             {"Field": "location", "Value": display_name}
         ]
-        for k, v in filters.items():
+        for k, v in product_filters.items():
             filter_list.append({"Field": k, "Value": v})
 
         raw = await self._get_products(service_code, filter_list, max_results=max_results)
         prices = []
         for item in raw:
-            p = self._item_to_price(item, region, PricingTerm.ON_DEMAND, service.lower())
+            p = self._item_to_price(item, region, term, service.lower())
             if p:
                 prices.append(p)
         return prices
