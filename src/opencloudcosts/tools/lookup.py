@@ -39,6 +39,10 @@ def register_lookup_tools(mcp: Any) -> None:
         Returns pricing details including per-hour cost, monthly estimate, vCPU, and memory.
         Supports both public on-demand and reserved pricing terms.
 
+        For multi-resource stacks (compute + storage + database together), use
+        `estimate_bom` instead — it handles all services in one call and surfaces
+        hidden costs like egress, load balancers, and monitoring.
+
         Args:
             provider: Cloud provider — "aws", "gcp", or "azure"
             instance_type: Instance type, e.g. "m5.xlarge" (AWS), "n2-standard-4" (GCP),
@@ -262,6 +266,10 @@ def register_lookup_tools(mcp: Any) -> None:
         GCP storage types: pd-ssd, pd-balanced, pd-standard, pd-extreme.
         Azure storage types: premium-ssd, standard-ssd, standard-hdd, ultra-ssd, blob.
 
+        For multi-resource stacks (compute + storage + database together), use
+        `estimate_bom` instead — it handles all services in one call and surfaces
+        hidden costs like egress, load balancers, and monitoring.
+
         Args:
             provider: Cloud provider — "aws", "gcp", or "azure"
             storage_type: Storage type, e.g. "gp3" (AWS), "pd-ssd" (GCP), "premium-ssd" (Azure)
@@ -283,12 +291,26 @@ def register_lookup_tools(mcp: Any) -> None:
         if not prices:
             return {"result": "no_prices_found", "message": f"No storage pricing for {storage_type} in {region}."}
 
+        from decimal import Decimal
+        from opencloudcosts.models import PriceUnit as _PriceUnit
+
         result_prices = [p.summary() for p in prices]
-        # Add monthly cost estimate for the requested size
+        # Compute monthly cost estimate for the requested size.
+        # For PER_GB_MONTH SKUs the summary() leaves monthly_estimate=null;
+        # fill it in here so the LLM always receives a concrete dollar figure.
         for i, p in enumerate(prices):
-            from decimal import Decimal
-            monthly = p.price_per_unit * Decimal(str(size_gb))
-            result_prices[i]["monthly_estimate_for_size"] = f"${monthly:.2f}/mo for {size_gb} GB"
+            if p.unit == _PriceUnit.PER_GB_MONTH:
+                monthly = p.price_per_unit * Decimal(str(size_gb))
+                result_prices[i]["monthly_estimate"] = f"${monthly:.2f}/mo"
+                result_prices[i]["monthly_estimate_for_size"] = f"${monthly:.2f}/mo for {size_gb} GB"
+            elif p.unit == _PriceUnit.PER_HOUR:
+                # hourly-billed storage (unusual but possible): leave monthly_estimate as-is
+                # but still add the per-size helper key so the response is consistent
+                monthly = p.price_per_unit * Decimal("730")
+                result_prices[i]["monthly_estimate_for_size"] = f"${monthly:.2f}/mo for {size_gb} GB"
+            else:
+                monthly = p.price_per_unit * Decimal(str(size_gb))
+                result_prices[i]["monthly_estimate_for_size"] = f"${monthly:.2f}/mo for {size_gb} GB"
 
         return {
             "provider": provider,
@@ -484,6 +506,10 @@ def register_lookup_tools(mcp: Any) -> None:
         A dedicated, LLM-friendly tool for database pricing. Handles engine name
         normalization, Multi-AZ vs Single-AZ mapping, and RDS filter attribute names
         automatically — no need to know AWS RDS filter keys.
+
+        For multi-resource stacks (compute + storage + database together), use
+        `estimate_bom` instead — it handles all services in one call and surfaces
+        hidden costs like egress, load balancers, and monitoring.
 
         Supported engines: MySQL, PostgreSQL, MariaDB, Oracle, SQLServer,
         Aurora-MySQL, Aurora-PostgreSQL.
