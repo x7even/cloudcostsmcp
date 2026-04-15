@@ -153,6 +153,136 @@ async def test_azure_get_compute_price_spot_filtered(azure_provider: AzureProvid
 
 
 # ---------------------------------------------------------------------------
+# OS filtering and price sorting (T28 fix)
+# ---------------------------------------------------------------------------
+
+_AZURE_LINUX_ITEM = {
+    "retailPrice": 0.384,
+    "unitPrice": 0.384,
+    "armRegionName": "eastus",
+    "armSkuName": "Standard_D8s_v3",
+    "productName": "Virtual Machines DSv3 Series",
+    "skuName": "D8s v3",
+    "meterName": "D8s v3",
+    "serviceName": "Virtual Machines",
+    "serviceFamily": "Compute",
+    "unitOfMeasure": "1 Hour",
+    "type": "Consumption",
+    "currencyCode": "USD",
+    "meterId": "linux-meter-id",
+}
+
+_AZURE_WINDOWS_ITEM = {
+    "retailPrice": 0.752,
+    "unitPrice": 0.752,
+    "armRegionName": "eastus",
+    "armSkuName": "Standard_D8s_v3",
+    "productName": "Virtual Machines DSv3 Series Windows",
+    "skuName": "D8s v3",
+    "meterName": "D8s v3",
+    "serviceName": "Virtual Machines",
+    "serviceFamily": "Compute",
+    "unitOfMeasure": "1 Hour",
+    "type": "Consumption",
+    "currencyCode": "USD",
+    "meterId": "windows-meter-id",
+}
+
+_AZURE_SPOT_ITEM = {
+    "retailPrice": 0.060,
+    "unitPrice": 0.060,
+    "armRegionName": "eastus",
+    "armSkuName": "Standard_D8s_v3",
+    "productName": "Virtual Machines DSv3 Series",
+    "skuName": "D8s v3 Spot",
+    "meterName": "D8s v3 Spot",
+    "serviceName": "Virtual Machines",
+    "serviceFamily": "Compute",
+    "unitOfMeasure": "1 Hour",
+    "type": "Consumption",
+    "currencyCode": "USD",
+    "meterId": "spot-meter-id",
+}
+
+_AZURE_LINUX_ITEM_CHEAPER = {
+    **_AZURE_LINUX_ITEM,
+    "retailPrice": 0.300,
+    "meterId": "linux-meter-cheaper",
+}
+
+
+async def test_azure_linux_excludes_windows_skus(azure_provider: AzureProvider):
+    """Linux on-demand results must not include Windows productName SKUs."""
+    api_resp = {"Items": [_AZURE_LINUX_ITEM, _AZURE_WINDOWS_ITEM], "NextPageLink": None}
+    with patch("httpx.get", return_value=_make_mock_response(api_resp)):
+        prices = await azure_provider.get_compute_price(
+            "Standard_D8s_v3", "eastus", os="Linux"
+        )
+
+    assert len(prices) == 1
+    assert prices[0].price_per_unit == Decimal("0.384")
+    for p in prices:
+        assert "Windows" not in p.attributes.get("productName", ""), (
+            f"Linux result should not contain Windows SKU: {p.attributes['productName']}"
+        )
+
+
+async def test_azure_windows_excludes_linux_skus(azure_provider: AzureProvider):
+    """Windows on-demand results must only include Windows productName SKUs."""
+    api_resp = {"Items": [_AZURE_LINUX_ITEM, _AZURE_WINDOWS_ITEM], "NextPageLink": None}
+    with patch("httpx.get", return_value=_make_mock_response(api_resp)):
+        prices = await azure_provider.get_compute_price(
+            "Standard_D8s_v3", "eastus", os="Windows"
+        )
+
+    assert len(prices) == 1
+    assert prices[0].price_per_unit == Decimal("0.752")
+    for p in prices:
+        assert "Windows" in p.attributes.get("productName", ""), (
+            f"Windows result should contain Windows SKU: {p.attributes['productName']}"
+        )
+
+
+async def test_azure_compute_price_sorted_cheapest_first(azure_provider: AzureProvider):
+    """Results must be sorted by price ascending (cheapest first)."""
+    # Return items out of order: expensive first, cheap second
+    api_resp = {
+        "Items": [_AZURE_LINUX_ITEM, _AZURE_LINUX_ITEM_CHEAPER],
+        "NextPageLink": None,
+    }
+    with patch("httpx.get", return_value=_make_mock_response(api_resp)):
+        prices = await azure_provider.get_compute_price(
+            "Standard_D8s_v3", "eastus", os="Linux"
+        )
+
+    assert len(prices) == 2
+    assert prices[0].price_per_unit <= prices[1].price_per_unit, (
+        "Prices must be sorted cheapest first"
+    )
+    assert prices[0].price_per_unit == Decimal("0.300")
+    assert prices[1].price_per_unit == Decimal("0.384")
+
+
+async def test_azure_linux_on_demand_excludes_spot(azure_provider: AzureProvider):
+    """On-demand Linux results must exclude Spot SKUs even when API returns them."""
+    api_resp = {
+        "Items": [_AZURE_LINUX_ITEM, _AZURE_SPOT_ITEM],
+        "NextPageLink": None,
+    }
+    with patch("httpx.get", return_value=_make_mock_response(api_resp)):
+        prices = await azure_provider.get_compute_price(
+            "Standard_D8s_v3", "eastus", os="Linux"
+        )
+
+    assert len(prices) == 1
+    assert prices[0].price_per_unit == Decimal("0.384")
+    for p in prices:
+        assert "Spot" not in p.description, (
+            f"On-demand result should not contain Spot SKU: {p.description}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # get_storage_price
 # ---------------------------------------------------------------------------
 

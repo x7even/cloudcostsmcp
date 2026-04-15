@@ -159,18 +159,35 @@ class AzureProvider:
         else:
             filters["priceType"] = "Consumption"
 
-        items = await asyncio.to_thread(self._fetch_prices, filters, 10)
+        items = await asyncio.to_thread(self._fetch_prices, filters, 20)
 
         prices: list[NormalizedPrice] = []
         for item in items:
+            product_name = item.get("productName", "")
+
             # For SPOT term, filter to only SKUs containing "Spot"
             if term == PricingTerm.SPOT:
                 sku_name = item.get("skuName", "")
                 if "Spot" not in sku_name:
                     continue
+            elif term == PricingTerm.ON_DEMAND:
+                # Exclude Spot variants from on-demand results
+                sku_name = item.get("skuName", "")
+                if "Spot" in sku_name or "Low Priority" in sku_name:
+                    continue
+                # OS filtering: Linux = no "Windows" in productName
+                if os.lower() == "linux" and "Windows" in product_name:
+                    continue
+                # Windows filtering: only include Windows productNames
+                if os.lower() == "windows" and "Windows" not in product_name:
+                    continue
+
             p = self._item_to_price(item, region, term, "compute")
             if p:
                 prices.append(p)
+
+        # Sort by price ascending so the cheapest canonical result appears first
+        prices.sort(key=lambda p: p.price_per_unit)
 
         await self._cache.set_prices(
             "azure", "compute", region, cache_extras,

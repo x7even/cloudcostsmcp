@@ -121,6 +121,26 @@ def register_availability_tools(mcp: Any) -> None:
         if pvdr is None:
             return {"error": f"Provider '{provider}' not configured."}
 
+        # Azure Retail Prices API does not expose vCPU/memory metadata.
+        # Filtering by min_vcpus or min_memory_gb would silently return
+        # zero-spec instances, which misleads the LLM. Return a clear error.
+        if provider == "azure" and (min_vcpus or min_memory_gb):
+            return {
+                "result": "specs_unavailable",
+                "provider": "azure",
+                "message": (
+                    "Azure vCPU/memory specs are not available via the Retail Prices API. "
+                    "Use the 'family' filter with ARM SKU name prefixes instead."
+                ),
+                "suggestion": (
+                    "Try family='Standard_D4s' (4 vCPU general purpose), "
+                    "'Standard_D8s' (8 vCPU), "
+                    "'Standard_E4s' (4 vCPU memory-optimised), "
+                    "'Standard_F4s' (4 vCPU compute-optimised)"
+                ),
+                "docs": "https://learn.microsoft.com/en-us/azure/virtual-machines/sizes",
+            }
+
         try:
             instances = await pvdr.list_instance_types(
                 region,
@@ -152,7 +172,7 @@ def register_availability_tools(mcp: Any) -> None:
                 f"filters to narrow the {total_found}+ matching types."
             )
 
-        return {
+        response: dict[str, Any] = {
             "provider": provider,
             "region": region,
             "region_name": region_display_name(provider, region),
@@ -178,6 +198,14 @@ def register_availability_tools(mcp: Any) -> None:
             ],
             "next_steps": next_steps,
         }
+        if provider == "azure":
+            response["specs_note"] = (
+                "Azure does not expose vCPU/memory specs via the Retail Prices API. "
+                "Filter by family name prefix instead "
+                "(e.g. family='Standard_D4s' for 4-vCPU D-series). "
+                "See https://learn.microsoft.com/en-us/azure/virtual-machines/sizes for specs."
+            )
+        return response
 
     @mcp.tool()
     async def check_availability(
