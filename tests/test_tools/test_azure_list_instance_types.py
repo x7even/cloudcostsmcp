@@ -34,17 +34,17 @@ def _make_azure_instance(name: str) -> InstanceTypeInfo:
 
 
 # ------------------------------------------------------------------
-# Part 2: min_vcpus filter returns specs_unavailable for Azure
+# Part 2: min_vcpu filter returns specs_unavailable for Azure
 # ------------------------------------------------------------------
 
-async def test_azure_min_vcpus_returns_specs_unavailable():
-    """Calling list_instance_types for Azure with min_vcpus should return specs_unavailable."""
+async def test_azure_min_vcpu_returns_specs_unavailable():
+    """Calling list_instance_types for Azure with min_vcpu should return specs_unavailable."""
     tool_fn = _get_tool_fn()
     mock_pvdr = MagicMock()
     mock_pvdr.list_instance_types = AsyncMock(return_value=[])
     ctx = _make_ctx({"azure": mock_pvdr})
 
-    result = await tool_fn(ctx, provider="azure", region="eastus", min_vcpus=4)
+    result = await tool_fn(ctx, provider="azure", region="eastus", min_vcpu=4)
 
     assert result["result"] == "specs_unavailable"
     assert result["provider"] == "azure"
@@ -69,14 +69,14 @@ async def test_azure_min_memory_gb_returns_specs_unavailable():
 
 
 async def test_azure_both_filters_returns_specs_unavailable():
-    """Both min_vcpus and min_memory_gb together should also return specs_unavailable."""
+    """Both min_vcpu and min_memory_gb together should also return specs_unavailable."""
     tool_fn = _get_tool_fn()
     mock_pvdr = MagicMock()
     mock_pvdr.list_instance_types = AsyncMock(return_value=[])
     ctx = _make_ctx({"azure": mock_pvdr})
 
     result = await tool_fn(
-        ctx, provider="azure", region="eastus", min_vcpus=4, min_memory_gb=16.0
+        ctx, provider="azure", region="eastus", min_vcpu=4, min_memory_gb=16.0
     )
 
     assert result["result"] == "specs_unavailable"
@@ -140,7 +140,7 @@ async def test_specs_unavailable_suggestion_contains_examples():
     mock_pvdr.list_instance_types = AsyncMock(return_value=[])
     ctx = _make_ctx({"azure": mock_pvdr})
 
-    result = await tool_fn(ctx, provider="azure", region="eastus", min_vcpus=4)
+    result = await tool_fn(ctx, provider="azure", region="eastus", min_vcpu=4)
 
     suggestion = result["suggestion"]
     assert "Standard_D4s" in suggestion

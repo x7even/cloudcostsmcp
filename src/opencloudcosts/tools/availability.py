@@ -96,8 +96,8 @@ def register_availability_tools(mcp: Any) -> None:
         provider: str,
         region: str,
         family: str = "",
-        min_vcpus: int = 0,
-        min_memory_gb: float = 0.0,
+        min_vcpu: int | None = None,
+        min_memory_gb: float | None = None,
         gpu: bool = False,
         max_results: int = 50,
     ) -> dict[str, Any]:
@@ -112,8 +112,8 @@ def register_availability_tools(mcp: Any) -> None:
             region: Region code, e.g. "us-east-1" (AWS), "us-central1" (GCP), "eastus" (Azure)
             family: Optional instance family prefix, e.g. "m5", "c6g" (AWS), "n2", "c2" (GCP),
                     or "Standard_D", "Standard_E" (Azure)
-            min_vcpus: Minimum number of vCPUs (0 = no filter)
-            min_memory_gb: Minimum memory in GB (0 = no filter)
+            min_vcpu: Filter to instances with at least this many vCPUs.
+            min_memory_gb: Filter to instances with at least this much memory (GB).
             gpu: If true, only return GPU instances
             max_results: Maximum number of results (default 50)
         """
@@ -122,9 +122,9 @@ def register_availability_tools(mcp: Any) -> None:
             return {"error": f"Provider '{provider}' not configured."}
 
         # Azure Retail Prices API does not expose vCPU/memory metadata.
-        # Filtering by min_vcpus or min_memory_gb would silently return
+        # Filtering by min_vcpu or min_memory_gb would silently return
         # zero-spec instances, which misleads the LLM. Return a clear error.
-        if provider == "azure" and (min_vcpus or min_memory_gb):
+        if provider == "azure" and (min_vcpu is not None or min_memory_gb is not None):
             return {
                 "result": "specs_unavailable",
                 "provider": "azure",
@@ -145,8 +145,8 @@ def register_availability_tools(mcp: Any) -> None:
             instances = await pvdr.list_instance_types(
                 region,
                 family=family or None,
-                min_vcpus=min_vcpus or None,
-                min_memory_gb=min_memory_gb or None,
+                min_vcpus=min_vcpu,
+                min_memory_gb=min_memory_gb,
                 gpu=gpu,
             )
         except Exception as e:
@@ -154,6 +154,12 @@ def register_availability_tools(mcp: Any) -> None:
             return {"error": str(e)}
 
         instances.sort(key=lambda i: (i.vcpu, i.memory_gb))
+
+        if min_vcpu is not None:
+            instances = [i for i in instances if i.vcpu >= min_vcpu]
+        if min_memory_gb is not None:
+            instances = [i for i in instances if i.memory_gb >= min_memory_gb]
+
         total_found = len(instances)
         truncated = total_found > max_results
         instances = instances[:max_results]
@@ -169,13 +175,13 @@ def register_availability_tools(mcp: Any) -> None:
         if truncated:
             # Build a concrete family example based on provider and context filters
             if provider == "aws":
-                _example_family = family if family else ("m5" if not min_vcpus or min_vcpus <= 8 else "m5")
+                _example_family = family if family else ("m5" if not min_vcpu or min_vcpu <= 8 else "m5")
                 _family_hint = (
                     f'family="{_example_family}" (AWS general-purpose) or '
                     f'"c6g" (ARM compute-optimised) or "r6g" (memory-optimised)'
                 )
             elif provider == "gcp":
-                _example_family = family if family else ("n2-standard" if not min_vcpus or min_vcpus <= 16 else "n2-standard")
+                _example_family = family if family else ("n2-standard" if not min_vcpu or min_vcpu <= 16 else "n2-standard")
                 _family_hint = (
                     f'family="{_example_family}" (GCP general-purpose) or '
                     f'"c2-standard" (compute-optimised) or "m2-ultramem" (memory-optimised)'
@@ -190,7 +196,8 @@ def register_availability_tools(mcp: Any) -> None:
                 f"this is almost always sufficient. "
                 f"(2) Only raise max_results if you have already set a family filter and still need more results. "
                 f"Do NOT raise max_results without a family filter — "
-                f"you will get {total_found}+ unfiltered results."
+                f"you will get {total_found}+ unfiltered results. "
+                f"You can also filter by spec: min_vcpu=16 or min_memory_gb=64 to narrow results without knowing the family name."
             )
 
         response: dict[str, Any] = {
@@ -199,8 +206,8 @@ def register_availability_tools(mcp: Any) -> None:
             "region_name": region_display_name(provider, region),
             "filters": {
                 "family": family or None,
-                "min_vcpus": min_vcpus or None,
-                "min_memory_gb": min_memory_gb or None,
+                "min_vcpu": min_vcpu,
+                "min_memory_gb": min_memory_gb,
                 "gpu": gpu,
             },
             "count": len(instances),
