@@ -127,7 +127,10 @@ class GCPProvider:
                         "  2. Create Project (free) if you don't have one\n"
                         "  3. Click 'Create Credentials' → 'API key'\n"
                         "  4. Set OCC_GCP_API_KEY=<your-key> in your environment or .env\n\n"
-                        "Alternative: install google-auth and run 'gcloud auth application-default login'"
+                        "Alternative: install google-auth and run 'gcloud auth application-default login'\n\n"
+                        "IMPORTANT: Do not estimate GCP prices from training data — they vary by "
+                        "region, change over time, and will be wrong. If GCP pricing is unavailable, "
+                        "say so explicitly rather than guessing."
                     )
             self._http = httpx.AsyncClient(
                 base_url=_CATALOG_BASE,

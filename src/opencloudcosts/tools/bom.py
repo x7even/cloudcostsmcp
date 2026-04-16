@@ -135,33 +135,39 @@ def register_bom_tools(mcp: Any) -> None:
                     "item": "Data transfer (egress)",
                     "why": "Outbound traffic to the internet or cross-region — varies by workload",
                     "how_to_price": f'get_service_price(provider="aws", service="data_transfer", region="{sample_region}", filters={{"transferType": "AWS Outbound"}})',
+                    "price": "unknown — use the how_to_price call above to get the real figure; do not estimate",
                 })
                 not_included.append({
                     "item": "Load balancer (ALB/NLB)",
                     "why": "Typically needed in front of compute clusters",
                     "how_to_price": f'get_service_price(provider="aws", service="elb", region="{sample_region}", filters={{"productFamily": "Load Balancer"}})',
+                    "price": "unknown — use the how_to_price call above to get the real figure; do not estimate",
                 })
                 not_included.append({
                     "item": "NAT Gateway",
                     "why": "Required if EC2 instances are in private subnets",
                     "how_to_price": f'get_service_price(provider="aws", service="AmazonVPC", region="{sample_region}", filters={{"productFamily": "NAT Gateway"}})',
+                    "price": "unknown — use the how_to_price call above to get the real figure; do not estimate",
                 })
             not_included.append({
                 "item": "CloudWatch monitoring",
                 "why": "Logs, metrics, alarms — scales with number of instances and log volume",
                 "how_to_price": f'get_service_price(provider="aws", service="cloudwatch", region="{sample_region}", filters={{"group": "Metric"}})',
+                "price": "unknown — use the how_to_price call above to get the real figure; do not estimate",
             })
             if "database" in services_in_bom:
                 not_included.append({
                     "item": "RDS automated backups",
                     "why": "Free for storage equal to DB size; extra storage charged beyond that",
                     "how_to_price": f'get_service_price(provider="aws", service="rds", region="{sample_region}", filters={{"productFamily": "Storage Snapshot"}})',
+                    "price": "unknown — use the how_to_price call above to get the real figure; do not estimate",
                 })
             if "storage" in services_in_bom:
                 not_included.append({
                     "item": "EBS snapshots",
                     "why": "Point-in-time backups stored in S3 — charged per GB-month",
                     "how_to_price": f'get_service_price(provider="aws", service="AmazonEC2", region="{sample_region}", filters={{"productFamily": "Storage Snapshot"}})',
+                    "price": "unknown — use the how_to_price call above to get the real figure; do not estimate",
                 })
 
         return {

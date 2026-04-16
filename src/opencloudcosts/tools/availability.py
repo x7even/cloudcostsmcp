@@ -167,9 +167,28 @@ def register_availability_tools(mcp: Any) -> None:
             f'region="{region}") — price these instances sorted cheapest first',
         ]
         if truncated:
+            # Build a concrete family example based on provider and context filters
+            if provider == "aws":
+                _example_family = family if family else ("m5" if not min_vcpus or min_vcpus <= 8 else "m5")
+                _family_hint = (
+                    f'family="{_example_family}" (AWS general-purpose) or '
+                    f'"c6g" (ARM compute-optimised) or "r6g" (memory-optimised)'
+                )
+            elif provider == "gcp":
+                _example_family = family if family else ("n2-standard" if not min_vcpus or min_vcpus <= 16 else "n2-standard")
+                _family_hint = (
+                    f'family="{_example_family}" (GCP general-purpose) or '
+                    f'"c2-standard" (compute-optimised) or "m2-ultramem" (memory-optimised)'
+                )
+            else:
+                _example_family = family if family else "Standard_D"
+                _family_hint = f'family="{_example_family}"'
             next_steps.append(
-                f"Increase max_results (currently {max_results}) or add family/min_vcpus "
-                f"filters to narrow the {total_found}+ matching types."
+                f"Result is truncated: {max_results} of {total_found}+ matching types returned. "
+                f"Use the 'family' filter to narrow results — it is faster and more precise than "
+                f"increasing max_results. Example: {_family_hint}. "
+                f"Increasing max_results (currently {max_results}) is a last resort if you need "
+                f"to compare across families."
             )
 
         response: dict[str, Any] = {
