@@ -592,10 +592,26 @@ def register_availability_tools(mcp: Any) -> None:
             logger.error("list_services error: %s", e)
             return {"error": str(e)}
 
+        # Annotate known services with usage hints to help LLM tool selection.
+        _SERVICE_HINTS: dict[str, str] = {
+            "AWSDataTransfer": (
+                "use get_service_price(service='data_transfer', region='<source-region>', "
+                "filters={'fromRegionCode': '<source>', 'toRegionCode': '<dest>'}) "
+                "for inter-region egress pricing"
+            ),
+        }
+        annotated_services = []
+        for svc in services:
+            entry = dict(svc)
+            hint = _SERVICE_HINTS.get(entry.get("service_code", ""))
+            if hint:
+                entry["usage_example"] = hint
+            annotated_services.append(entry)
+
         return {
             "provider": provider,
-            "count": len(services),
-            "services": services,
+            "count": len(annotated_services),
+            "services": annotated_services,
             "tip": (
                 "Use service_code or any alias with get_service_price() or "
                 "search_pricing(service=...). "

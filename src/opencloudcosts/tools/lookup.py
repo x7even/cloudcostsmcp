@@ -522,7 +522,7 @@ def register_lookup_tools(mcp: Any) -> None:
                 "tip": tip,
             }
 
-        return {
+        response: dict[str, Any] = {
             "provider": provider,
             "query": query,
             "service": service or "ec2",
@@ -530,6 +530,20 @@ def register_lookup_tools(mcp: Any) -> None:
             "count": len(results),
             "results": results,
         }
+
+        # If any result looks like a data transfer SKU, add a hint so the LLM
+        # knows the correct tool call pattern for inter-region egress pricing.
+        if any(
+            "transfer" in (r.get("service", "") + r.get("description", "")).lower()
+            for r in results
+        ):
+            response["data_transfer_tip"] = (
+                "For inter-region data transfer pricing, use: "
+                "get_service_price(provider='aws', service='data_transfer', region='<source-region>', "
+                "filters={'fromRegionCode': '<source>', 'toRegionCode': '<dest>'})"
+            )
+
+        return response
 
     @mcp.tool()
     async def get_database_price(
@@ -672,11 +686,19 @@ def register_lookup_tools(mcp: Any) -> None:
           RDS MySQL: {"databaseEngine": "MySQL", "instanceType": "db.r5.large"}
           Lambda: {"group": "AWS-Lambda-Duration"}
 
+        Data transfer (inter-region egress):
+          get_service_price(provider="aws", service="data_transfer", region="us-east-1",
+                            filters={"fromRegionCode": "us-east-1", "toRegionCode": "eu-west-1"})
+          # Returns tiered egress rates (first 10TB, next 40TB, etc.)
+          # Note: AWS charges based on the source region; set region= to the source.
+
         Args:
             provider: Cloud provider — "aws" (GCP generic service pricing coming soon)
             service: Service code or alias, e.g. "cloudwatch", "AmazonCloudWatch"
             region: Region code, e.g. "us-east-1"
-            filters: Attribute key/value pairs to narrow results (optional)
+            filters: Attribute key/value pairs to narrow results (optional).
+                For data transfer: use {"fromRegionCode": "us-east-1", "toRegionCode": "eu-west-1"}.
+                The "region" param should be the source (egress) region.
             max_results: Maximum results to return (default 20)
         """
         pvdr = _providers(ctx).get(provider)
