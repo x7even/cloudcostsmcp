@@ -306,11 +306,17 @@ def register_bom_tools(mcp: Any) -> None:
         estimate = BomEstimate.from_items(line_items)
         cost_per_unit = estimate.total_monthly / Decimal(str(units_per_month)) if units_per_month > 0 else Decimal("0")
 
+        # Derive the region from the first successfully priced item so we can echo
+        # it back at the top level — this nudges the LLM to mention it in its answer.
+        sample_region = estimate.items[0].region if estimate.items else "us-east-1"
+
         return {
+            "region": sample_region,
             "infrastructure_monthly": f"${estimate.total_monthly:.2f}",
             "infrastructure_annual": f"${estimate.total_annual:.2f}",
             "volume": f"{units_per_month:,.0f} {unit_label}s/month",
             "cost_per_unit": f"${cost_per_unit:.4f} per {unit_label}",
             "cost_per_unit_annual": f"${cost_per_unit * 12:.4f} per {unit_label}/year",
             "errors": errors if errors else None,
+            "note": f"Prices are for {sample_region}. Specify a different region if needed.",
         }

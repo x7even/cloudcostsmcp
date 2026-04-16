@@ -223,8 +223,33 @@ def flag_unanchored(trace: dict) -> tuple[bool, str]:
     answer = (trace.get("final_answer") or "").lower()
     if not answer or len(answer) < 50:
         return False, ""  # too short to judge
-    # If there are tool calls, the answer should mention at least region
-    if trace["tool_calls"] and "region" not in answer and "us-" not in answer \
+
+    if not trace["tool_calls"]:
+        return False, ""
+
+    # Condition 1: Only flag UNANCHORED if the prompt itself mentions a region.
+    # Unit-economics questions (e.g. "cost per user") typically don't specify a
+    # region, so the LLM has no obligation to echo one.
+    prompt = trace.get("prompt", "").lower()
+    prompt_has_region = any(term in prompt for term in [
+        "us-", "eu-", "ap-", "eastus", "us-east", "us-west", "eu-west",
+        "central", "europe", "asia", "region",
+    ])
+    if not prompt_has_region:
+        return False, ""
+
+    # Condition 2: Only flag if at least one tool result actually contains a
+    # region identifier. If all tool calls returned errors (e.g. GCP API key not
+    # configured) the LLM never received a region to echo.
+    tool_results_text = json.dumps([tc["result"] for tc in trace["tool_calls"]])
+    results_have_region = any(term in tool_results_text.lower() for term in [
+        "us-east", "us-west", "eu-west", "ap-", "eastus", "us-central",
+    ])
+    if not results_have_region:
+        return False, ""
+
+    # Check that the answer mentions at least one region keyword.
+    if "region" not in answer and "us-" not in answer \
             and "eu-" not in answer and "ap-" not in answer and "eastus" not in answer \
             and "central" not in answer and "europe" not in answer and "asia" not in answer:
         return True, "Answer mentions no region despite tool calls being made"
