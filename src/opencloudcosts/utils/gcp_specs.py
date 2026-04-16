@@ -130,6 +130,26 @@ GCP_INSTANCE_SPECS: dict[str, tuple[int, float]] = {
     "c2-standard-16": (16, 64.0),
     "c2-standard-30": (30, 120.0),
     "c2-standard-60": (60, 240.0),
+    # ---- C3 standard (4 GB/vCPU) ----
+    "c3-standard-4": (4, 16.0),
+    "c3-standard-8": (8, 32.0),
+    "c3-standard-22": (22, 88.0),
+    "c3-standard-44": (44, 176.0),
+    "c3-standard-88": (88, 352.0),
+    "c3-standard-176": (176, 704.0),
+    # ---- C3 highcpu (2 GB/vCPU) ----
+    "c3-highcpu-4": (4, 8.0),
+    "c3-highcpu-8": (8, 16.0),
+    "c3-highcpu-22": (22, 44.0),
+    "c3-highcpu-44": (44, 88.0),
+    "c3-highcpu-88": (88, 176.0),
+    "c3-highcpu-176": (176, 352.0),
+    # ---- C3 highmem (8 GB/vCPU) ----
+    "c3-highmem-4": (4, 32.0),
+    "c3-highmem-8": (8, 64.0),
+    "c3-highmem-22": (22, 176.0),
+    "c3-highmem-44": (44, 352.0),
+    "c3-highmem-88": (88, 704.0),
     # ---- C2D (AMD EPYC, compute-optimised) ----
     "c2d-standard-2": (2, 8.0),
     "c2d-standard-4": (4, 16.0),
@@ -210,6 +230,7 @@ _FAMILY_STANDARD_RAM: dict[str, float] = {
     "e2": 4.0,
     "c2": 4.0,
     "c2d": 4.0,
+    "c3": 4.0,
     "t2d": 4.0,
     "t2a": 4.0,
 }
@@ -316,6 +337,14 @@ GCP_FAMILY_SKU: dict[str, dict[str, str]] = {
         "preempt_ram_desc": "Preemptible C2D AMD Instance Ram",
         "cud_cpu_desc": "Committed Use Discount for C2D VCPU",
         "cud_ram_desc": "Committed Use Discount for C2D Memory",
+    },
+    "c3": {
+        "cpu_desc": "C3 Instance Core",
+        "ram_desc": "C3 Instance Ram",
+        "preempt_cpu_desc": "Spot Preemptible C3 Instance Core",
+        "preempt_ram_desc": "Spot Preemptible C3 Instance Ram",
+        "cud_cpu_desc": "Committed Use Discount for C3 VCPU",
+        "cud_ram_desc": "Committed Use Discount for C3 Memory",
     },
     "t2d": {
         "cpu_desc": "T2D AMD Instance Core",
