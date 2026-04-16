@@ -1,4 +1,7 @@
-"""Tests for list_instance_types effective_max / spec-filter cap behaviour."""
+"""Tests for list_instance_types effective_max / spec-filter cap behaviour.
+
+effective_max is 200 when min_vcpu or min_memory_gb is set and max_results < 200.
+"""
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
@@ -24,7 +27,6 @@ def _get_tool_fn():
 
 
 def _make_aws_instances(n: int, vcpu: int = 4, memory_gb: float = 16.0) -> list[InstanceTypeInfo]:
-    """Return n fake AWS InstanceTypeInfo objects all meeting vcpu/memory_gb."""
     return [
         InstanceTypeInfo(
             provider=CloudProvider.AWS,
@@ -38,14 +40,13 @@ def _make_aws_instances(n: int, vcpu: int = 4, memory_gb: float = 16.0) -> list[
 
 
 # ------------------------------------------------------------------
-# effective_max bumped to 100 for spec-filtered queries
+# spec-filtered queries: effective_max bumped to 200
 # ------------------------------------------------------------------
 
-async def test_min_vcpu_bumps_effective_max_to_100():
-    """When min_vcpu is set and max_results < 100, effective_max should be 100."""
+async def test_min_vcpu_bumps_effective_max_to_200():
+    """When min_vcpu is set and max_results=20, effective_max becomes 200.
+    With 120 instances all fitting within 200, none are truncated."""
     tool_fn = _get_tool_fn()
-    # 120 instances all meeting vcpu >= 4 — more than the default max_results=50
-    # but also more than 100, so we expect truncation at 100.
     instances = _make_aws_instances(120, vcpu=4, memory_gb=16.0)
     mock_pvdr = MagicMock()
     mock_pvdr.list_instance_types = AsyncMock(return_value=instances)
@@ -55,19 +56,14 @@ async def test_min_vcpu_bumps_effective_max_to_100():
         ctx, provider="aws", region="us-east-1", min_vcpu=4, max_results=20
     )
 
-    # Should have returned 100, not 20
-    assert result["count"] == 100
-    assert result["truncated"] is True
-    # The truncation message should cite 100, not 20
-    truncation_msg = next(
-        (s for s in result["next_steps"] if "Result truncated" in s), None
-    )
-    assert truncation_msg is not None
-    assert "returned 100 of 120+" in truncation_msg
+    # All 120 fit within effective_max=200
+    assert result["count"] == 120
+    assert result["truncated"] is False
+    assert result["total_found"] == 120
 
 
-async def test_min_memory_gb_bumps_effective_max_to_100():
-    """When min_memory_gb is set and max_results < 100, effective_max should be 100."""
+async def test_min_memory_gb_bumps_effective_max_to_200():
+    """min_memory_gb bumps effective_max to 200; 110 instances all fit."""
     tool_fn = _get_tool_fn()
     instances = _make_aws_instances(110, vcpu=8, memory_gb=64.0)
     mock_pvdr = MagicMock()
@@ -78,17 +74,13 @@ async def test_min_memory_gb_bumps_effective_max_to_100():
         ctx, provider="aws", region="us-east-1", min_memory_gb=16.0, max_results=50
     )
 
-    assert result["count"] == 100
-    assert result["truncated"] is True
-    truncation_msg = next(
-        (s for s in result["next_steps"] if "Result truncated" in s), None
-    )
-    assert truncation_msg is not None
-    assert "returned 100 of 110+" in truncation_msg
+    assert result["count"] == 110
+    assert result["truncated"] is False
+    assert result["total_found"] == 110
 
 
 async def test_both_spec_filters_bump_effective_max():
-    """Both min_vcpu and min_memory_gb together should also bump effective_max."""
+    """Both filters together bump effective_max to 200; 105 instances all fit."""
     tool_fn = _get_tool_fn()
     instances = _make_aws_instances(105, vcpu=4, memory_gb=32.0)
     mock_pvdr = MagicMock()
@@ -100,16 +92,12 @@ async def test_both_spec_filters_bump_effective_max():
         min_vcpu=4, min_memory_gb=16.0, max_results=20
     )
 
-    assert result["count"] == 100
-    assert result["truncated"] is True
+    assert result["count"] == 105
+    assert result["truncated"] is False
 
 
-# ------------------------------------------------------------------
-# explicit max_results >= 100 is always honoured
-# ------------------------------------------------------------------
-
-async def test_explicit_max_results_200_is_honoured():
-    """Callers who explicitly pass max_results=200 should get up to 200 results."""
+async def test_spec_filter_with_250_instances_still_truncates():
+    """With 250 instances and min_vcpu set, effective_max=200 so 50 are truncated."""
     tool_fn = _get_tool_fn()
     instances = _make_aws_instances(250, vcpu=4, memory_gb=16.0)
     mock_pvdr = MagicMock()
@@ -117,20 +105,41 @@ async def test_explicit_max_results_200_is_honoured():
     ctx = _make_ctx({"aws": mock_pvdr})
 
     result = await tool_fn(
-        ctx, provider="aws", region="us-east-1", min_vcpu=4, max_results=200
+        ctx, provider="aws", region="us-east-1", min_vcpu=4, max_results=20
     )
 
     assert result["count"] == 200
     assert result["truncated"] is True
+    assert result["total_found"] == 250
+    # Spec-filtered truncation message uses "Spec filters applied" format
     truncation_msg = next(
-        (s for s in result["next_steps"] if "Result truncated" in s), None
+        (s for s in result["next_steps"] if "Spec filters applied" in s), None
     )
     assert truncation_msg is not None
-    assert "returned 200 of 250+" in truncation_msg
+    assert "250 total matches" in truncation_msg
+    assert "showing 200" in truncation_msg
+    assert "50 more instances" in truncation_msg
 
 
-async def test_explicit_max_results_100_is_honoured():
-    """max_results=100 should not be further bumped (already at the floor)."""
+async def test_explicit_max_results_300_honoured():
+    """Callers who pass max_results=300 (> 200 floor) get that value honoured."""
+    tool_fn = _get_tool_fn()
+    instances = _make_aws_instances(350, vcpu=4, memory_gb=16.0)
+    mock_pvdr = MagicMock()
+    mock_pvdr.list_instance_types = AsyncMock(return_value=instances)
+    ctx = _make_ctx({"aws": mock_pvdr})
+
+    result = await tool_fn(
+        ctx, provider="aws", region="us-east-1", min_vcpu=4, max_results=300
+    )
+
+    assert result["count"] == 300
+    assert result["truncated"] is True
+    assert result["total_found"] == 350
+
+
+async def test_explicit_max_results_100_bumped_to_200():
+    """max_results=100 with spec filter is bumped to 200; 150 instances all fit."""
     tool_fn = _get_tool_fn()
     instances = _make_aws_instances(150, vcpu=4, memory_gb=16.0)
     mock_pvdr = MagicMock()
@@ -141,8 +150,9 @@ async def test_explicit_max_results_100_is_honoured():
         ctx, provider="aws", region="us-east-1", min_vcpu=4, max_results=100
     )
 
-    assert result["count"] == 100
-    assert result["truncated"] is True
+    # Bumped to 200; all 150 fit
+    assert result["count"] == 150
+    assert result["truncated"] is False
 
 
 # ------------------------------------------------------------------
@@ -150,9 +160,8 @@ async def test_explicit_max_results_100_is_honoured():
 # ------------------------------------------------------------------
 
 async def test_unfiltered_call_keeps_max_results():
-    """Without spec filters, max_results should not be bumped to 100."""
+    """Without spec filters, max_results is not bumped to 200."""
     tool_fn = _get_tool_fn()
-    # 80 instances — more than default max_results=50, less than 100
     instances = _make_aws_instances(80, vcpu=2, memory_gb=8.0)
     mock_pvdr = MagicMock()
     mock_pvdr.list_instance_types = AsyncMock(return_value=instances)
@@ -162,9 +171,9 @@ async def test_unfiltered_call_keeps_max_results():
         ctx, provider="aws", region="us-east-1", max_results=50
     )
 
-    # No spec filters → effective_max stays at 50
     assert result["count"] == 50
     assert result["truncated"] is True
+    assert result["total_found"] == 80
 
 
 # ------------------------------------------------------------------
@@ -172,7 +181,7 @@ async def test_unfiltered_call_keeps_max_results():
 # ------------------------------------------------------------------
 
 async def test_no_truncation_when_results_fit_within_effective_max():
-    """When spec-filtered results fit within effective_max, truncated should be False."""
+    """30 spec-filtered results fit within effective_max=200; no truncation."""
     tool_fn = _get_tool_fn()
     instances = _make_aws_instances(30, vcpu=4, memory_gb=16.0)
     mock_pvdr = MagicMock()
@@ -183,11 +192,11 @@ async def test_no_truncation_when_results_fit_within_effective_max():
         ctx, provider="aws", region="us-east-1", min_vcpu=4, max_results=20
     )
 
-    # 30 results fit within effective_max=100
     assert result["count"] == 30
     assert result["truncated"] is False
+    assert result["total_found"] == 30
     # No truncation message in next_steps
-    truncation_msg = next(
-        (s for s in result["next_steps"] if "Result truncated" in s), None
+    spec_msg = next(
+        (s for s in result["next_steps"] if "Spec filters applied" in s), None
     )
-    assert truncation_msg is None
+    assert spec_msg is None

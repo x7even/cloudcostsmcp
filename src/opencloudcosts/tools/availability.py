@@ -160,13 +160,15 @@ def register_availability_tools(mcp: Any) -> None:
         if min_memory_gb is not None:
             instances = [i for i in instances if i.memory_gb >= min_memory_gb]
 
-        # Spec-filtered queries: use a larger effective cap so the LLM gets a meaningful
-        # sample rather than hitting a 20-result wall on broad specs like "4+ vCPU".
-        effective_max = max_results
-        if (min_vcpu is not None or min_memory_gb is not None) and effective_max < 100:
-            effective_max = 100
-
         total_found = len(instances)
+
+        # Spec-filtered queries: auto-expand the cap so a broad filter like
+        # "min_vcpu=4" doesn't silently drop hundreds of valid candidates.
+        # The worst outcome is a missed cheaper option due to truncation.
+        effective_max = max_results
+        if (min_vcpu is not None or min_memory_gb is not None) and effective_max < 200:
+            effective_max = 200
+
         truncated = total_found > effective_max
         instances = instances[:effective_max]
 
@@ -174,37 +176,74 @@ def register_availability_tools(mcp: Any) -> None:
         # Cap the suggested batch at 10 types to keep the follow-up call fast.
         _PRICE_BATCH_CAP = 10
         batch_types = [i.instance_type for i in instances[:_PRICE_BATCH_CAP]]
-        next_steps: list[str] = [
+        _prices_batch_hint = (
             f'get_prices_batch(provider="{provider}", instance_types={batch_types}, '
-            f'region="{region}") — price these instances sorted cheapest first',
-        ]
+            f'region="{region}") — price these instances sorted cheapest first'
+        )
+        next_steps: list[str] = []
         if truncated:
-            # Build a concrete family example based on provider and context filters
-            if provider == "aws":
-                _example_family = family if family else ("m5" if not min_vcpu or min_vcpu <= 8 else "m5")
-                _family_hint = (
-                    f'family="{_example_family}" (AWS general-purpose) or '
-                    f'"c6g" (ARM compute-optimised) or "r6g" (memory-optimised)'
-                )
-            elif provider == "gcp":
-                _example_family = family if family else ("n2-standard" if not min_vcpu or min_vcpu <= 16 else "n2-standard")
-                _family_hint = (
-                    f'family="{_example_family}" (GCP general-purpose) or '
-                    f'"c2-standard" (compute-optimised) or "m2-ultramem" (memory-optimised)'
+            spec_filters_applied = min_vcpu is not None or min_memory_gb is not None
+            if spec_filters_applied:
+                # Pick a concrete example instance type based on provider and min_vcpu
+                if provider == "aws":
+                    if min_vcpu is not None and min_vcpu <= 4:
+                        _example_type = "m5.xlarge"
+                        _example_desc = "4vCPU/16GB"
+                    elif min_vcpu is not None and min_vcpu <= 8:
+                        _example_type = "m5.2xlarge"
+                        _example_desc = "8vCPU/32GB"
+                    else:
+                        _example_type = "r6i.xlarge"
+                        _example_desc = "4vCPU/32GB"
+                elif provider == "gcp":
+                    if min_vcpu is not None and min_vcpu <= 4:
+                        _example_type = "n2-standard-4"
+                        _example_desc = "4vCPU/16GB"
+                    else:
+                        _example_type = "n2-standard-8"
+                        _example_desc = "8vCPU/32GB"
+                else:
+                    if min_vcpu is not None and min_vcpu <= 4:
+                        _example_type = "Standard_D4s_v3"
+                        _example_desc = "4vCPU/16GB"
+                    else:
+                        _example_type = "Standard_D8s_v3"
+                        _example_desc = "8vCPU/32GB"
+                next_steps.append(
+                    f"Spec filters applied — {total_found} total matches, showing {effective_max}. "
+                    f"There are {total_found - effective_max} more instances not shown. "
+                    f"To see all: re-call with max_results={total_found}. "
+                    f"To narrow: add family filter (e.g. family='m5') or tighten min_vcpu/min_memory_gb. "
+                    f"To price this sample immediately: call get_prices_batch with the instance_types above. "
+                    f"Or go direct: get_compute_price(provider='{provider}', "
+                    f"instance_type='{_example_type}', region='{region}') for a known {_example_desc} type."
                 )
             else:
-                _example_family = family if family else "Standard_D"
-                _family_hint = f'family="{_example_family}"'
-            next_steps.append(
-                f"Result truncated: returned {effective_max} of {total_found}+ matches. "
-                f"IMPORTANT — follow these steps in order: "
-                f"(1) First narrow by family filter — e.g. {_family_hint} — "
-                f"this is almost always sufficient. "
-                f"(2) Only raise max_results if you have already set a family filter and still need more results. "
-                f"Do NOT raise max_results without a family filter — "
-                f"you will get {total_found}+ unfiltered results. "
-                f"You can also filter by spec: min_vcpu=16 or min_memory_gb=64 to narrow results without knowing the family name."
-            )
+                # No spec filters — guide the LLM to narrow by family first
+                if provider == "aws":
+                    _example_family = family if family else "m5"
+                    _family_hint = (
+                        f'family="{_example_family}" (AWS general-purpose) or '
+                        f'"c6g" (ARM compute-optimised) or "r6g" (memory-optimised)'
+                    )
+                elif provider == "gcp":
+                    _example_family = family if family else "n2-standard"
+                    _family_hint = (
+                        f'family="{_example_family}" (GCP general-purpose) or '
+                        f'"c2-standard" (compute-optimised) or "m2-ultramem" (memory-optimised)'
+                    )
+                else:
+                    _example_family = family if family else "Standard_D"
+                    _family_hint = f'family="{_example_family}"'
+                next_steps.append(
+                    f"Result truncated: returned {effective_max} of {total_found} matches. "
+                    f"Narrow by family — e.g. {_family_hint} — or add "
+                    f"min_vcpu/min_memory_gb spec filters. "
+                    f"To retrieve all {total_found} results: re-call with max_results={total_found}."
+                )
+                next_steps.append(_prices_batch_hint)
+        else:
+            next_steps.append(_prices_batch_hint)
 
         response: dict[str, Any] = {
             "provider": provider,
@@ -217,6 +256,7 @@ def register_availability_tools(mcp: Any) -> None:
                 "gpu": gpu,
             },
             "count": len(instances),
+            "total_found": total_found,
             "truncated": truncated,
             "instance_types": [
                 {
