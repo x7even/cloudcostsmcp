@@ -53,6 +53,7 @@ def register_bom_tools(mcp: Any) -> None:
         providers = ctx.request_context.lifespan_context["providers"]
         line_items: list[BomLineItem] = []
         errors: list[str] = []
+        unsupported_items: list[dict[str, str]] = []
 
         for idx, item in enumerate(items):
             label = f"Item {idx + 1}"
@@ -82,7 +83,15 @@ def register_bom_tools(mcp: Any) -> None:
                     prices = await pvdr.get_storage_price(resource_type, region, size_gb)
                 elif service == "database":
                     if not hasattr(pvdr, "get_service_price"):
-                        errors.append(f"{label}: database pricing not supported for provider '{provider_name}'")
+                        unsupported_items.append({
+                            "item": description,
+                            "provider": provider_name,
+                            "service": service,
+                            "type": resource_type,
+                            "region": region,
+                            "price": "unavailable for this provider",
+                            "reason": f"database pricing not supported for provider '{provider_name}'",
+                        })
                         continue
                     db_filters: dict[str, str] = {"instanceType": resource_type}
                     # Infer deployment option from term (default Single-AZ)
@@ -116,6 +125,21 @@ def register_bom_tools(mcp: Any) -> None:
                 errors.append(f"{label}: {e}")
 
         if not line_items:
+            if unsupported_items:
+                unsupported_providers = {ui["provider"] for ui in unsupported_items}
+                provider_list = ", ".join(sorted(unsupported_providers))
+                return {
+                    "error": (
+                        f"No items could be priced. "
+                        f"database pricing not supported for provider(s): {provider_list}"
+                        + (f". Additional errors: {'; '.join(errors)}" if errors else "")
+                    ),
+                    "not_included": unsupported_items,
+                    "note": (
+                        f"Partial estimate — some items could not be priced for {provider_list}. "
+                        "See not_included for details."
+                    ),
+                }
             return {"error": "No valid line items. Errors: " + "; ".join(errors)}
 
         estimate = BomEstimate.from_items(line_items)
@@ -128,7 +152,7 @@ def register_bom_tools(mcp: Any) -> None:
         aws_regions = [li.region for li in estimate.items if li.provider.value == "aws"]
         sample_region = aws_regions[0] if aws_regions else "us-east-1"
 
-        not_included: list[dict[str, str]] = []
+        not_included: list[dict[str, str]] = list(unsupported_items)
         if "aws" in providers_in_bom:
             if "compute" in services_in_bom or "database" in services_in_bom:
                 not_included.append({
@@ -170,6 +194,17 @@ def register_bom_tools(mcp: Any) -> None:
                     "price": "unknown — use the how_to_price call above to get the real figure; do not estimate",
                 })
 
+        # Determine which providers had unsupported items for the note
+        unsupported_providers = {ui["provider"] for ui in unsupported_items}
+        if unsupported_providers:
+            provider_list = ", ".join(sorted(unsupported_providers))
+            note = (
+                f"Partial estimate — some items could not be priced for {provider_list}. "
+                "See not_included for details."
+            )
+        else:
+            note = None
+
         return {
             "line_items": [
                 {
@@ -189,6 +224,7 @@ def register_bom_tools(mcp: Any) -> None:
                 "annual": f"${estimate.total_annual:.2f}",
                 "currency": estimate.currency,
             },
+            "note": note,
             "not_included": not_included if not_included else None,
             "errors": errors if errors else None,
         }
