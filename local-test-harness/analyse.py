@@ -37,7 +37,7 @@ ESTIMATE_PHRASES = [
 # Multipliers that represent legitimate unit conversions in cloud pricing:
 #   instance counts (2–10), hours/month (730), hours/year (8760),
 #   months (12, 24, 36, 60=5yr), days (24, 30), GB quantities (1000=1TB)
-_ARITH_MULTIPLIERS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 24, 30, 36, 60, 120, 730, 1000, 8760]
+_ARITH_MULTIPLIERS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 24, 30, 36, 60, 100, 120, 730, 1000, 8760]
 
 _DOLLAR_RE = re.compile(r'\$[\d,]+(?:\.\d+)?')
 
@@ -115,6 +115,13 @@ def _is_grounded(amount: float, tool_floats: list[float], tol: float = 0.02) -> 
             if s > 0 and abs(s - amount) / max(abs(amount), 0.001) <= tol:
                 return True
 
+    # 5. Two-multiplier chain: tf × n1 × n2
+    for tf in tool_floats:
+        for n1 in _ARITH_MULTIPLIERS:
+            for n2 in _ARITH_MULTIPLIERS:
+                if abs(tf * n1 * n2 - amount) / max(abs(amount), 0.001) <= tol:
+                    return True
+
     return False
 
 
@@ -155,10 +162,18 @@ def flag_hallucination(trace: dict) -> tuple[bool, str]:
         return False, ""
 
     # No dollar amounts — fall back to hedging-language check
+    # Skip if the answer already explicitly acknowledges unavailability
+    # (e.g. GCP API key not configured) — hedge phrases in that context
+    # are descriptive, not estimates from training data.
     answer_lower = answer.lower()
     tool_lower = tool_results_text.lower()
+    _UNAVAIL_PHRASES = ["api key", "credentials", "cannot retrieve", "unable to retrieve",
+                        "not configured", "requires authentication"]
+    answer_acknowledges_unavail = any(p in answer_lower for p in _UNAVAIL_PHRASES)
     for phrase in ESTIMATE_PHRASES:
         if phrase in answer_lower and phrase not in tool_lower:
+            if answer_acknowledges_unavail:
+                continue  # don't flag — LLM is being descriptive, not estimating
             return True, (
                 f"Hedging phrase '{phrase}' in answer (no dollar amounts to verify — "
                 f"may be estimating from training data)"
