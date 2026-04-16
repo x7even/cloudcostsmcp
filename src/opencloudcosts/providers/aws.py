@@ -107,6 +107,10 @@ _SERVICE_ALIASES: dict[str, str] = {
     "glue": "AWSGlue",
     "athena": "AmazonAthena",
     "sagemaker": "AmazonSageMaker",
+    # NAT Gateway pricing lives under AmazonEC2, not AmazonVPC
+    "nat_gateway": "AmazonEC2",
+    "natgateway": "AmazonEC2",
+    "vpc": "AmazonVPC",
 }
 
 # Index of services available in the AWS bulk pricing API (cached after first fetch)
@@ -764,6 +768,10 @@ class AWSProvider:
                 pass
 
         _EBS_TYPES = {"gp2", "gp3", "io1", "io2", "st1", "sc1", "standard"}
+        # Known EC2 product families that are not compute instances.
+        # Queries matching these are routed to a productFamily filter search instead
+        # of the compute instance search path.
+        _EC2_NON_COMPUTE_FAMILIES = {"nat gateway", "storage snapshot", "system operation"}
         if resolved == "AmazonEC2" and query.lower() in _EBS_TYPES:
             # EBS volume type query — use storage-specific filters, not compute filters
             volume_type = self._map_ebs_type(query.lower())
@@ -778,6 +786,19 @@ class AWSProvider:
                 if p:
                     if p.unit == PriceUnit.PER_UNIT:
                         p = p.model_copy(update={"unit": PriceUnit.PER_GB_MONTH})
+                    prices.append(p)
+                if len(prices) >= max_results:
+                    break
+            return prices
+        elif resolved == "AmazonEC2" and query.lower() in _EC2_NON_COMPUTE_FAMILIES:
+            # Non-compute EC2 product family search (e.g. "NAT Gateway", "Storage Snapshot").
+            # productFamily sits at the product top level — use it as a direct filter.
+            filters.append({"Field": "productFamily", "Value": query})
+            raw = await self._get_products(resolved, filters, max_results=max_results)
+            prices = []
+            for item in raw:
+                p = self._item_to_price(item, region or "us-east-1", PricingTerm.ON_DEMAND, "nat_gateway")
+                if p:
                     prices.append(p)
                 if len(prices) >= max_results:
                     break
@@ -812,14 +833,21 @@ class AWSProvider:
             return prices
         else:
             # Generic service search: fetch up to max_results * 5 products and
-            # text-match query against all attribute values
+            # text-match query against all attribute values AND top-level product fields
+            # (productFamily sits at the product top level, not inside attributes).
             raw = await self._get_products(resolved, filters, max_results=max_results * 5)
             prices = []
             query_lower = query.lower()
             svc_label = service_code.lower().replace("amazon", "").replace("aws", "").strip()
             for item in raw:
-                attrs = item.get("product", {}).get("attributes", {})
-                haystack = " ".join(str(v) for v in attrs.values()).lower()
+                product = item.get("product", {})
+                attrs = product.get("attributes", {})
+                # Include top-level product fields (productFamily, productGroup) in haystack
+                top_level = " ".join(
+                    str(product.get(k, ""))
+                    for k in ("productFamily", "productGroup")
+                )
+                haystack = (top_level + " " + " ".join(str(v) for v in attrs.values())).lower()
                 if query_lower not in haystack:
                     continue
                 p = self._item_to_price(item, region or "us-east-1", PricingTerm.ON_DEMAND, svc_label)

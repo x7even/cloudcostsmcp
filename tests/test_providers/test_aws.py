@@ -575,3 +575,80 @@ async def test_get_storage_price_gp3(aws_provider: AWSProvider):
     assert p.provider == "aws"
     assert p.region == "us-east-1"
     assert float(p.price_per_unit) == pytest.approx(0.08)
+
+
+# Minimal NAT Gateway price item matching the AWS bulk pricing JSON shape.
+# productFamily is TOP-LEVEL (not inside attributes) and servicecode is AmazonEC2.
+_NAT_GW_HOURS_ITEM = {
+    "product": {
+        "sku": "M2YSHUBETB3JX4M4",
+        "productFamily": "NAT Gateway",
+        "attributes": {
+            "servicecode": "AmazonEC2",
+            "location": "US East (N. Virginia)",
+            "locationType": "AWS Region",
+            "group": "NGW:NatGateway",
+            "groupDescription": "Hourly charge for NAT Gateways",
+            "usagetype": "NatGateway-Hours",
+            "operation": "NatGateway",
+            "regionCode": "us-east-1",
+            "servicename": "Amazon Elastic Compute Cloud",
+        },
+    },
+    "terms": {
+        "OnDemand": {
+            "M2YSHUBETB3JX4M4.JRTCKXETXF": {
+                "priceDimensions": {
+                    "M2YSHUBETB3JX4M4.JRTCKXETXF.6YS6EN2CT7": {
+                        "unit": "Hrs",
+                        "pricePerUnit": {"USD": "0.0450000000"},
+                        "description": "$0.045 per NAT Gateway hour",
+                    }
+                },
+                "termAttributes": {},
+            }
+        }
+    },
+}
+
+
+async def test_get_service_price_nat_gateway(aws_provider: AWSProvider):
+    """get_service_price with productFamily='NAT Gateway' should return results.
+
+    Regression test: NAT Gateway pricing lives under AmazonEC2 (not AmazonVPC).
+    The productFamily filter must match the top-level field, not just attributes.
+    """
+    with patch.object(aws_provider, "_get_products", return_value=[_NAT_GW_HOURS_ITEM]):
+        prices = await aws_provider.get_service_price(
+            "AmazonEC2", "us-east-1", {"productFamily": "NAT Gateway"}
+        )
+
+    assert len(prices) == 1
+    p = prices[0]
+    assert p.provider == "aws"
+    assert p.region == "us-east-1"
+    assert float(p.price_per_unit) == pytest.approx(0.045)
+    assert p.product_family == "NAT Gateway"
+
+
+async def test_search_pricing_nat_gateway(aws_provider: AWSProvider):
+    """search_pricing('NAT Gateway') should find NAT Gateway results.
+
+    Regression test: search_pricing previously routed 'NAT Gateway' through
+    the EC2 compute instance path (looking for instanceType matches), which
+    never matched NAT Gateway products. The query must use a productFamily filter.
+    """
+    with patch.object(aws_provider, "_get_products", return_value=[_NAT_GW_HOURS_ITEM]):
+        prices = await aws_provider.search_pricing("NAT Gateway", region="us-east-1")
+
+    assert len(prices) == 1
+    p = prices[0]
+    assert p.product_family == "NAT Gateway"
+    assert float(p.price_per_unit) == pytest.approx(0.045)
+
+
+async def test_nat_gateway_alias_resolves_to_ec2():
+    """The 'nat_gateway' alias must resolve to AmazonEC2, not AmazonVPC."""
+    from opencloudcosts.providers.aws import _resolve_service_code
+    assert _resolve_service_code("nat_gateway") == "AmazonEC2"
+    assert _resolve_service_code("natgateway") == "AmazonEC2"

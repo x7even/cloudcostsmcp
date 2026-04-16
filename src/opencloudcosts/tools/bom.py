@@ -146,7 +146,7 @@ def register_bom_tools(mcp: Any) -> None:
                 not_included.append({
                     "item": "NAT Gateway",
                     "why": "Required if EC2 instances are in private subnets",
-                    "how_to_price": f'get_service_price(provider="aws", service="AmazonVPC", region="{sample_region}", filters={{"productFamily": "NAT Gateway"}})',
+                    "how_to_price": f'get_service_price(provider="aws", service="AmazonEC2", region="{sample_region}", filters={{"productFamily": "NAT Gateway"}})',
                     "price": "unknown — use the how_to_price call above to get the real figure; do not estimate",
                 })
             not_included.append({
