@@ -48,6 +48,12 @@ def _make_sku(description: str, usage_type: str, regions: list[str], price_nanos
 
 
 FAKE_SKUS = [
+    # A2 on-demand (GPU, A100)
+    _make_sku("A2 Instance Core running in Americas", "OnDemand", ["us-central1", "us-east1"], 1116757000),  # $1.116757/core-hr
+    _make_sku("A2 Instance Ram running in Americas",  "OnDemand", ["us-central1", "us-east1"], 149688000),   # $0.149688/GB-hr
+    # A2 preemptible
+    _make_sku("Preemptible A2 Instance Core running in Americas", "Preemptible", ["us-central1"], 334958000),  # $0.334958/core-hr
+    _make_sku("Preemptible A2 Instance Ram running in Americas",  "Preemptible", ["us-central1"], 44906000),   # $0.044906/GB-hr
     # N2 on-demand
     _make_sku("N2 Instance Core running in Americas", "OnDemand", ["us-central1", "us-east1", "us-east4"], 31611000),    # $0.031611/core-hr
     _make_sku("N2 Instance Ram running in Americas",  "OnDemand", ["us-central1", "us-east1", "us-east4"], 4237000),     # $0.004237/GB-hr
@@ -347,3 +353,87 @@ async def test_gcp_cheaper_than_aws_for_equivalent(gcp_provider: GCPProvider):
     # GCP n2-standard-4 on-demand ~$0.19/hr, AWS m5.xlarge ~$0.192/hr
     # Both should be in the $0.10-$0.50/hr range
     assert Decimal("0.05") < gcp_price < Decimal("0.50"), f"Unexpected GCP price: {gcp_price}"
+
+
+# ---------------------------------------------------------------------------
+# A2 GPU instance family tests
+# ---------------------------------------------------------------------------
+
+async def test_get_compute_price_a2_highgpu_1g(gcp_provider: GCPProvider):
+    """
+    a2-highgpu-1g: 12 vCPU, 85 GB RAM.
+    OnDemand: 12 * $1.116757 + 85 * $0.149688
+    """
+    with patch.object(gcp_provider, "_fetch_skus", AsyncMock(return_value=FAKE_SKUS)):
+        prices = await gcp_provider.get_compute_price("a2-highgpu-1g", "us-central1")
+
+    assert len(prices) == 1
+    p = prices[0]
+    assert p.provider == CloudProvider.GCP
+    assert p.pricing_term == PricingTerm.ON_DEMAND
+    assert p.unit == PriceUnit.PER_HOUR
+    assert p.region == "us-central1"
+    assert p.attributes["vcpu"] == "12"
+    assert p.attributes["memory"] == "85.0 GB"
+    assert p.attributes["machineFamily"] == "a2"
+    # 12 * 1.116757 + 85 * 0.149688 = 13.401084 + 12.72348 = 26.124564
+    expected = Decimal("12") * Decimal("1.116757") + Decimal("85") * Decimal("0.149688")
+    assert abs(p.price_per_unit - expected) < Decimal("0.000001")
+    # A2 GPU instances are significantly more expensive than CPU-only
+    assert p.price_per_unit > Decimal("20"), "A2 GPU instances should be well over $20/hr"
+
+
+async def test_get_compute_price_a2_spot(gcp_provider: GCPProvider):
+    """A2 preemptible pricing uses Preemptible A2 SKUs."""
+    with patch.object(gcp_provider, "_fetch_skus", AsyncMock(return_value=FAKE_SKUS)):
+        spot_prices = await gcp_provider.get_compute_price(
+            "a2-highgpu-1g", "us-central1", term=PricingTerm.SPOT
+        )
+        od_prices = await gcp_provider.get_compute_price(
+            "a2-highgpu-1g", "us-central1"
+        )
+
+    assert len(spot_prices) == 1
+    assert spot_prices[0].pricing_term == PricingTerm.SPOT
+    # Spot should be cheaper than on-demand
+    assert spot_prices[0].price_per_unit < od_prices[0].price_per_unit
+
+
+async def test_get_compute_price_a2_no_longer_unsupported(gcp_provider: GCPProvider):
+    """a2 family must no longer raise 'not yet supported'."""
+    with patch.object(gcp_provider, "_fetch_skus", AsyncMock(return_value=FAKE_SKUS)):
+        # Should not raise ValueError about unsupported family
+        prices = await gcp_provider.get_compute_price("a2-highgpu-1g", "us-central1")
+    assert prices != [], "a2-highgpu-1g should return pricing, not an empty list"
+
+
+async def test_get_compute_price_a2_windows_not_supported(gcp_provider: GCPProvider):
+    """A2 does not support Windows — should return []."""
+    with patch.object(gcp_provider, "_fetch_skus", AsyncMock(return_value=FAKE_SKUS)):
+        prices = await gcp_provider.get_compute_price(
+            "a2-highgpu-1g", "us-central1", os="Windows"
+        )
+    assert prices == [], "A2 + Windows should return empty list (no Windows support)"
+
+
+def test_a2_in_supported_families():
+    """a2 must appear in the GCP_FAMILY_SKU dict so supported family errors name it."""
+    from opencloudcosts.utils.gcp_specs import GCP_FAMILY_SKU
+    assert "a2" in GCP_FAMILY_SKU, "a2 must be a supported GCP machine family"
+
+
+def test_a2_instance_specs_present():
+    """All A2 instance types must be in GCP_INSTANCE_SPECS with correct vCPU/RAM."""
+    from opencloudcosts.utils.gcp_specs import GCP_INSTANCE_SPECS
+    expected = {
+        "a2-highgpu-1g": (12, 85.0),
+        "a2-highgpu-2g": (24, 170.0),
+        "a2-highgpu-4g": (48, 340.0),
+        "a2-highgpu-8g": (96, 680.0),
+        "a2-megagpu-16g": (96, 1360.0),
+    }
+    for itype, (vcpus, mem) in expected.items():
+        assert itype in GCP_INSTANCE_SPECS, f"{itype} missing from GCP_INSTANCE_SPECS"
+        assert GCP_INSTANCE_SPECS[itype] == (vcpus, mem), (
+            f"{itype}: expected ({vcpus}, {mem}), got {GCP_INSTANCE_SPECS[itype]}"
+        )

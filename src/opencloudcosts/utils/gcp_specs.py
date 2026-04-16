@@ -341,6 +341,14 @@ GCP_FAMILY_SKU: dict[str, dict[str, str]] = {
         "cud_cpu_desc": "Committed Use Discount for Memory Optimized VCPU",
         "cud_ram_desc": "Committed Use Discount for Memory Optimized Memory",
     },
+    "a2": {
+        "cpu_desc": "A2 Instance Core",
+        "ram_desc": "A2 Instance Ram",
+        "preempt_cpu_desc": "Preemptible A2 Instance Core",
+        "preempt_ram_desc": "Preemptible A2 Instance Ram",
+        "cud_cpu_desc": "Committed Use Discount for A2 VCPU",
+        "cud_ram_desc": "Committed Use Discount for A2 Memory",
+    },
 }
 
 # Persistent storage SKU description patterns
