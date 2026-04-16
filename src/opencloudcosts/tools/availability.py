@@ -99,7 +99,7 @@ def register_availability_tools(mcp: Any) -> None:
         min_vcpus: int = 0,
         min_memory_gb: float = 0.0,
         gpu: bool = False,
-        max_results: int = 30,
+        max_results: int = 50,
     ) -> dict[str, Any]:
         """
         List available compute instance types in a region, with optional filters.
@@ -115,7 +115,7 @@ def register_availability_tools(mcp: Any) -> None:
             min_vcpus: Minimum number of vCPUs (0 = no filter)
             min_memory_gb: Minimum memory in GB (0 = no filter)
             gpu: If true, only return GPU instances
-            max_results: Maximum number of results (default 30)
+            max_results: Maximum number of results (default 50)
         """
         pvdr = ctx.request_context.lifespan_context["providers"].get(provider)
         if pvdr is None:
@@ -184,11 +184,13 @@ def register_availability_tools(mcp: Any) -> None:
                 _example_family = family if family else "Standard_D"
                 _family_hint = f'family="{_example_family}"'
             next_steps.append(
-                f"Result is truncated: {max_results} of {total_found}+ matching types returned. "
-                f"Use the 'family' filter to narrow results — it is faster and more precise than "
-                f"increasing max_results. Example: {_family_hint}. "
-                f"Increasing max_results (currently {max_results}) is a last resort if you need "
-                f"to compare across families."
+                f"Result truncated: returned {max_results} of {total_found}+ matches. "
+                f"IMPORTANT — follow these steps in order: "
+                f"(1) First narrow by family filter — e.g. {_family_hint} — "
+                f"this is almost always sufficient. "
+                f"(2) Only raise max_results if you have already set a family filter and still need more results. "
+                f"Do NOT raise max_results without a family filter — "
+                f"you will get {total_found}+ unfiltered results."
             )
 
         response: dict[str, Any] = {
