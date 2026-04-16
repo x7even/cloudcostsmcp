@@ -160,9 +160,15 @@ def register_availability_tools(mcp: Any) -> None:
         if min_memory_gb is not None:
             instances = [i for i in instances if i.memory_gb >= min_memory_gb]
 
+        # Spec-filtered queries: use a larger effective cap so the LLM gets a meaningful
+        # sample rather than hitting a 20-result wall on broad specs like "4+ vCPU".
+        effective_max = max_results
+        if (min_vcpu is not None or min_memory_gb is not None) and effective_max < 100:
+            effective_max = 100
+
         total_found = len(instances)
-        truncated = total_found > max_results
-        instances = instances[:max_results]
+        truncated = total_found > effective_max
+        instances = instances[:effective_max]
 
         # Suggest a get_prices_batch call so the LLM can immediately price the results.
         # Cap the suggested batch at 10 types to keep the follow-up call fast.
@@ -190,7 +196,7 @@ def register_availability_tools(mcp: Any) -> None:
                 _example_family = family if family else "Standard_D"
                 _family_hint = f'family="{_example_family}"'
             next_steps.append(
-                f"Result truncated: returned {max_results} of {total_found}+ matches. "
+                f"Result truncated: returned {effective_max} of {total_found}+ matches. "
                 f"IMPORTANT — follow these steps in order: "
                 f"(1) First narrow by family filter — e.g. {_family_hint} — "
                 f"this is almost always sufficient. "
