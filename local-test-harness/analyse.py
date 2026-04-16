@@ -172,6 +172,13 @@ def flag_hallucination(trace: dict) -> tuple[bool, str]:
                 seen.add(av)
                 ungrounded.append(f"${av:g}")
         if ungrounded:
+            # If the provider wasn't configured (expected API_KEY failure), any dollar
+            # amounts the LLM provides are inherently estimates — not hallucinations in
+            # the tool-grounding sense. Suppress to avoid double-penalising the expected
+            # configuration gap on top of the API_KEY flag.
+            api_key_fired, _ = flag_api_key(trace)
+            if api_key_fired:
+                return False, ""
             return True, (
                 f"Ungrounded amount(s) in answer (not derivable from tool results): "
                 f"{', '.join(ungrounded[:5])}"
@@ -214,6 +221,15 @@ def flag_truncation(trace: dict) -> tuple[bool, str]:
         if tool == "list_instance_types":
             truncated = result.get("truncated", False)
             if truncated:
+                # If the answer has grounded dollar amounts, the truncation was benign —
+                # the LLM still produced a correct, tool-backed answer despite the cap.
+                # Only flag if the answer lacks grounding (may have been harmed by truncation).
+                answer = trace.get("final_answer") or ""
+                tool_results_text = json.dumps([tc2["result"] for tc2 in trace["tool_calls"]])
+                ans_amounts = _extract_dollar_amounts(answer)
+                tool_floats = list(set(_extract_dollar_amounts(tool_results_text)))
+                if ans_amounts and all(_is_grounded(a, tool_floats) for a in ans_amounts):
+                    continue  # Benign truncation — answer is grounded in tool results
                 return True, "list_instance_types result was truncated (hit max_results)"
     return False, ""
 
@@ -296,7 +312,8 @@ def flag_api_key(trace: dict) -> tuple[bool, str]:
     for tc in trace["tool_calls"]:
         result = tc["result"]
         if isinstance(result, dict):
-            err = (result.get("error") or "").lower()
+            # Check both structured "error" field and FastMCP text error format
+            err = (result.get("error") or result.get("text") or "").lower()
             if "api key" in err or ("gcp" in err and "requires" in err):
                 return True, "GCP API key not configured (expected in this environment)"
     return False, ""

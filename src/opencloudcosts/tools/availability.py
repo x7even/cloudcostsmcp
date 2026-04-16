@@ -9,6 +9,7 @@ from typing import Any
 from mcp.server.fastmcp import Context
 
 from opencloudcosts.models import PriceComparison, PricingTerm
+from opencloudcosts.providers.base import NotConfiguredError
 from opencloudcosts.utils.baseline import apply_baseline_deltas
 from opencloudcosts.utils.regions import region_display_name
 
@@ -373,12 +374,17 @@ def register_availability_tools(mcp: Any) -> None:
             scoped_search = False
 
         semaphore = asyncio.Semaphore(10)
+        _fcr_config_errors: list[str] = []
 
         async def fetch_one(region: str) -> tuple[str, list]:
             async with semaphore:
                 try:
                     prices = await pvdr.get_compute_price(instance_type, region, os, pricing_term)
                     return region, prices
+                except NotConfiguredError as e:
+                    if not _fcr_config_errors:
+                        _fcr_config_errors.append(str(e))
+                    return region, []
                 except Exception:
                     return region, []
 
@@ -393,6 +399,13 @@ def register_availability_tools(mcp: Any) -> None:
                 not_available.append(region)
 
         if not all_prices:
+            if _fcr_config_errors:
+                return {
+                    "result": "provider_not_configured",
+                    "provider": provider,
+                    "instance_type": instance_type,
+                    "error": _fcr_config_errors[0],
+                }
             return {
                 "result": "no_prices_found",
                 "message": f"No pricing found for {instance_type} in any region.",
@@ -504,6 +517,7 @@ def register_availability_tools(mcp: Any) -> None:
             scoped = False
 
         semaphore = asyncio.Semaphore(10)
+        _config_errors: list[str] = []
 
         async def probe(region: str) -> tuple[str, list]:
             async with semaphore:
@@ -512,6 +526,10 @@ def register_availability_tools(mcp: Any) -> None:
                         instance_type, region, os, pricing_term
                     )
                     return region, prices
+                except NotConfiguredError as e:
+                    if not _config_errors:
+                        _config_errors.append(str(e))
+                    return region, []
                 except Exception:
                     return region, []
 
@@ -543,6 +561,18 @@ def register_availability_tools(mcp: Any) -> None:
                 apply_baseline_deltas(available, baseline_region)
             except ValueError as e:
                 return {"error": str(e)}
+
+        # If no results were found due to provider configuration error, surface it clearly
+        # so the LLM knows to answer with available data rather than keep searching.
+        if not available and _config_errors:
+            return {
+                "result": "provider_not_configured",
+                "provider": provider,
+                "instance_type": instance_type,
+                "available_region_count": 0,
+                "available_regions": [],
+                "error": _config_errors[0],
+            }
 
         result: dict[str, Any] = {
             "provider": provider,
