@@ -258,6 +258,7 @@ def register_lookup_tools(mcp: Any) -> None:
         storage_type: str,
         region: str,
         size_gb: float = 100.0,
+        iops: int | None = None,
     ) -> dict[str, Any]:
         """
         Get the price for cloud storage in a given region.
@@ -270,17 +271,25 @@ def register_lookup_tools(mcp: Any) -> None:
         `estimate_bom` instead — it handles all services in one call and surfaces
         hidden costs like egress, load balancers, and monitoring.
 
+        For io1/io2 EBS volumes, pass the `iops` parameter to get the per-IOPS-month
+        rate alongside the per-GB-month rate, and a combined monthly estimate.
+
         Args:
             provider: Cloud provider — "aws", "gcp", or "azure"
             storage_type: Storage type, e.g. "gp3" (AWS), "pd-ssd" (GCP), "premium-ssd" (Azure)
             region: Region code, e.g. "us-east-1"
             size_gb: Storage size in GB for monthly cost estimation (default 100)
+            iops: Provisioned IOPS count (for io1/io2 EBS only). When provided, the
+                  per-IOPS-month rate is returned and included in the monthly estimate.
         """
         pvdr = _providers(ctx).get(provider)
         if pvdr is None:
             return {"error": f"Provider '{provider}' not configured."}
 
         try:
+            prices = await pvdr.get_storage_price(storage_type, region, size_gb, iops)
+        except TypeError:
+            # Provider doesn't accept iops parameter (e.g. GCP/Azure) — call without it
             prices = await pvdr.get_storage_price(storage_type, region, size_gb)
         except ValueError as e:
             return {"error": str(e)}
@@ -298,11 +307,20 @@ def register_lookup_tools(mcp: Any) -> None:
         # Compute monthly cost estimate for the requested size.
         # For PER_GB_MONTH SKUs the summary() leaves monthly_estimate=null;
         # fill it in here so the LLM always receives a concrete dollar figure.
+        storage_monthly: Decimal | None = None
+        iops_monthly: Decimal | None = None
         for i, p in enumerate(prices):
             if p.unit == _PriceUnit.PER_GB_MONTH:
                 monthly = p.price_per_unit * Decimal(str(size_gb))
+                storage_monthly = monthly
                 result_prices[i]["monthly_estimate"] = f"${monthly:.2f}/mo"
                 result_prices[i]["monthly_estimate_for_size"] = f"${monthly:.2f}/mo for {size_gb} GB"
+            elif p.unit == _PriceUnit.PER_IOPS_MONTH:
+                if iops is not None and iops > 0:
+                    monthly = p.price_per_unit * Decimal(str(iops))
+                    iops_monthly = monthly
+                    result_prices[i]["monthly_estimate"] = f"${monthly:.2f}/mo"
+                    result_prices[i]["monthly_estimate_for_iops"] = f"${monthly:.2f}/mo for {iops} IOPS"
             elif p.unit == _PriceUnit.PER_HOUR:
                 # hourly-billed storage (unusual but possible): leave monthly_estimate as-is
                 # but still add the per-size helper key so the response is consistent
@@ -312,13 +330,27 @@ def register_lookup_tools(mcp: Any) -> None:
                 monthly = p.price_per_unit * Decimal(str(size_gb))
                 result_prices[i]["monthly_estimate_for_size"] = f"${monthly:.2f}/mo for {size_gb} GB"
 
-        return {
+        response: dict[str, Any] = {
             "provider": provider,
             "storage_type": storage_type,
             "region": region,
             "size_gb": size_gb,
             "prices": result_prices,
         }
+
+        # For io1/io2 with IOPS specified, add a combined estimate and explanatory note
+        if iops is not None and iops > 0 and storage_monthly is not None and iops_monthly is not None:
+            combined = storage_monthly + iops_monthly
+            response["iops"] = iops
+            response["monthly_estimate"] = f"${combined:.2f}/mo"
+            response["note"] = (
+                "For io2/io1, total monthly cost = storage cost + IOPS cost. "
+                "Both components are shown above."
+            )
+        elif iops is not None and iops > 0 and storage_monthly is not None:
+            response["iops"] = iops
+
+        return response
 
     @mcp.tool()
     async def get_service_price(

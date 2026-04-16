@@ -599,6 +599,7 @@ class AWSProvider:
         storage_type: str,
         region: str,
         size_gb: float | None = None,
+        iops: int | None = None,
     ) -> list[NormalizedPrice]:
         cache_extras = {"storage_type": storage_type}
         cached = await self._cache.get_prices("aws", "storage", region, cache_extras)
@@ -638,6 +639,23 @@ class AWSProvider:
                 if p.unit == PriceUnit.PER_UNIT:
                     p = p.model_copy(update={"unit": PriceUnit.PER_GB_MONTH})
                 prices.append(p)
+
+        # For provisioned IOPS types, also fetch the per-IOPS-month rate
+        if storage_type.lower() in {"io1", "io2"}:
+            iops_filters = [
+                {"Field": "productFamily", "Value": "System Operation"},
+                {"Field": "group", "Value": "EBS IOPS"},
+                {"Field": "volumeApiName", "Value": storage_type.lower()},
+                {"Field": "location", "Value": display_name},
+            ]
+            iops_raw = await self._get_products("AmazonEC2", iops_filters, max_results=5)
+            for item in iops_raw:
+                p = self._item_to_price(item, region, PricingTerm.ON_DEMAND, "storage-iops")
+                if p:
+                    # Override unit if not already recognised as per-IOPS
+                    if p.unit == PriceUnit.PER_UNIT:
+                        p = p.model_copy(update={"unit": PriceUnit.PER_IOPS_MONTH})
+                    prices.append(p)
 
         # Only cache non-empty results — empty likely means a transient failure
         # or a bug (like the productFamily filter issue) that we don't want to bake in.

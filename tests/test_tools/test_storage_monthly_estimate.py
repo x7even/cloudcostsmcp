@@ -187,3 +187,123 @@ async def test_storage_unknown_provider():
     result = await tool_fn(ctx, provider="gcp", storage_type="pd-ssd", region="us-central1", size_gb=100.0)
 
     assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# io2 IOPS pricing: both per-GB-month and per-IOPS-month rates returned
+# ---------------------------------------------------------------------------
+
+def _make_io2_storage_price(
+    price_per_gb_month: str = "0.125",
+) -> NormalizedPrice:
+    return NormalizedPrice(
+        provider=CloudProvider.AWS,
+        service="storage",
+        sku_id="IO2-STORAGE-SKU",
+        product_family="Storage",
+        description="Provisioned IOPS",
+        region="us-east-1",
+        attributes={"volumeApiName": "io2", "volumeType": "Provisioned IOPS"},
+        pricing_term=PricingTerm.ON_DEMAND,
+        price_per_unit=Decimal(price_per_gb_month),
+        unit=PriceUnit.PER_GB_MONTH,
+    )
+
+
+def _make_io2_iops_price(
+    price_per_iops_month: str = "0.065",
+) -> NormalizedPrice:
+    return NormalizedPrice(
+        provider=CloudProvider.AWS,
+        service="storage-iops",
+        sku_id="IO2-IOPS-SKU",
+        product_family="System Operation",
+        description="EBS IOPS",
+        region="us-east-1",
+        attributes={"volumeApiName": "io2", "group": "EBS IOPS"},
+        pricing_term=PricingTerm.ON_DEMAND,
+        price_per_unit=Decimal(price_per_iops_month),
+        unit=PriceUnit.PER_IOPS_MONTH,
+    )
+
+
+async def test_io2_storage_returns_both_storage_and_iops_prices():
+    """io2 get_storage_price with iops specified returns both per-GB and per-IOPS rates."""
+    storage_price = _make_io2_storage_price("0.125")
+    iops_price = _make_io2_iops_price("0.065")
+
+    pvdr = MagicMock()
+    pvdr.get_storage_price = AsyncMock(return_value=[storage_price, iops_price])
+    ctx = _make_ctx({"aws": pvdr})
+
+    tool_fn = _get_storage_tool()
+    result = await tool_fn(
+        ctx, provider="aws", storage_type="io2", region="us-east-1",
+        size_gb=1000.0, iops=5000,
+    )
+
+    assert "prices" in result, result
+    assert len(result["prices"]) == 2
+
+    # summary() encodes unit inside the "price" field, e.g. "$0.125000 per_gb_month"
+    storage_entries = [p for p in result["prices"] if "per_gb_month" in p.get("price", "")]
+    iops_entries = [p for p in result["prices"] if "per_iops_month" in p.get("price", "")]
+    assert len(storage_entries) >= 1, "Expected at least one storage (per-GB) price entry"
+    assert len(iops_entries) >= 1, "Expected at least one IOPS price entry"
+
+    # Check combined monthly estimate is present
+    assert "monthly_estimate" in result, "Combined monthly_estimate must be in top-level result"
+    # 0.125 * 1000 + 0.065 * 5000 = 125 + 325 = 450
+    assert result["monthly_estimate"] == "$450.00/mo"
+
+    # Check note is present
+    assert "note" in result
+    assert "io2/io1" in result["note"]
+
+    # Check iops count reflected
+    assert result["iops"] == 5000
+
+
+async def test_io2_storage_without_iops_no_combined_estimate():
+    """io2 get_storage_price without iops kwarg returns only storage price (backward compat)."""
+    storage_price = _make_io2_storage_price("0.125")
+    iops_price = _make_io2_iops_price("0.065")
+
+    pvdr = MagicMock()
+    pvdr.get_storage_price = AsyncMock(return_value=[storage_price, iops_price])
+    ctx = _make_ctx({"aws": pvdr})
+
+    tool_fn = _get_storage_tool()
+    result = await tool_fn(
+        ctx, provider="aws", storage_type="io2", region="us-east-1", size_gb=1000.0,
+        # no iops param
+    )
+
+    assert "prices" in result
+    # No combined monthly_estimate at top level when iops not specified
+    assert "monthly_estimate" not in result
+    assert "note" not in result
+
+
+async def test_io2_iops_monthly_estimate_in_price_entry():
+    """The per-IOPS-month price entry must have monthly_estimate_for_iops when iops is given."""
+    storage_price = _make_io2_storage_price("0.125")
+    iops_price = _make_io2_iops_price("0.065")
+
+    pvdr = MagicMock()
+    pvdr.get_storage_price = AsyncMock(return_value=[storage_price, iops_price])
+    ctx = _make_ctx({"aws": pvdr})
+
+    tool_fn = _get_storage_tool()
+    result = await tool_fn(
+        ctx, provider="aws", storage_type="io2", region="us-east-1",
+        size_gb=1000.0, iops=5000,
+    )
+
+    # Find the IOPS price entry (unit embedded in "price" field as per summary())
+    iops_entries = [p for p in result["prices"] if "per_iops_month" in p.get("price", "")]
+    assert len(iops_entries) >= 1
+    iops_entry = iops_entries[0]
+    assert "monthly_estimate_for_iops" in iops_entry
+    # 0.065 * 5000 = 325
+    assert iops_entry["monthly_estimate_for_iops"] == "$325.00/mo for 5000 IOPS"
