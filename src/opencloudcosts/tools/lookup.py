@@ -406,6 +406,15 @@ def register_lookup_tools(mcp: Any) -> None:
             for k, v in filters.items():
                 filter_list.append({"Field": k, "Value": v})
 
+        if not hasattr(pvdr, '_get_products'):
+            return {
+                "error": f"get_service_price is not supported for {provider} — "
+                         f"use get_compute_price or get_storage_price instead. "
+                         f"Azure service-level pricing is not available via this tool.",
+                "provider": provider,
+                "service": service,
+            }
+
         try:
             raw = await pvdr._get_products(resolved_service, filter_list, max_results=20)
         except Exception as e:

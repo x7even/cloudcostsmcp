@@ -122,6 +122,23 @@ def _is_grounded(amount: float, tool_floats: list[float], tol: float = 0.02) -> 
                 if abs(tf * n1 * n2 - amount) / max(abs(amount), 0.001) <= tol:
                     return True
 
+    # 6. Tool value divided by (another tool value × multiplier)
+    #    Covers: monthly_cost / (n_requests_millions × 1000) = cost_per_1000_requests
+    for t1 in tool_floats:
+        for t2 in tool_floats:
+            if t1 == t2 or t2 == 0:
+                continue
+            for n in _ARITH_MULTIPLIERS:
+                denom = t2 * n
+                if denom > 0 and abs(t1 / denom - amount) / max(abs(amount), 0.001) <= tol:
+                    return True
+
+    # 7. Tool value divided by a single multiplier
+    for tf in tool_floats:
+        for n in _ARITH_MULTIPLIERS:
+            if n > 0 and abs(tf / n - amount) / max(abs(amount), 0.001) <= tol:
+                return True
+
     return False
 
 
