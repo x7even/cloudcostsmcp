@@ -1427,9 +1427,9 @@ def register_lookup_tools(mcp: Any) -> None:
                 "message": f"No Memorystore pricing found for tier={tier} in {region}.",
             }
 
+        from decimal import Decimal
         p = prices[0]
-        from decimal import Decimal as _Decimal
-        raw_rate = p.attributes.get("rate_per_gib_hr", "0")
+        raw_rate = Decimal(p.attributes.get("rate_per_gib_hr", "0"))
 
         return {
             "provider": "gcp",
@@ -1437,7 +1437,7 @@ def register_lookup_tools(mcp: Any) -> None:
             "tier": tier,
             "capacity_gb": capacity_gb,
             "region": p.region,
-            "rate_per_gib_hr": f"${_Decimal(raw_rate):.6f}/GiB-hr",
+            "rate_per_gib_hr": f"${raw_rate:.6f}/GiB-hr",
             "hourly_cost": f"${p.price_per_unit:.4f}/hr",
             "monthly_cost": f"${p.monthly_cost:.2f}/mo",
             "note": "Memorystore Standard includes HA (2-zone replication). Basic is single-zone.",

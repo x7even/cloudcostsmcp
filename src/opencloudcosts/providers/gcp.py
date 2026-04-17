@@ -617,6 +617,9 @@ class GCPProvider:
           - basic: single zone, no HA
           - standard: HA with cross-zone replication
         """
+        if capacity_gb <= 0:
+            raise ValueError(f"capacity_gb must be positive, got {capacity_gb}")
+
         tier_lower = tier.lower()
         if tier_lower not in ("basic", "standard"):
             raise ValueError(
@@ -624,6 +627,7 @@ class GCPProvider:
             )
 
         # Determine target M-tier string from capacity_gb
+        # M2: < 4 GB, M3: 4–11 GB, M4: 12–99 GB, M5: ≥ 100 GB
         if capacity_gb < 4:
             preferred_m = "m2"
         elif capacity_gb < 12:
@@ -757,15 +761,19 @@ class GCPProvider:
         Standard mode: flat cluster management fee + pointer to get_compute_price for nodes.
         Autopilot mode: per-mCPU-hour + per-GiB-hour rates for pods.
         """
+        if vcpu < 0 or memory_gb < 0:
+            raise ValueError("vcpu and memory_gb must be non-negative")
+
         index = await self._build_gke_price_index(region)
 
         if mode == "standard":
-            # Search for cluster management fee SKU
+            # Search for cluster management fee SKU — OnDemand only to avoid CUD variants
             rate: Decimal | None = None
             for (desc, utype), price in index.items():
                 desc_lower = desc.lower()
                 if (
-                    "kubernetes engine" in desc_lower
+                    utype == "OnDemand"
+                    and "kubernetes engine" in desc_lower
                     and "autopilot" not in desc_lower
                     and "committed" not in desc_lower
                     and "cost attribution" not in desc_lower

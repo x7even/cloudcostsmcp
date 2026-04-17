@@ -140,6 +140,12 @@ async def test_memorystore_mtier_fallback(gcp_provider):
     assert p.region == "europe-west1"
 
 
+async def test_memorystore_zero_capacity_raises(gcp_provider):
+    """capacity_gb=0 raises ValueError."""
+    with pytest.raises(ValueError, match="capacity_gb must be positive"):
+        await gcp_provider.get_memorystore_price(0.0, "us-central1", tier="basic")
+
+
 async def test_memorystore_unknown_tier(gcp_provider):
     """Raises ValueError for an unsupported tier."""
     with pytest.raises(ValueError, match="Unknown Memorystore tier"):

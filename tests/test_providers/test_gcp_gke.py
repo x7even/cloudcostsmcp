@@ -263,6 +263,20 @@ async def test_gke_autopilot_zero_vcpu_memory_no_cost(provider):
 
 
 @pytest.mark.asyncio
+async def test_gke_autopilot_negative_vcpu_raises(provider):
+    """Autopilot mode: negative vcpu raises ValueError."""
+    with pytest.raises(ValueError, match="non-negative"):
+        await provider.get_gke_price(region="us-central1", mode="autopilot", vcpu=-1.0, memory_gb=4.0)
+
+
+@pytest.mark.asyncio
+async def test_gke_autopilot_negative_memory_raises(provider):
+    """Autopilot mode: negative memory_gb raises ValueError."""
+    with pytest.raises(ValueError, match="non-negative"):
+        await provider.get_gke_price(region="us-central1", mode="autopilot", vcpu=2.0, memory_gb=-1.0)
+
+
+@pytest.mark.asyncio
 async def test_gke_invalid_mode(provider):
     """Invalid mode falls through to autopilot path — provider does not validate mode."""
     with patch.object(provider, "_fetch_skus", new=AsyncMock(return_value=[])):
