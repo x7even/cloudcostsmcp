@@ -38,6 +38,7 @@ from opencloudcosts.models import (
 )
 from opencloudcosts.providers.base import NotConfiguredError
 from opencloudcosts.utils.gcp_specs import (
+    CLOUD_SQL_INSTANCE_SPECS,
     GCP_FAMILY_SKU,
     GCP_INSTANCE_SPECS,
     GCP_STORAGE_SKU,
@@ -51,6 +52,28 @@ logger = logging.getLogger(__name__)
 
 _CATALOG_BASE = "https://cloudbilling.googleapis.com/v1"
 _COMPUTE_SERVICE_ID = "6F81-5844-456A"   # Compute Engine
+_GCS_SERVICE_ID = "95FF-2EF5-5EA1"       # Cloud Storage
+_CLOUD_SQL_SERVICE_ID = "9662-B51E-5089" # Cloud SQL
+
+# GCS storage class -> description substring in SKU catalog
+_GCS_STORAGE_CLASSES: dict[str, str] = {
+    "standard": "Standard Storage",
+    "nearline": "Nearline Storage",
+    "coldline": "Coldline Storage",
+    "archive":  "Archive Storage",
+}
+
+# Words in SKU description that indicate non-capacity SKUs to exclude
+_GCS_EXCLUDE_KEYWORDS = ("operations", "retrieval", "early delete", "metadata", "list")
+
+# Cloud SQL engine name normalization
+_CLOUD_SQL_ENGINE_NAMES: dict[str, str] = {
+    "mysql": "MySQL",
+    "postgresql": "PostgreSQL",
+    "postgres": "PostgreSQL",
+    "sqlserver": "SQL Server",
+    "sql server": "SQL Server",
+}
 
 # Map PricingTerm -> (usageType value in SKU category, description key in GCP_FAMILY_SKU)
 _TERM_USAGE_TYPE: dict[PricingTerm, tuple[str, str, str]] = {
@@ -378,17 +401,225 @@ class GCPProvider:
         )
         return [price]
 
+    # ------------------------------------------------------------------
+    # GCS (Cloud Storage) pricing
+    # ------------------------------------------------------------------
+
+    async def _build_gcs_price_index(
+        self, region: str
+    ) -> dict[tuple[str, str], Decimal]:
+        """Build price index for Cloud Storage SKUs in a given region."""
+        cache_key = f"gcp:gcs_price_index:{region}"
+        cached = await self._cache.get_metadata(cache_key)
+        if cached is not None:
+            return {(k.split("|")[0], k.split("|")[1]): Decimal(v) for k, v in cached.items()}
+
+        skus = await self._fetch_skus(_GCS_SERVICE_ID)
+
+        index: dict[tuple[str, str], Decimal] = {}
+        for sku in skus:
+            service_regions = sku.get("serviceRegions", [])
+            if region not in service_regions and "global" not in service_regions:
+                continue
+
+            desc = sku.get("description", "")
+            desc_lower = desc.lower()
+
+            # Exclude non-capacity SKUs (operations, retrieval, etc.)
+            if any(kw in desc_lower for kw in _GCS_EXCLUDE_KEYWORDS):
+                continue
+
+            category = sku.get("category", {})
+            usage_type = category.get("usageType", "OnDemand")
+            price = self._sku_price(sku)
+            if price > 0:
+                index[(desc, usage_type)] = price
+
+        serialisable = {f"{k[0]}|{k[1]}": str(v) for k, v in index.items()}
+        await self._cache.set_metadata(
+            cache_key,
+            serialisable,
+            ttl_hours=self._settings.cache_ttl_hours,
+        )
+        return index
+
+    # ------------------------------------------------------------------
+    # Cloud SQL pricing
+    # ------------------------------------------------------------------
+
+    async def _build_cloud_sql_price_index(
+        self, region: str
+    ) -> dict[tuple[str, str], Decimal]:
+        """Build price index for Cloud SQL SKUs in a given region."""
+        cache_key = f"gcp:cloud_sql_price_index:{region}"
+        cached = await self._cache.get_metadata(cache_key)
+        if cached is not None:
+            return {(k.split("|")[0], k.split("|")[1]): Decimal(v) for k, v in cached.items()}
+
+        skus = await self._fetch_skus(_CLOUD_SQL_SERVICE_ID)
+
+        index: dict[tuple[str, str], Decimal] = {}
+        for sku in skus:
+            service_regions = sku.get("serviceRegions", [])
+            if region not in service_regions and "global" not in service_regions:
+                continue
+
+            desc = sku.get("description", "")
+            category = sku.get("category", {})
+            usage_type = category.get("usageType", "OnDemand")
+            price = self._sku_price(sku)
+            if price > 0:
+                index[(desc, usage_type)] = price
+
+        serialisable = {f"{k[0]}|{k[1]}": str(v) for k, v in index.items()}
+        await self._cache.set_metadata(
+            cache_key,
+            serialisable,
+            ttl_hours=self._settings.cache_ttl_hours,
+        )
+        return index
+
+    async def get_cloud_sql_price(
+        self,
+        instance_type: str,
+        region: str,
+        engine: str = "MySQL",
+        ha: bool = False,
+    ) -> list[NormalizedPrice]:
+        """Price a Cloud SQL instance by vCPU + RAM rate lookup."""
+        specs = CLOUD_SQL_INSTANCE_SPECS.get(instance_type.lower())
+        if specs is None:
+            raise ValueError(
+                f"Unknown Cloud SQL instance type: {instance_type!r}. "
+                f"Supported types: {sorted(CLOUD_SQL_INSTANCE_SPECS)}"
+            )
+        vcpus, memory_gb = specs
+
+        # Normalize engine name
+        engine_norm = _CLOUD_SQL_ENGINE_NAMES.get(engine.lower(), engine)
+
+        cache_key_extras = {"instance_type": instance_type, "engine": engine_norm, "ha": str(ha)}
+        cached = await self._cache.get_prices("gcp", "cloud_sql", region, cache_key_extras)
+        if cached:
+            return [NormalizedPrice.model_validate(p) for p in cached]
+
+        index = await self._build_cloud_sql_price_index(region)
+
+        # Build SKU description substrings based on engine and HA/Zonal
+        zone_type = "Regional" if ha else "Zonal"
+        cpu_desc = f"Cloud SQL for {engine_norm}: {zone_type} - Standard"
+        # RAM SKU contains "Standard Memory" — CPU SKU contains just "Standard" but not "Memory"
+        # We look up CPU first (without "Memory") then RAM (with "Memory")
+        ram_desc = f"Cloud SQL for {engine_norm}: {zone_type} - Standard Memory"
+
+        # Find CPU price: matches cpu_desc but NOT "Memory"
+        cpu_price: Decimal | None = None
+        ram_price: Decimal | None = None
+        for (desc, utype), price in index.items():
+            if utype != "OnDemand":
+                continue
+            desc_lower = desc.lower()
+            cpu_desc_lower = cpu_desc.lower()
+            ram_desc_lower = ram_desc.lower()
+            if ram_desc_lower in desc_lower and ram_price is None:
+                ram_price = price
+            elif cpu_desc_lower in desc_lower and "memory" not in desc_lower and cpu_price is None:
+                cpu_price = price
+
+        if cpu_price is None or ram_price is None:
+            logger.warning(
+                "GCP Cloud SQL: could not find %s/%s SKU for %s %s in %s (ha=%s). "
+                "CPU found: %s, RAM found: %s",
+                cpu_desc, ram_desc, engine_norm, instance_type, region, ha,
+                cpu_price is not None, ram_price is not None,
+            )
+            return []
+
+        total_price = (
+            Decimal(str(vcpus)) * cpu_price
+            + Decimal(str(memory_gb)) * ram_price
+        )
+
+        ha_label = "HA/Regional" if ha else "Zonal"
+        result = NormalizedPrice(
+            provider=CloudProvider.GCP,
+            service="database",
+            sku_id=f"gcp:cloud_sql:{engine_norm}:{instance_type}:{region}:{'ha' if ha else 'zonal'}",
+            product_family="Cloud SQL",
+            description=f"Cloud SQL {engine_norm} {instance_type} ({ha_label})",
+            region=region,
+            attributes={
+                "instanceType": instance_type,
+                "engine": engine_norm,
+                "ha": str(ha),
+            },
+            pricing_term=PricingTerm.ON_DEMAND,
+            price_per_unit=total_price,
+            unit=PriceUnit.PER_HOUR,
+        )
+
+        await self._cache.set_prices(
+            "gcp", "cloud_sql", region, cache_key_extras,
+            [result.model_dump(mode="json")],
+            ttl_hours=self._settings.cache_ttl_hours,
+        )
+        return [result]
+
+    async def _get_gcs_storage_price(
+        self,
+        storage_class: str,
+        region: str,
+    ) -> list[NormalizedPrice]:
+        """Fetch GCS (Cloud Storage) pricing for a given storage class and region."""
+        desc_substring = _GCS_STORAGE_CLASSES[storage_class]
+
+        cache_key_extras = {"storage_type": storage_class, "source": "gcs"}
+        cached = await self._cache.get_prices("gcp", "gcs_storage", region, cache_key_extras)
+        if cached:
+            return [NormalizedPrice.model_validate(p) for p in cached]
+
+        index = await self._build_gcs_price_index(region)
+
+        price = self._lookup_price(index, desc_substring, "OnDemand")
+        if price is None:
+            return []
+
+        result = NormalizedPrice(
+            provider=CloudProvider.GCP,
+            service="storage",
+            sku_id=f"gcp:gcs:{storage_class}:{region}",
+            product_family="Cloud Storage",
+            description=f"GCS {storage_class} storage in {region}",
+            region=region,
+            attributes={"storage_type": storage_class, "class": storage_class},
+            pricing_term=PricingTerm.ON_DEMAND,
+            price_per_unit=price,
+            unit=PriceUnit.PER_GB_MONTH,
+        )
+
+        await self._cache.set_prices(
+            "gcp", "gcs_storage", region, cache_key_extras,
+            [result.model_dump(mode="json")],
+            ttl_hours=self._settings.cache_ttl_hours,
+        )
+        return [result]
+
     async def get_storage_price(
         self,
         storage_type: str,
         region: str,
         size_gb: float | None = None,
     ) -> list[NormalizedPrice]:
-        sku_patterns = GCP_STORAGE_SKU.get(storage_type.lower())
+        # Route GCS storage classes to the GCS path
+        storage_type_lower = storage_type.lower()
+        if storage_type_lower in _GCS_STORAGE_CLASSES:
+            return await self._get_gcs_storage_price(storage_type_lower, region)
+
+        sku_patterns = GCP_STORAGE_SKU.get(storage_type_lower)
         if sku_patterns is None:
             raise ValueError(
                 f"Unknown GCP storage type: {storage_type!r}. "
-                f"Supported: {sorted(GCP_STORAGE_SKU)}"
+                f"Supported: {sorted(GCP_STORAGE_SKU)} or GCS classes: {sorted(_GCS_STORAGE_CLASSES)}"
             )
 
         cache_key_extras = {"storage_type": storage_type}

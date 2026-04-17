@@ -150,20 +150,20 @@ async def test_get_database_price_single_az_default(mock_aws_provider):
 
 
 # ------------------------------------------------------------------
-# GCP returns Phase 4 error
+# GCP returns error when get_cloud_sql_price is not available
 # ------------------------------------------------------------------
 
-async def test_get_database_price_gcp_phase4_error(mock_gcp_provider):
+async def test_get_database_price_gcp_no_cloud_sql(mock_gcp_provider):
+    """When the GCP provider has no get_cloud_sql_price method, return a clear error."""
     tool_fn = _get_tool_fn()
     ctx = _make_ctx({"gcp": mock_gcp_provider})
 
     result = await tool_fn(
-        ctx, provider="gcp", instance_type="db.r5.large", region="us-central1"
+        ctx, provider="gcp", instance_type="db-n1-standard-4", region="us-central1"
     )
 
     assert "error" in result
-    assert "Phase 4" in result["error"]
-    assert "get_compute_price" in result["error"]
+    assert "Cloud SQL" in result["error"]
 
 
 # ------------------------------------------------------------------

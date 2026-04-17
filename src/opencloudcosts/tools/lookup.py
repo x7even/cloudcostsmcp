@@ -264,8 +264,15 @@ def register_lookup_tools(mcp: Any) -> None:
         Get the price for cloud storage in a given region.
 
         AWS storage types: gp3, gp2, io1, io2, st1, sc1, standard (EBS), or s3 (object storage).
-        GCP storage types: pd-ssd, pd-balanced, pd-standard, pd-extreme.
+        GCP storage types: pd-ssd, pd-balanced, pd-standard, pd-extreme (Persistent Disk),
+            or standard, nearline, coldline, archive (GCS object storage).
         Azure storage types: premium-ssd, standard-ssd, standard-hdd, ultra-ssd, blob.
+
+        GCS examples:
+            get_storage_price(provider="gcp", storage_type="standard", region="us-central1")
+            get_storage_price(provider="gcp", storage_type="nearline", region="us-central1")
+            get_storage_price(provider="gcp", storage_type="coldline", region="us-central1")
+            get_storage_price(provider="gcp", storage_type="archive", region="us-central1")
 
         For multi-resource stacks (compute + storage + database together), use
         `estimate_bom` instead — it handles all services in one call and surfaces
@@ -400,6 +407,10 @@ def register_lookup_tools(mcp: Any) -> None:
             "sqs": "AmazonSQS",
             "elb": "AWSELB",
             "route53": "AmazonRoute53",
+            "gcs": "CloudStorage",
+            "cloud-storage": "CloudStorage",
+            "cloud-sql": "CloudSQL",
+            "cloudsql": "CloudSQL",
         }
         resolved_service = _SERVICE_ALIASES.get(service.lower(), service)
 
@@ -606,11 +617,35 @@ def register_lookup_tools(mcp: Any) -> None:
             return {"error": f"Provider '{provider}' not configured."}
 
         if provider == "gcp":
+            ha = deployment.lower() in ("multi-az", "ha", "regional", "multi-zone")
+            engine_norm = {
+                "mysql": "MySQL",
+                "postgresql": "PostgreSQL",
+                "postgres": "PostgreSQL",
+                "sqlserver": "SQL Server",
+            }.get(engine.lower(), engine)
+            if not hasattr(pvdr, "get_cloud_sql_price"):
+                return {"error": "GCP Cloud SQL pricing not available."}
+            try:
+                prices = await pvdr.get_cloud_sql_price(instance_type, region, engine_norm, ha)
+            except ValueError as e:
+                return {"error": str(e)}
+            except Exception as e:
+                logger.error("get_database_price GCP error: %s", e)
+                return {"error": f"API error: {e}"}
+            if not prices:
+                return {"error": f"No Cloud SQL pricing found for {instance_type} in {region}."}
+            p = prices[0]
             return {
-                "error": (
-                    "GCP database pricing (Cloud SQL) is planned for Phase 4. "
-                    "For GCP compute-equivalent sizing, use get_compute_price(provider='gcp', ...)."
-                )
+                "provider": "gcp",
+                "service": "cloud_sql",
+                "instance_type": instance_type,
+                "engine": engine_norm,
+                "ha": ha,
+                "region": p.region,
+                "pricing_term": p.pricing_term.value,
+                "price_per_hour": f"${p.price_per_unit:.6f}",
+                "monthly_estimate": f"${p.monthly_cost:.2f}/mo",
             }
 
         if not hasattr(pvdr, "get_service_price"):

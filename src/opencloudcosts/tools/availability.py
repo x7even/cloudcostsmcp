@@ -644,6 +644,23 @@ def register_availability_tools(mcp: Any) -> None:
                 "Notebook: filters={'instanceType': 'ml.t3.medium-Notebook'} "
                 "Or use component filter: filters={'component': 'Training'} to list all training instance prices."
             ),
+            "CloudStorage": (
+                "GCS storage class pricing — use get_storage_price(provider='gcp', storage_type=..., region=...):\n"
+                "  Standard: get_storage_price(provider='gcp', storage_type='standard', region='us-central1')\n"
+                "  Nearline: get_storage_price(provider='gcp', storage_type='nearline', region='us-central1')\n"
+                "  Coldline: get_storage_price(provider='gcp', storage_type='coldline', region='us-central1')\n"
+                "  Archive: get_storage_price(provider='gcp', storage_type='archive', region='us-central1')\n"
+                "Storage classes from cheapest to most expensive: Archive < Coldline < Nearline < Standard.\n"
+                "Operations (reads/writes) have separate per-operation costs not included here."
+            ),
+            "CloudSQL": (
+                "Cloud SQL instance pricing (per-vCPU + per-GB-RAM/hour) — use get_database_price(provider='gcp', ...):\n"
+                "  get_database_price(provider='gcp', instance_type='db-n1-standard-4', region='us-central1', engine='MySQL')\n"
+                "  get_database_price(provider='gcp', instance_type='db-n1-highmem-8', region='us-central1', engine='PostgreSQL', deployment='ha')\n"
+                "  deployment='ha' enables Regional (high-availability) pricing (~2x cost).\n"
+                "  Supported engines: MySQL, PostgreSQL, SQLServer.\n"
+                "  Common instance types: db-n1-standard-1/2/4/8/16, db-n1-highmem-2/4/8/16"
+            ),
         }
         annotated_services = []
         for svc in services:

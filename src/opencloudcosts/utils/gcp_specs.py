@@ -380,6 +380,42 @@ GCP_FAMILY_SKU: dict[str, dict[str, str]] = {
     },
 }
 
+# ---------------------------------------------------------------------------
+# Cloud SQL instance type specs: instance_type -> (vcpus, memory_gb)
+# ---------------------------------------------------------------------------
+CLOUD_SQL_INSTANCE_SPECS: dict[str, tuple[float, float]] = {
+    # Shared core (special pricing - different SKU)
+    "db-f1-micro":   (0.2, 0.614),
+    "db-g1-small":   (0.5, 1.700),
+    # Standard (n1-style)
+    "db-n1-standard-1":  (1,  3.75),
+    "db-n1-standard-2":  (2,  7.5),
+    "db-n1-standard-4":  (4,  15.0),
+    "db-n1-standard-8":  (8,  30.0),
+    "db-n1-standard-16": (16, 60.0),
+    "db-n1-standard-32": (32, 120.0),
+    "db-n1-standard-64": (64, 240.0),
+    # High memory (n1-style)
+    "db-n1-highmem-2":  (2,  13.0),
+    "db-n1-highmem-4":  (4,  26.0),
+    "db-n1-highmem-8":  (8,  52.0),
+    "db-n1-highmem-16": (16, 104.0),
+    "db-n1-highmem-32": (32, 208.0),
+    "db-n1-highmem-64": (64, 416.0),
+    # Custom / newer standard tiers
+    "db-standard-1":   (1,  3.75),
+    "db-standard-2":   (2,  7.5),
+    "db-standard-4":   (4,  15.0),
+    "db-standard-8":   (8,  30.0),
+    "db-standard-16":  (16, 60.0),
+    "db-standard-32":  (32, 120.0),
+    # High memory custom tiers
+    "db-highmem-2":  (2,  13.0),
+    "db-highmem-4":  (4,  26.0),
+    "db-highmem-8":  (8,  52.0),
+    "db-highmem-16": (16, 104.0),
+}
+
 # Persistent storage SKU description patterns
 GCP_STORAGE_SKU: dict[str, dict[str, str]] = {
     "pd-standard": {
