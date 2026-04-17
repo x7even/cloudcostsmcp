@@ -171,7 +171,7 @@ Sydney m5.xlarge ($0.278/hr) vs Virginia ($0.192/hr) = 44.8% premium for AU capa
 list_instance_types(
   provider="aws",
   region="ap-southeast-2",
-  min_vcpus=8,
+  min_vcpu=8,
   min_memory_gb=32
 )
 ```
@@ -215,7 +215,7 @@ GCP 3yr CUD ~$0.086/hr vs AWS 3yr reserved ~$0.091/hr — GCP typically edges ou
 
 ---
 
-## 13. AWS vs GCP vs Azure 3-Way Comparison
+## 12. AWS vs GCP vs Azure 3-Way Comparison
 
 **Use case:** "Compare the same 4-vCPU / 16-GB general-purpose instance across all three clouds."
 
@@ -246,7 +246,7 @@ Azure requires no credentials — pricing is fetched from the public Azure Retai
 
 ---
 
-## 12. GCP Region Pricing Variation
+## 13. GCP Region Pricing Variation
 
 **Use case:** "Where is the cheapest GCP region for n2-standard-8?"
 
@@ -258,7 +258,7 @@ Returns all GCP regions sorted by price. US regions (us-central1, us-east1) are 
 
 ---
 
-## 13. Non-Compute Service Pricing
+## 14. Non-Compute Service Pricing
 
 ### CloudWatch Metrics
 

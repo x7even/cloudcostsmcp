@@ -105,7 +105,7 @@ Get pricing for a managed database instance (RDS).
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `provider` | string | ✓ | `"aws"` (GCP in Phase 4) |
+| `provider` | string | ✓ | `"aws"` (GCP Cloud SQL not yet supported) |
 | `instance_type` | string | ✓ | e.g. `"db.r5.large"`, `"db.t4g.micro"` |
 | `region` | string | ✓ | Region code |
 | `engine` | string | | `"MySQL"` (default), `"PostgreSQL"`, `"MariaDB"`, `"Oracle"`, `"SQLServer"`, `"Aurora-MySQL"`, `"Aurora-PostgreSQL"` |
@@ -295,10 +295,10 @@ List available compute instance types in a region with optional filters.
 | `provider` | string | ✓ | `"aws"`, `"gcp"`, or `"azure"` |
 | `region` | string | ✓ | Region code |
 | `family` | string | | Instance family prefix, e.g. `"m5"`, `"c6g"`, `"n2"`, `"Standard_D"` |
-| `min_vcpus` | int | | Minimum vCPU count |
+| `min_vcpu` | int | | Minimum vCPU count. When set alongside `min_memory_gb`, auto-expands the result cap to 200 so spec-filtered queries don't silently truncate. |
 | `min_memory_gb` | float | | Minimum memory in GB |
 | `gpu` | bool | | If `true`, only return GPU instances |
-| `max_results` | int | | Max results (default `30`) |
+| `max_results` | int | | Max results (default `50`). Auto-expanded to 200 when `min_vcpu` or `min_memory_gb` is set and the given value is less than 200. |
 
 ---
 

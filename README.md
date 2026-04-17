@@ -256,6 +256,6 @@ uv run opencloudcosts
 - **Phase 2** ✅ AWS effective pricing (Cost Explorer, Savings Plans, Reserved Instances)
 - **Phase 3** ✅ GCP public pricing (Compute Engine families, Persistent Disk, CUDs)
 - **Phase 4** ✅ Azure public pricing (Retail Prices API, no credentials)
-- **Phase 4** ✅ HTTP/SSE transport (`--transport http`), Dockerfile
+- **Phase 4** ✅ Streamable-HTTP transport (`--transport http`), Dockerfile
 - **Phase 4** ✅ Spot price history tool (`get_spot_history`), GCP Windows pricing
 - **Phase 5**: GCP effective pricing (BigQuery billing export)
