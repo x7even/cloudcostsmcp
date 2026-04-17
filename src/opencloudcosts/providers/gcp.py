@@ -54,6 +54,7 @@ _CATALOG_BASE = "https://cloudbilling.googleapis.com/v1"
 _COMPUTE_SERVICE_ID = "6F81-5844-456A"   # Compute Engine
 _GCS_SERVICE_ID = "95FF-2EF5-5EA1"       # Cloud Storage
 _CLOUD_SQL_SERVICE_ID = "9662-B51E-5089" # Cloud SQL
+_GKE_SERVICE_ID = "CCD8-9BF1-090E"       # Google Kubernetes Engine
 
 # GCS storage class -> description substring in SKU catalog
 _GCS_STORAGE_CLASSES: dict[str, str] = {
@@ -564,6 +565,132 @@ class GCPProvider:
             ttl_hours=self._settings.cache_ttl_hours,
         )
         return [result]
+
+    # ------------------------------------------------------------------
+    # GKE (Google Kubernetes Engine) pricing
+    # ------------------------------------------------------------------
+
+    async def _build_gke_price_index(
+        self, region: str
+    ) -> dict[tuple[str, str], Decimal]:
+        """Build price index for GKE SKUs in a given region."""
+        cache_key = f"gcp:gke_price_index:{region}"
+        cached = await self._cache.get_metadata(cache_key)
+        if cached is not None:
+            return {(k.split("|")[0], k.split("|")[1]): Decimal(v) for k, v in cached.items()}
+
+        skus = await self._fetch_skus(_GKE_SERVICE_ID)
+
+        index: dict[tuple[str, str], Decimal] = {}
+        for sku in skus:
+            service_regions = sku.get("serviceRegions", [])
+            if region not in service_regions and "global" not in service_regions:
+                continue
+
+            desc = sku.get("description", "")
+            category = sku.get("category", {})
+            usage_type = category.get("usageType", "OnDemand")
+            price = self._sku_price(sku)
+            if price > 0:
+                index[(desc, usage_type)] = price
+
+        serialisable = {f"{k[0]}|{k[1]}": str(v) for k, v in index.items()}
+        await self._cache.set_metadata(
+            cache_key,
+            serialisable,
+            ttl_hours=self._settings.cache_ttl_hours,
+        )
+        return index
+
+    async def get_gke_price(
+        self,
+        region: str,
+        mode: str = "standard",
+        node_count: int = 3,
+        node_type: str = "n1-standard-4",
+        vcpu: float = 0.0,
+        memory_gb: float = 0.0,
+        hours_per_month: float = 730.0,
+    ) -> dict:
+        """
+        Returns GKE pricing info (not a NormalizedPrice since structure differs by mode).
+
+        Standard mode: flat cluster management fee + pointer to get_compute_price for nodes.
+        Autopilot mode: per-mCPU-hour + per-GiB-hour rates for pods.
+        """
+        index = await self._build_gke_price_index(region)
+
+        if mode == "standard":
+            # Search for cluster management fee SKU
+            rate: Decimal | None = None
+            for (desc, utype), price in index.items():
+                desc_lower = desc.lower()
+                if (
+                    "kubernetes engine" in desc_lower
+                    and "autopilot" not in desc_lower
+                    and "committed" not in desc_lower
+                    and "cost attribution" not in desc_lower
+                ):
+                    rate = price
+                    break
+
+            # Fall back to documented on-demand rate if SKU not found
+            if rate is None:
+                rate = Decimal("0.10")
+
+            return {
+                "mode": "standard",
+                "cluster_management_fee_per_hr": f"${rate:.6f}",
+                "cluster_management_monthly": f"${rate * Decimal(str(hours_per_month)):.2f}",
+                "node_pricing_hint": (
+                    f"Use get_compute_price(provider='gcp', instance_type='{node_type}', "
+                    f"region='{region}') for each node. Multiply by {node_count} nodes."
+                ),
+                "total_monthly_note": (
+                    f"Total = cluster fee + ({node_count} × node_hourly × {hours_per_month:.0f} hrs)"
+                ),
+                "region": region,
+            }
+
+        else:  # autopilot
+            # Search for Autopilot Balanced Pod mCPU SKU (per milli-CPU)
+            mcpu_rate: Decimal | None = None
+            mem_rate: Decimal | None = None
+            for (desc, utype), price in index.items():
+                desc_lower = desc.lower()
+                if "autopilot balanced pod mcpu requests" in desc_lower and mcpu_rate is None:
+                    mcpu_rate = price
+                elif "autopilot balanced pod memory requests" in desc_lower and mem_rate is None:
+                    mem_rate = price
+                if mcpu_rate is not None and mem_rate is not None:
+                    break
+
+            # mCPU rate is per milli-CPU — multiply by 1000 to get per-vCPU rate
+            vcpu_rate = mcpu_rate * Decimal("1000") if mcpu_rate is not None else Decimal("0")
+            mem_rate_val = mem_rate if mem_rate is not None else Decimal("0")
+
+            result: dict = {
+                "mode": "autopilot",
+                "vcpu_rate_per_hr": f"${vcpu_rate:.6f}",
+                "memory_rate_per_gib_hr": f"${mem_rate_val:.6f}",
+                "requested_vcpu": vcpu,
+                "requested_memory_gb": memory_gb,
+                "region": region,
+                "note": "Autopilot charges for actual pod resource requests only",
+            }
+
+            if vcpu > 0 or memory_gb > 0:
+                hourly = (
+                    Decimal(str(vcpu)) * vcpu_rate
+                    + Decimal(str(memory_gb)) * mem_rate_val
+                )
+                result["hourly_cost"] = f"${hourly:.6f}"
+                result["monthly_cost"] = f"${hourly * Decimal(str(hours_per_month)):.2f}"
+            else:
+                result["hourly_cost"] = "$0.000000"
+                result["monthly_cost"] = "$0.00"
+
+            return result
 
     async def _get_gcs_storage_price(
         self,

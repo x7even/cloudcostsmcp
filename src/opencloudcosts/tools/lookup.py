@@ -411,6 +411,9 @@ def register_lookup_tools(mcp: Any) -> None:
             "cloud-storage": "CloudStorage",
             "cloud-sql": "CloudSQL",
             "cloudsql": "CloudSQL",
+            "gke": "KubernetesEngine",
+            "kubernetes": "KubernetesEngine",
+            "k8s": "KubernetesEngine",
         }
         resolved_service = _SERVICE_ALIASES.get(service.lower(), service)
 
@@ -1309,6 +1312,64 @@ def register_lookup_tools(mcp: Any) -> None:
             "monthly_total_cost": f"${total_cost:.4f}",
             "note": "Prices are per 1,000 tokens. Batch mode is 50% cheaper but async-only.",
         }
+
+    @mcp.tool()
+    async def get_gke_price(
+        ctx: Context,
+        region: str,
+        mode: str = "standard",
+        node_count: int = 3,
+        node_type: str = "n1-standard-4",
+        vcpu: float = 0.0,
+        memory_gb: float = 0.0,
+        hours_per_month: float = 730.0,
+    ) -> dict[str, Any]:
+        """
+        Get GKE (Google Kubernetes Engine) pricing.
+
+        Two billing modes:
+
+        Standard mode (default):
+          - Fixed cluster management fee per hour (regardless of node count/size)
+          - Worker nodes are billed as regular Compute Engine VMs — use get_compute_price
+            for node costs and multiply by node_count.
+          - Example: get_gke_price(region="us-central1", mode="standard", node_count=3,
+              node_type="n2-standard-4")
+
+        Autopilot mode:
+          - No cluster management fee — pay only for pod resource requests
+          - Billed per vCPU-hour and per GiB-RAM-hour for pod requests
+          - Example: get_gke_price(region="us-central1", mode="autopilot",
+              vcpu=4.0, memory_gb=16.0)
+
+        Args:
+            region: GCP region, e.g. "us-central1", "europe-west1"
+            mode: "standard" (node-based) or "autopilot" (pod-based)
+            node_count: Number of worker nodes (standard mode only, for hint)
+            node_type: VM type for worker nodes (standard mode only, for hint)
+            vcpu: vCPUs requested by pods (autopilot mode only)
+            memory_gb: Memory in GB requested by pods (autopilot mode only)
+            hours_per_month: Hours per month (default 730 = always-on)
+        """
+        pvdr = _providers(ctx).get("gcp")
+        if pvdr is None:
+            return {"error": "GCP provider not configured."}
+        if not hasattr(pvdr, "get_gke_price"):
+            return {"error": "GKE pricing not available."}
+        if mode not in ("standard", "autopilot"):
+            return {"error": f"Unknown mode '{mode}'. Use 'standard' or 'autopilot'."}
+        try:
+            result = await pvdr.get_gke_price(
+                region=region, mode=mode, node_count=node_count,
+                node_type=node_type, vcpu=vcpu, memory_gb=memory_gb,
+                hours_per_month=hours_per_month,
+            )
+            return result
+        except NotConfiguredError as e:
+            return {"error": str(e)}
+        except Exception as e:
+            logger.error("get_gke_price error: %s", e)
+            return {"error": f"Pricing lookup failed: {e}"}
 
     @mcp.tool()
     async def refresh_cache(

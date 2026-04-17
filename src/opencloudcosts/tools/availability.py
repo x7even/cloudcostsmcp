@@ -661,6 +661,15 @@ def register_availability_tools(mcp: Any) -> None:
                 "  Supported engines: MySQL, PostgreSQL, SQLServer.\n"
                 "  Common instance types: db-n1-standard-1/2/4/8/16, db-n1-highmem-2/4/8/16"
             ),
+            "KubernetesEngine": (
+                "GKE has two billing modes:\n"
+                "  Standard: flat $0.10/hr cluster management fee + Compute Engine VM costs for nodes.\n"
+                "    get_gke_price(region='us-central1', mode='standard', node_count=3, node_type='n2-standard-4')\n"
+                "  Autopilot: pay per pod resource request (vCPU-hr + GiB-RAM-hr), no node management.\n"
+                "    get_gke_price(region='us-central1', mode='autopilot', vcpu=4.0, memory_gb=16.0)\n"
+                "For node costs in Standard mode, also call:\n"
+                "    get_compute_price(provider='gcp', instance_type='n2-standard-4', region='us-central1')"
+            ),
         }
         annotated_services = []
         for svc in services:
