@@ -372,6 +372,17 @@ def register_lookup_tools(mcp: Any) -> None:
             service: Service code or alias, e.g. "cloudwatch", "AmazonRDS", "lambda"
             region: Region code, e.g. "us-east-1"
             filters: Optional dict of attribute filters, e.g. {"group": "Metrics"}
+
+        Lambda pricing requires two separate calls (each has its own filter group):
+            Duration: get_service_price(provider="aws", service="lambda", region="us-east-1",
+                        filters={"group": "AWS-Lambda-Duration"})  → per GB-second rate
+            Requests: get_service_price(provider="aws", service="lambda", region="us-east-1",
+                        filters={"group": "AWS-Lambda-Requests"})  → per request rate
+            Free tier: first 1M requests/month and 400,000 GB-seconds/month.
+
+        Data transfer between regions:
+            get_service_price(provider="aws", service="data_transfer", region="us-east-1",
+                              filters={"fromRegionCode": "us-east-1", "toRegionCode": "eu-west-1"})
         """
         pvdr = _providers(ctx).get(provider)
         if pvdr is None:

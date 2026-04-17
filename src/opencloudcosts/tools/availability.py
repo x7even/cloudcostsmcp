@@ -629,6 +629,14 @@ def register_availability_tools(mcp: Any) -> None:
                 "filters={'fromRegionCode': '<source>', 'toRegionCode': '<dest>'}) "
                 "for inter-region egress pricing"
             ),
+            "AWSLambda": (
+                "Lambda has two separate pricing dimensions — use both filters: "
+                "(1) Duration/compute: get_service_price(service='lambda', region='us-east-1', "
+                "filters={'group': 'AWS-Lambda-Duration'}) → returns per-GB-second rate. "
+                "(2) Requests: get_service_price(service='lambda', region='us-east-1', "
+                "filters={'group': 'AWS-Lambda-Requests'}) → returns per-request rate. "
+                "Free tier: first 1M requests/month and 400,000 GB-seconds/month are free."
+            ),
         }
         annotated_services = []
         for svc in services:
