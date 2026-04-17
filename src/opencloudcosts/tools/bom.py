@@ -311,12 +311,12 @@ def register_bom_tools(mcp: Any) -> None:
         sample_region = estimate.items[0].region if estimate.items else "us-east-1"
 
         return {
-            "region": sample_region,
+            "pricing_region": sample_region,
             "infrastructure_monthly": f"${estimate.total_monthly:.2f}",
             "infrastructure_annual": f"${estimate.total_annual:.2f}",
             "volume": f"{units_per_month:,.0f} {unit_label}s/month",
             "cost_per_unit": f"${cost_per_unit:.4f} per {unit_label}",
             "cost_per_unit_annual": f"${cost_per_unit * 12:.4f} per {unit_label}/year",
             "errors": errors if errors else None,
-            "note": f"Prices are for {sample_region}. Specify a different region if needed.",
+            "important": f"These prices are for {sample_region} — always state the region in your answer as unit economics vary by region.",
         }

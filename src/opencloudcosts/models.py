@@ -83,7 +83,14 @@ class NormalizedPrice(BaseModel):
             "region": self.region,
             "region_name": region_display_name(self.provider.value, self.region),
             "term": self.pricing_term.value,
-            "price": f"${self.price_per_unit:.6f} {self.unit.value}",
+            "price": (
+                # Use 2-significant-figure scientific notation for sub-microprice SKUs
+                # (e.g. Lambda per-request at $0.0000002 would show as "$0.000000" at 6dp).
+                # Standard 6dp for everything else.
+                f"${float(self.price_per_unit):.2e} {self.unit.value}"
+                if self.price_per_unit > 0 and self.price_per_unit < Decimal("0.0000005")
+                else f"${self.price_per_unit:.6f} {self.unit.value}"
+            ),
             "monthly_estimate": f"${self.monthly_cost:.2f}/mo" if self.unit == PriceUnit.PER_HOUR else None,
             **{k: v for k, v in self.attributes.items() if k in ("instanceType", "vcpu", "memory", "operatingSystem", "storage_type", "volumeType")},
         }

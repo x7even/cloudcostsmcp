@@ -37,7 +37,8 @@ ESTIMATE_PHRASES = [
 # Multipliers that represent legitimate unit conversions in cloud pricing:
 #   instance counts (2–10), hours/month (730), hours/year (8760),
 #   months (12, 24, 36, 60=5yr), days (24, 30), GB quantities (1000=1TB)
-_ARITH_MULTIPLIERS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 24, 30, 36, 60, 100, 120, 730, 1000, 8760]
+_ARITH_MULTIPLIERS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 24, 30, 36, 60, 100, 120, 730, 1000, 8760,
+                      10_000, 100_000, 1_000_000, 10_000_000]
 
 _DOLLAR_RE = re.compile(r'\$[\d,]+(?:\.\d+)?')
 
@@ -138,6 +139,21 @@ def _is_grounded(amount: float, tool_floats: list[float], tol: float = 0.02) -> 
         for n in _ARITH_MULTIPLIERS:
             if n > 0 and abs(tf / n - amount) / max(abs(amount), 0.001) <= tol:
                 return True
+
+    # 8. Linear combination of two tool values: tf1*n1 + tf2*n2 ≈ amount
+    #    Covers multi-component pricing like Lambda (request cost + duration cost)
+    #    or Fargate (vCPU cost + memory cost).
+    for tf1 in tool_floats:
+        for tf2 in tool_floats:
+            if tf1 == tf2:
+                continue
+            for n1 in _ARITH_MULTIPLIERS:
+                v1 = tf1 * n1
+                if v1 > amount * 10:  # prune: partial sum already too large
+                    break
+                for n2 in _ARITH_MULTIPLIERS:
+                    if abs(v1 + tf2 * n2 - amount) / max(abs(amount), 0.001) <= tol:
+                        return True
 
     return False
 
@@ -292,7 +308,11 @@ def flag_missing_data(trace: dict) -> tuple[bool, str]:
             # and any error explicitly telling the LLM not to estimate
             if "gcp" not in err and "api key" not in err and "credentials" not in err \
                     and "spot" not in err and "cost explorer" not in err \
-                    and "do not estimate" not in err:
+                    and "do not estimate" not in err \
+                    and "not supported for azure" not in err \
+                    and "not supported for" not in err \
+                    and "does not support" not in err \
+                    and "not yet implemented" not in err:
                 return True, f"Tool {tc['tool']} returned unexpected error: {result['error'][:100]}"
 
     return False, ""
@@ -377,6 +397,9 @@ def print_report(report: dict, run_dir: Path):
             "MP": "Multi-product AWS vs GCP",
             "MR": "Multi-region",
             "CX": "Complex BoM/TCO",
+            "AZ": "Azure Simple",
+            "AA": "Advanced AWS",
+            "MC": "Multi-Cloud 3-way",
         }.get(prefix, prefix)
         print(f"\n── {label} ──")
         for pid, r in sorted(items):
