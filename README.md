@@ -250,6 +250,26 @@ uv run opencloudcosts
 
 **GCP pricing terms:** `on_demand` (default), `spot` (preemptible), `cud_1yr`, `cud_3yr`
 
+## Security
+
+OpenCloudCosts can access sensitive billing data when configured with cloud credentials (AWS Cost Explorer, GCP billing, Azure contract pricing). Follow these guidelines to keep that data safe.
+
+**Credential hygiene**
+- Use dedicated, least-privilege credentials — read-only access scoped to pricing and billing APIs only. Never use root, owner, or admin credentials.
+- AWS: create an IAM user/role with only `ce:GetCostAndUsage`, `pricing:GetProducts`, and `savingsplans:Describe*` permissions.
+- Store credentials in `.env` (see `.env.example`) and never commit that file to version control.
+
+**Transport security**
+- The default `stdio` transport is safe — the server runs as a local process with no network exposure.
+- If you use `--transport http`, never expose it publicly without a reverse proxy and authentication in front of it. Treat it as an internal service.
+
+**MCP client trust**
+- Only add this server to MCP client configs you control.
+- Avoid running it alongside untrusted third-party MCP servers — a malicious server can craft prompts that cause the LLM to call your billing tools and relay the results.
+
+**What this server can access**
+With credentials configured: actual spend, contract/negotiated pricing, reservation and savings plan data. Understand this before granting access in shared or multi-user environments.
+
 ## Phases
 
 - **Phase 1** ✅ AWS public pricing (EC2, EBS, list instances)
