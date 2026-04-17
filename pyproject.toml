@@ -4,10 +4,26 @@ build-backend = "hatchling.build"
 
 [project]
 name = "opencloudcosts"
-version = "0.1.0"
-description = "Open source MCP server for accurate public and effective cloud pricing (AWS, GCP)"
+version = "0.7.0"
+description = "Open source MCP server for accurate public and effective cloud pricing (AWS, GCP, Azure)"
+readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.11"
+authors = [
+    {name = "x7even", email = "x7sima@gmail.com"},
+]
+keywords = ["mcp", "cloud", "pricing", "aws", "gcp", "azure", "finops", "cost"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Internet",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
 dependencies = [
     "mcp[cli]>=1.0",
     "pydantic>=2.0",
@@ -29,6 +45,11 @@ dev = [
 
 [project.scripts]
 opencloudcosts = "opencloudcosts.server:main"
+
+[project.urls]
+Homepage = "https://github.com/x7even/cloudcostmcp"
+Repository = "https://github.com/x7even/cloudcostmcp"
+Issues = "https://github.com/x7even/cloudcostmcp/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/opencloudcosts"]
