@@ -417,6 +417,12 @@ def register_lookup_tools(mcp: Any) -> None:
             "memorystore": "MemorystoreRedis",
             "redis": "MemorystoreRedis",
             "memorystore-redis": "MemorystoreRedis",
+            "bigquery": "BigQuery",
+            "bq": "BigQuery",
+            "vertex": "VertexAI",
+            "vertex-ai": "VertexAI",
+            "vertexai": "VertexAI",
+            "gemini": "Gemini",
         }
         resolved_service = _SERVICE_ALIASES.get(service.lower(), service)
 
@@ -1442,6 +1448,148 @@ def register_lookup_tools(mcp: Any) -> None:
             "monthly_cost": f"${p.monthly_cost:.2f}/mo",
             "note": "Memorystore Standard includes HA (2-zone replication). Basic is single-zone.",
         }
+
+    @mcp.tool()
+    async def get_bigquery_price(
+        ctx: Context,
+        region: str = "us",
+        query_tb: float | None = None,
+        active_storage_gb: float | None = None,
+        longterm_storage_gb: float | None = None,
+        streaming_gb: float | None = None,
+    ) -> dict[str, Any]:
+        """Get BigQuery pricing for storage, analysis queries, and streaming inserts.
+
+        BigQuery uses on-demand (per-TiB) query pricing plus per-GiB-month
+        storage pricing. Multi-region locations ("us", "eu") are cheaper for
+        storage than single-region. Pass quantities to get cost estimates.
+
+        Args:
+            region: BigQuery location — multi-region "us" (default) or "eu",
+                    or single region e.g. "us-central1", "europe-west1".
+                    Single-region queries fall back to multi-region rates if
+                    no single-region SKU is found.
+            query_tb: TiB of data scanned per month (on-demand query cost).
+                      Omit to return rates only.
+            active_storage_gb: GB of active storage (data modified in last 90 days).
+            longterm_storage_gb: GB of long-term storage (data not modified > 90 days,
+                                 roughly half the active storage rate).
+            streaming_gb: GB of streaming inserts per month.
+
+        Examples:
+            get_bigquery_price(region="us")
+            get_bigquery_price(region="us", query_tb=10.0, active_storage_gb=500.0)
+            get_bigquery_price(region="europe-west1", longterm_storage_gb=1000.0)
+        """
+        pvdr = _providers(ctx).get("gcp")
+        if pvdr is None:
+            return {"error": "GCP provider is not configured."}
+
+        if not hasattr(pvdr, "get_bigquery_price"):
+            return {"error": "BigQuery pricing not available."}
+
+        try:
+            result = await pvdr.get_bigquery_price(
+                region=region,
+                query_tb=query_tb,
+                active_storage_gb=active_storage_gb,
+                longterm_storage_gb=longterm_storage_gb,
+                streaming_gb=streaming_gb,
+            )
+        except Exception as e:
+            logger.error("get_bigquery_price error: %s", e)
+            return {"error": f"API error: {e}"}
+
+        return result
+
+    @mcp.tool()
+    async def get_vertex_price(
+        ctx: Context,
+        machine_type: str,
+        region: str = "us-central1",
+        hours: float = 730.0,
+        task: str = "training",
+    ) -> dict[str, Any]:
+        """
+        Get Vertex AI custom training / prediction compute pricing.
+
+        Returns per-vCPU-hour and per-GiB-RAM-hour rates for the given machine
+        type family, looked up from the Vertex AI SKU catalog.
+
+        Vertex AI bills custom training and prediction jobs by machine type.
+        Rates are returned as unit prices — multiply by vCPU count and RAM GiB
+        for the actual machine type to get total cost.
+
+        Args:
+            machine_type: GCP machine type, e.g. "n1-standard-4", "a2-highgpu-1g"
+            region: GCP region, e.g. "us-central1", "europe-west4"
+            hours: Estimated runtime hours (default 730 = one month always-on)
+            task: "training" (default) or "prediction"
+
+        Examples:
+            get_vertex_price(machine_type="n1-standard-4", region="us-central1", task="training")
+            get_vertex_price(machine_type="a2-highgpu-1g", region="us-central1", task="prediction")
+        """
+        pvdr = _providers(ctx).get("gcp")
+        if pvdr is None:
+            return {"error": "GCP provider not configured."}
+        if not hasattr(pvdr, "get_vertex_price"):
+            return {"error": "Vertex AI pricing not available."}
+        if task not in ("training", "prediction"):
+            return {"error": f"Unknown task '{task}'. Use 'training' or 'prediction'."}
+        try:
+            result = await pvdr.get_vertex_price(
+                machine_type=machine_type,
+                region=region,
+                hours=hours,
+                task=task,
+            )
+            return result
+        except NotConfiguredError as e:
+            return {"error": str(e)}
+        except Exception as e:
+            logger.error("get_vertex_price error: %s", e)
+            return {"error": f"Pricing lookup failed: {e}"}
+
+    @mcp.tool()
+    async def get_gemini_price(
+        ctx: Context,
+        model: str = "gemini-1.5-flash",
+        region: str = "us-central1",
+    ) -> dict[str, Any]:
+        """
+        Get Vertex AI Gemini generative model token / character pricing.
+
+        Returns input and output pricing rates for the specified Gemini model
+        as found in the Vertex AI SKU catalog. Rates may be per-character or
+        per-token depending on the model generation.
+
+        Args:
+            model: Gemini model name substring, e.g. "gemini-1.5-flash",
+                   "gemini-1.0-pro", "gemini-1.5-pro"
+            region: GCP region, e.g. "us-central1" (most Gemini SKUs are global
+                    or us-central1 — try "us-central1" if another region returns nothing)
+
+        Examples:
+            get_gemini_price(model="gemini-1.5-flash", region="us-central1")
+            get_gemini_price(model="gemini-1.0-pro")
+        """
+        pvdr = _providers(ctx).get("gcp")
+        if pvdr is None:
+            return {"error": "GCP provider not configured."}
+        if not hasattr(pvdr, "get_gemini_price"):
+            return {"error": "Gemini pricing not available."}
+        try:
+            result = await pvdr.get_gemini_price(
+                model=model,
+                region=region,
+            )
+            return result
+        except NotConfiguredError as e:
+            return {"error": str(e)}
+        except Exception as e:
+            logger.error("get_gemini_price error: %s", e)
+            return {"error": f"Pricing lookup failed: {e}"}
 
     @mcp.tool()
     async def refresh_cache(

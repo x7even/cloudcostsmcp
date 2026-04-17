@@ -677,6 +677,31 @@ def register_availability_tools(mcp: Any) -> None:
                 "  Standard tier includes cross-zone HA replication and costs ~1.3-2x Basic.\n"
                 "  Pricing is per GiB-hour of provisioned capacity × capacity_gb × hours."
             ),
+            "BigQuery": (
+                "BigQuery pricing — use get_bigquery_price(region=..., ...):\n"
+                "  Rates only: get_bigquery_price(region='us')\n"
+                "  With query estimate: get_bigquery_price(region='us', query_tb=10.0)\n"
+                "  Storage + query: get_bigquery_price(region='us', query_tb=5.0, active_storage_gb=500.0, longterm_storage_gb=1000.0)\n"
+                "  EU multi-region: get_bigquery_price(region='eu', query_tb=2.0)\n"
+                "  Single region: get_bigquery_price(region='us-central1', active_storage_gb=200.0)\n"
+                "  Free tier: first 1 TiB/month queries free; first 10 GiB/month active storage free.\n"
+                "  Long-term storage (data unchanged >90 days) is ~50% cheaper than active storage."
+            ),
+            "VertexAI": (
+                "Vertex AI custom training / prediction compute pricing — billed per vCPU-hour and GiB-RAM-hour:\n"
+                "  get_vertex_price(machine_type='n1-standard-4', region='us-central1', task='training')\n"
+                "  get_vertex_price(machine_type='a2-highgpu-1g', region='us-central1', task='prediction')\n"
+                "  task: 'training' (default) or 'prediction'.\n"
+                "  Returns per-vCPU-hr and per-GiB-RAM-hr rates; multiply by machine specs for total cost."
+            ),
+            "Gemini": (
+                "Vertex AI Gemini generative model token / character pricing:\n"
+                "  get_gemini_price(model='gemini-1.5-flash', region='us-central1')\n"
+                "  get_gemini_price(model='gemini-1.0-pro')\n"
+                "  get_gemini_price(model='gemini-1.5-pro')\n"
+                "  Returns input and output rates per character or per token.\n"
+                "  Most Gemini SKUs are global or in us-central1 — try that region if others return nothing."
+            ),
         }
         annotated_services = []
         for svc in services:

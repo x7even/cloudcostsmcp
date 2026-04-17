@@ -56,6 +56,8 @@ _GCS_SERVICE_ID = "95FF-2EF5-5EA1"       # Cloud Storage
 _CLOUD_SQL_SERVICE_ID = "9662-B51E-5089" # Cloud SQL
 _GKE_SERVICE_ID = "CCD8-9BF1-090E"       # Google Kubernetes Engine
 _MEMORYSTORE_SERVICE_ID = "5AF5-2C11-D467"  # Memorystore for Redis
+_VERTEX_SERVICE_ID = "C7E2-9256-1C43"       # Vertex AI
+_BIGQUERY_SERVICE_ID = "24E6-581D-38E5"     # BigQuery
 
 # GCS storage class -> description substring in SKU catalog
 _GCS_STORAGE_CLASSES: dict[str, str] = {
@@ -213,6 +215,31 @@ class GCPProvider:
             # Use the first tier with startUsageAmount == 0
             for tier in tiers:
                 if tier.get("startUsageAmount", 0) == 0:
+                    up = tier["unitPrice"]
+                    return gcp_money_to_decimal(
+                        up.get("units", "0"),
+                        up.get("nanos", 0),
+                    )
+        except (KeyError, IndexError, TypeError):
+            pass
+        return Decimal("0")
+
+    @staticmethod
+    def _sku_paid_price(sku: dict[str, Any]) -> Decimal:
+        """Extract the first paid-tier unit price from a SKU's pricingInfo.
+
+        Some SKUs (e.g. BigQuery query analysis) have a free-quota tier at
+        startUsageAmount=0 followed by the actual charged rate at a higher
+        startUsageAmount. This method skips the free tier and returns the
+        first tier where startUsageAmount > 0.
+        """
+        try:
+            pricing_info = sku.get("pricingInfo", [])
+            if not pricing_info:
+                return Decimal("0")
+            tiers = pricing_info[0]["pricingExpression"]["tieredRates"]
+            for tier in tiers:
+                if tier.get("startUsageAmount", 0) > 0:
                     up = tier["unitPrice"]
                     return gcp_money_to_decimal(
                         up.get("units", "0"),
@@ -710,6 +737,135 @@ class GCPProvider:
         return [result]
 
     # ------------------------------------------------------------------
+    # BigQuery pricing
+    # ------------------------------------------------------------------
+
+    async def _build_bigquery_price_index(
+        self, region: str
+    ) -> dict[str, Decimal]:
+        """Build price index for BigQuery SKUs in a given region.
+
+        BigQuery has multi-region identifiers in serviceRegions (e.g. "us",
+        "eu") as well as single-region codes. We store SKUs matched by the
+        given region string directly; callers that want multi-region fallback
+        must pass the multi-region code (e.g. "us") explicitly.
+
+        Returns a dict keyed by SKU description.
+        """
+        cache_key = f"gcp:bigquery_price_index:{region}"
+        cached = await self._cache.get_metadata(cache_key)
+        if cached is not None:
+            return {k: Decimal(v) for k, v in cached.items()}
+
+        skus = await self._fetch_skus(_BIGQUERY_SERVICE_ID)
+
+        index: dict[str, Decimal] = {}
+        for sku in skus:
+            service_regions = sku.get("serviceRegions", [])
+            # BigQuery SKUs use named regions or multi-region codes ("us", "eu", "asia")
+            # — no "global" SKUs exist, so no global fallback is needed here.
+            if region not in service_regions:
+                continue
+
+            desc = sku.get("description", "")
+            # Use paid-price tier for Analysis SKUs (tier[0] is free quota = $0)
+            if "Analysis" in desc and "Streaming" not in desc:
+                price = self._sku_paid_price(sku)
+            else:
+                price = self._sku_price(sku)
+
+            if price > 0:
+                index[desc] = price
+
+        serialisable = {k: str(v) for k, v in index.items()}
+        await self._cache.set_metadata(
+            cache_key,
+            serialisable,
+            ttl_hours=self._settings.cache_ttl_hours,
+        )
+        return index
+
+    async def get_bigquery_price(
+        self,
+        region: str = "us",
+        query_tb: float | None = None,
+        active_storage_gb: float | None = None,
+        longterm_storage_gb: float | None = None,
+        streaming_gb: float | None = None,
+    ) -> dict:
+        """Return BigQuery pricing for storage, analysis queries, and streaming inserts.
+
+        BigQuery uses a multi-region / single-region model. Pass ``region="us"``
+        for the US multi-region, ``region="us-central1"`` for a specific region.
+        When the exact region yields no SKUs we fall back to the corresponding
+        multi-region prefix (e.g. "us-central1" → "us", "europe-west1" → "eu").
+        """
+        # Try the exact region first; fall back to multi-region prefix if empty
+        index = await self._build_bigquery_price_index(region)
+        if not index:
+            # Derive a multi-region prefix from the single-region code
+            if region.startswith("us-") or region == "us":
+                fallback = "us"
+            elif region.startswith("europe-") or region == "eu":
+                fallback = "eu"
+            elif region.startswith("asia-") or region.startswith("australia-"):
+                fallback = "asia"
+            else:
+                fallback = ""
+
+            if fallback and fallback != region:
+                index = await self._build_bigquery_price_index(fallback)
+
+        # Extract individual rates from index
+        analysis_rate: Decimal = Decimal("0")
+        active_storage_rate: Decimal = Decimal("0")
+        longterm_storage_rate: Decimal = Decimal("0")
+        streaming_rate: Decimal = Decimal("0")
+
+        for desc, price in index.items():
+            if "Active Logical Storage" in desc and active_storage_rate == 0:
+                active_storage_rate = price
+            elif "Long Term Logical Storage" in desc and longterm_storage_rate == 0:
+                longterm_storage_rate = price
+            elif "Analysis" in desc and "Streaming" not in desc and analysis_rate == 0:
+                analysis_rate = price
+            elif "Streaming Insert" in desc and streaming_rate == 0:
+                streaming_rate = price
+
+        result: dict[str, Any] = {
+            "region": region,
+            "provider": "gcp",
+            "service": "bigquery",
+            "analysis_rate_per_tib": f"${analysis_rate:.6f}/TiB",
+            "active_storage_rate_per_gib_mo": f"${active_storage_rate:.6f}/GiB-mo",
+            "longterm_storage_rate_per_gib_mo": f"${longterm_storage_rate:.6f}/GiB-mo",
+            "streaming_insert_rate_per_gib": f"${streaming_rate:.6f}/GiB",
+        }
+
+        if query_tb is not None:
+            cost = Decimal(str(query_tb)) * analysis_rate
+            result["estimated_query_cost"] = f"${cost:.2f}"
+
+        if active_storage_gb is not None:
+            cost = Decimal(str(active_storage_gb)) / Decimal("1024") * active_storage_rate
+            result["estimated_active_storage_cost"] = f"${cost:.2f}"
+
+        if longterm_storage_gb is not None:
+            cost = Decimal(str(longterm_storage_gb)) / Decimal("1024") * longterm_storage_rate
+            result["estimated_longterm_storage_cost"] = f"${cost:.2f}"
+
+        if streaming_gb is not None:
+            cost = Decimal(str(streaming_gb)) * streaming_rate
+            result["estimated_streaming_cost"] = f"${cost:.2f}"
+
+        result["note"] = (
+            "BigQuery free tier: first 1 TiB/month of query processing is free; "
+            "first 10 GiB/month of active storage is free. "
+            "Rates shown are for usage above the free tier."
+        )
+        return result
+
+    # ------------------------------------------------------------------
     # GKE (Google Kubernetes Engine) pricing
     # ------------------------------------------------------------------
 
@@ -1021,6 +1177,196 @@ class GCPProvider:
             except ValueError:
                 return False
         return False
+
+    # ------------------------------------------------------------------
+    # Vertex AI pricing
+    # ------------------------------------------------------------------
+
+    async def _build_vertex_price_index(
+        self, region: str
+    ) -> dict[tuple[str, str], Decimal]:
+        """Build a price index for Vertex AI SKUs in a given region."""
+        cache_key = f"gcp:vertex_price_index:{region}"
+        cached = await self._cache.get_metadata(cache_key)
+        if cached is not None:
+            return {(k.split("|")[0], k.split("|")[1]): Decimal(v) for k, v in cached.items()}
+
+        skus = await self._fetch_skus(_VERTEX_SERVICE_ID)
+
+        index: dict[tuple[str, str], Decimal] = {}
+        for sku in skus:
+            service_regions = sku.get("serviceRegions", [])
+            if region not in service_regions and "global" not in service_regions:
+                continue
+
+            desc = sku.get("description", "")
+            category = sku.get("category", {})
+            usage_type = category.get("usageType", "OnDemand")
+            price = self._sku_price(sku)
+            if price > 0:
+                index[(desc, usage_type)] = price
+
+        serialisable = {f"{k[0]}|{k[1]}": str(v) for k, v in index.items()}
+        await self._cache.set_metadata(
+            cache_key,
+            serialisable,
+            ttl_hours=self._settings.cache_ttl_hours,
+        )
+        return index
+
+    async def get_vertex_price(
+        self,
+        machine_type: str,
+        region: str = "us-central1",
+        hours: float = 730.0,
+        task: str = "training",
+    ) -> dict:
+        """
+        Returns Vertex AI custom training / prediction compute pricing.
+
+        Looks up per-vCPU-hour and per-GiB-RAM-hour rates for the given
+        machine family (e.g. "n1" from "n1-standard-4") from Vertex AI SKUs.
+        Returns a dict with rates and estimated cost for the given hours.
+        """
+        # Extract family prefix: "n1" from "n1-standard-4", "a2" from "a2-highgpu-1g"
+        family = machine_type.split("-")[0].lower() if machine_type else "n1"
+
+        index = await self._build_vertex_price_index(region)
+
+        if not index:
+            return {
+                "error": (
+                    f"No Vertex AI pricing found for machine_type={machine_type!r} "
+                    f"in region={region!r}. No SKUs returned from Vertex AI catalog."
+                )
+            }
+
+        # Search for vCPU and RAM SKUs matching this family and task
+        task_lower = task.lower()
+        task_keyword = "training" if "train" in task_lower else "prediction"
+
+        vcpu_rate: Decimal | None = None
+        ram_rate: Decimal | None = None
+
+        for (desc, _utype), price in index.items():
+            desc_lower = desc.lower()
+            if family not in desc_lower:
+                continue
+            if task_keyword not in desc_lower:
+                # Be lenient: skip only if the description explicitly mentions a different task
+                if "training" in desc_lower or "prediction" in desc_lower:
+                    continue
+            is_vcpu = "vcpu" in desc_lower or "core" in desc_lower
+            is_ram = "ram" in desc_lower or "memory" in desc_lower
+            if is_vcpu and vcpu_rate is None:
+                vcpu_rate = price
+            elif is_ram and ram_rate is None:
+                ram_rate = price
+            if vcpu_rate is not None and ram_rate is not None:
+                break
+
+        if vcpu_rate is None or ram_rate is None:
+            return {
+                "error": (
+                    f"No Vertex AI SKUs matched machine_type={machine_type!r} "
+                    f"(family={family!r}), task={task!r}, region={region!r}. "
+                    "The SKU catalog may use different naming — try a broader family prefix."
+                ),
+                "hint": "Available SKU descriptions can be inspected via search_pricing(service='vertexai').",
+            }
+
+        vcpu_rate_val = vcpu_rate if vcpu_rate is not None else Decimal("0")
+        ram_rate_val = ram_rate if ram_rate is not None else Decimal("0")
+
+        result: dict = {
+            "provider": "gcp",
+            "service": "vertex_ai",
+            "machine_type": machine_type,
+            "family": family,
+            "task": task,
+            "region": region,
+            "hours": hours,
+            "vcpu_rate_per_hr": f"${vcpu_rate_val:.6f}",
+            "ram_rate_per_gib_hr": f"${ram_rate_val:.6f}",
+            "note": (
+                f"Rates are per vCPU-hour and per GiB-RAM-hour. "
+                f"To estimate total cost: (vcpus × vcpu_rate + ram_gib × ram_rate) × {hours:.0f} hours. "
+                f"Use list_instance_types(provider='gcp', region='{region}') to get specs."
+            ),
+        }
+        return result
+
+    async def get_gemini_price(
+        self,
+        model: str = "gemini-1.5-flash",
+        region: str = "us-central1",
+    ) -> dict:
+        """
+        Returns Vertex AI Gemini model token/character pricing.
+
+        Searches Vertex AI SKUs for entries whose description contains "Gemini"
+        and the given model name substring. Returns input and output rates
+        found in the catalog.
+        """
+        index = await self._build_vertex_price_index(region)
+
+        if not index:
+            return {
+                "error": (
+                    f"No Vertex AI SKUs found for region={region!r}. "
+                    "Gemini pricing may be global — try region='global' or 'us-central1'."
+                )
+            }
+
+        model_lower = model.lower()
+        # Extract meaningful parts from slug like "gemini-1.5-flash" → ["1.5", "flash"]
+        model_parts = [
+            p for p in model_lower.replace("gemini-", "").replace("gemini", "").split("-")
+            if p and len(p) > 1
+        ]
+
+        rates: dict[str, str] = {}
+
+        for (desc, _utype), price in index.items():
+            desc_lower = desc.lower()
+            if "gemini" not in desc_lower:
+                continue
+            # Match on model name parts if we have any
+            if model_parts and not all(p in desc_lower for p in model_parts):
+                continue
+            # Determine input vs output direction
+            if "input" in desc_lower:
+                direction = "input"
+            elif "output" in desc_lower:
+                direction = "output"
+            else:
+                direction = "other"
+            # Use description as key to avoid collisions
+            safe_key = f"{direction}:{desc}"
+            rates[safe_key] = f"${price:.8f}"
+
+        if not rates:
+            return {
+                "error": (
+                    f"No Gemini SKUs matched model={model!r} in region={region!r}. "
+                    "The model name may differ from the SKU catalog. "
+                    "Try model='gemini-1.5-flash', 'gemini-1.0-pro', or 'gemini-1.5-pro'."
+                ),
+                "region": region,
+                "model": model,
+            }
+
+        return {
+            "provider": "gcp",
+            "service": "vertex_ai_gemini",
+            "model": model,
+            "region": region,
+            "rates": rates,
+            "note": (
+                "Rates are per character or per token depending on the SKU. "
+                "Check the 'rates' keys for input/output direction and unit from SKU description."
+            ),
+        }
 
     async def get_effective_price(
         self,
