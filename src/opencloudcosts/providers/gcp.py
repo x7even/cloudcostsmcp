@@ -55,6 +55,7 @@ _COMPUTE_SERVICE_ID = "6F81-5844-456A"   # Compute Engine
 _GCS_SERVICE_ID = "95FF-2EF5-5EA1"       # Cloud Storage
 _CLOUD_SQL_SERVICE_ID = "9662-B51E-5089" # Cloud SQL
 _GKE_SERVICE_ID = "CCD8-9BF1-090E"       # Google Kubernetes Engine
+_MEMORYSTORE_SERVICE_ID = "5AF5-2C11-D467"  # Memorystore for Redis
 
 # GCS storage class -> description substring in SKU catalog
 _GCS_STORAGE_CLASSES: dict[str, str] = {
@@ -561,6 +562,144 @@ class GCPProvider:
 
         await self._cache.set_prices(
             "gcp", "cloud_sql", region, cache_key_extras,
+            [result.model_dump(mode="json")],
+            ttl_hours=self._settings.cache_ttl_hours,
+        )
+        return [result]
+
+    # ------------------------------------------------------------------
+    # Memorystore for Redis pricing
+    # ------------------------------------------------------------------
+
+    async def _build_memorystore_price_index(
+        self, region: str
+    ) -> dict[tuple[str, str], Decimal]:
+        """Build price index for Memorystore for Redis SKUs in a given region."""
+        cache_key = f"gcp:memorystore_price_index:{region}"
+        cached = await self._cache.get_metadata(cache_key)
+        if cached is not None:
+            return {(k.split("|")[0], k.split("|")[1]): Decimal(v) for k, v in cached.items()}
+
+        skus = await self._fetch_skus(_MEMORYSTORE_SERVICE_ID)
+
+        index: dict[tuple[str, str], Decimal] = {}
+        for sku in skus:
+            service_regions = sku.get("serviceRegions", [])
+            if region not in service_regions and "global" not in service_regions:
+                continue
+
+            desc = sku.get("description", "")
+            category = sku.get("category", {})
+            usage_type = category.get("usageType", "OnDemand")
+            price = self._sku_price(sku)
+            if price > 0:
+                index[(desc, usage_type)] = price
+
+        serialisable = {f"{k[0]}|{k[1]}": str(v) for k, v in index.items()}
+        await self._cache.set_metadata(
+            cache_key,
+            serialisable,
+            ttl_hours=self._settings.cache_ttl_hours,
+        )
+        return index
+
+    async def get_memorystore_price(
+        self,
+        capacity_gb: float,
+        region: str,
+        tier: str = "standard",
+        hours_per_month: float = 730.0,
+    ) -> list[NormalizedPrice]:
+        """
+        Get Memorystore for Redis pricing for the given capacity and tier.
+
+        Memorystore is billed per GiB-hour of provisioned capacity. Two tiers:
+          - basic: single zone, no HA
+          - standard: HA with cross-zone replication
+        """
+        tier_lower = tier.lower()
+        if tier_lower not in ("basic", "standard"):
+            raise ValueError(
+                f"Unknown Memorystore tier: {tier!r}. Valid values: 'basic', 'standard'."
+            )
+
+        # Determine target M-tier string from capacity_gb
+        if capacity_gb < 4:
+            preferred_m = "m2"
+        elif capacity_gb < 12:
+            preferred_m = "m3"
+        elif capacity_gb < 100:
+            preferred_m = "m4"
+        else:
+            preferred_m = "m5"
+
+        cache_key_extras = {
+            "capacity_gb": str(capacity_gb),
+            "tier": tier_lower,
+            "hours_per_month": str(hours_per_month),
+        }
+        cached = await self._cache.get_prices("gcp", "memorystore", region, cache_key_extras)
+        if cached:
+            return [NormalizedPrice.model_validate(p) for p in cached]
+
+        index = await self._build_memorystore_price_index(region)
+
+        # Build ordered list of M-tiers to try (preferred first, then fallbacks)
+        all_m_tiers = ["m2", "m3", "m4", "m5"]
+        m_tier_order = [preferred_m] + [m for m in all_m_tiers if m != preferred_m]
+
+        raw_rate: Decimal | None = None
+        matched_desc: str = ""
+
+        for m_tier in m_tier_order:
+            for (desc, utype), price in index.items():
+                if utype != "OnDemand":
+                    continue
+                desc_lower = desc.lower()
+                if tier_lower == "basic":
+                    if f"redis capacity basic {m_tier}" in desc_lower:
+                        raw_rate = price
+                        matched_desc = desc
+                        break
+                else:  # standard
+                    if (
+                        f"redis standard node capacity {m_tier}" in desc_lower
+                        or f"redis capacity standard {m_tier}" in desc_lower
+                    ):
+                        raw_rate = price
+                        matched_desc = desc
+                        break
+            if raw_rate is not None:
+                break
+
+        if raw_rate is None:
+            logger.warning(
+                "GCP Memorystore: could not find Redis %s SKU for capacity=%.1f GB in %s",
+                tier, capacity_gb, region,
+            )
+            return []
+
+        hourly_rate = raw_rate * Decimal(str(capacity_gb))
+
+        result = NormalizedPrice(
+            provider=CloudProvider.GCP,
+            service="database",
+            sku_id=f"gcp:memorystore:{tier_lower}:{capacity_gb}:{region}",
+            product_family="Memorystore for Redis",
+            description=f"Memorystore Redis {tier.capitalize()} {capacity_gb}GB in {region}",
+            region=region,
+            attributes={
+                "capacity_gb": str(capacity_gb),
+                "tier": tier_lower,
+                "rate_per_gib_hr": str(raw_rate),
+            },
+            pricing_term=PricingTerm.ON_DEMAND,
+            price_per_unit=hourly_rate,
+            unit=PriceUnit.PER_HOUR,
+        )
+
+        await self._cache.set_prices(
+            "gcp", "memorystore", region, cache_key_extras,
             [result.model_dump(mode="json")],
             ttl_hours=self._settings.cache_ttl_hours,
         )

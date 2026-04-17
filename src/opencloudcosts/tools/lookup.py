@@ -414,6 +414,9 @@ def register_lookup_tools(mcp: Any) -> None:
             "gke": "KubernetesEngine",
             "kubernetes": "KubernetesEngine",
             "k8s": "KubernetesEngine",
+            "memorystore": "MemorystoreRedis",
+            "redis": "MemorystoreRedis",
+            "memorystore-redis": "MemorystoreRedis",
         }
         resolved_service = _SERVICE_ALIASES.get(service.lower(), service)
 
@@ -1370,6 +1373,75 @@ def register_lookup_tools(mcp: Any) -> None:
         except Exception as e:
             logger.error("get_gke_price error: %s", e)
             return {"error": f"Pricing lookup failed: {e}"}
+
+    @mcp.tool()
+    async def get_memorystore_price(
+        ctx: Context,
+        capacity_gb: float,
+        region: str,
+        tier: str = "standard",
+        hours_per_month: float = 730.0,
+    ) -> dict[str, Any]:
+        """
+        Get GCP Memorystore for Redis pricing.
+
+        Memorystore is billed per GiB-hour of provisioned capacity. Two tiers:
+          - basic: single zone, no HA, lowest cost
+          - standard: HA with cross-zone replication (recommended for production)
+
+        Standard tier typically costs ~1.3-2x more than Basic depending on region.
+
+        Args:
+            capacity_gb: Provisioned memory capacity in GB (e.g. 5.0, 10.0, 100.0)
+            region: GCP region, e.g. "us-central1", "europe-west1"
+            tier: "basic" (single zone) or "standard" (HA, recommended)
+            hours_per_month: Hours per month (default 730 = always-on)
+
+        Example:
+            get_memorystore_price(capacity_gb=10.0, region="us-central1", tier="standard")
+            get_memorystore_price(capacity_gb=5.0, region="europe-west1", tier="basic")
+        """
+        pvdr = _providers(ctx).get("gcp")
+        if pvdr is None:
+            return {"error": "GCP provider is not configured."}
+
+        if not hasattr(pvdr, "get_memorystore_price"):
+            return {"error": "Memorystore pricing not available."}
+
+        try:
+            prices = await pvdr.get_memorystore_price(
+                capacity_gb=capacity_gb,
+                region=region,
+                tier=tier,
+                hours_per_month=hours_per_month,
+            )
+        except ValueError as e:
+            return {"error": str(e)}
+        except Exception as e:
+            logger.error("get_memorystore_price error: %s", e)
+            return {"error": f"API error: {e}"}
+
+        if not prices:
+            return {
+                "result": "no_prices_found",
+                "message": f"No Memorystore pricing found for tier={tier} in {region}.",
+            }
+
+        p = prices[0]
+        from decimal import Decimal as _Decimal
+        raw_rate = p.attributes.get("rate_per_gib_hr", "0")
+
+        return {
+            "provider": "gcp",
+            "service": "memorystore_redis",
+            "tier": tier,
+            "capacity_gb": capacity_gb,
+            "region": p.region,
+            "rate_per_gib_hr": f"${_Decimal(raw_rate):.6f}/GiB-hr",
+            "hourly_cost": f"${p.price_per_unit:.4f}/hr",
+            "monthly_cost": f"${p.monthly_cost:.2f}/mo",
+            "note": "Memorystore Standard includes HA (2-zone replication). Basic is single-zone.",
+        }
 
     @mcp.tool()
     async def refresh_cache(

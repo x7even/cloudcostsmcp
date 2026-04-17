@@ -670,6 +670,13 @@ def register_availability_tools(mcp: Any) -> None:
                 "For node costs in Standard mode, also call:\n"
                 "    get_compute_price(provider='gcp', instance_type='n2-standard-4', region='us-central1')"
             ),
+            "MemorystoreRedis": (
+                "Memorystore for Redis pricing — use get_memorystore_price(provider='gcp', ...):\n"
+                "  Standard HA: get_memorystore_price(capacity_gb=10.0, region='us-central1', tier='standard')\n"
+                "  Basic (no HA): get_memorystore_price(capacity_gb=10.0, region='us-central1', tier='basic')\n"
+                "  Standard tier includes cross-zone HA replication and costs ~1.3-2x Basic.\n"
+                "  Pricing is per GiB-hour of provisioned capacity × capacity_gb × hours."
+            ),
         }
         annotated_services = []
         for svc in services:
