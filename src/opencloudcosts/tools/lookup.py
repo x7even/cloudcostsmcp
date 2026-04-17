@@ -687,7 +687,8 @@ def register_lookup_tools(mcp: Any) -> None:
 
         Common service aliases (AWS):
           cloudwatch, data_transfer, rds, lambda, elb, cloudfront, route53,
-          dynamodb, efs, elasticache, sqs, sns, redshift, cloudtrail, backup
+          dynamodb, efs, elasticache, sqs, sns, redshift, cloudtrail, backup,
+          sagemaker, fargate, ecs, bedrock
 
         Example filters:
           CloudWatch metrics: {"group": "Metric"}
@@ -696,12 +697,20 @@ def register_lookup_tools(mcp: Any) -> None:
                                           "toRegionCode": "eu-west-1"}
           RDS MySQL: {"databaseEngine": "MySQL", "instanceType": "db.r5.large"}
           Lambda: {"group": "AWS-Lambda-Duration"}
+          SageMaker training: {"instanceType": "ml.m5.xlarge-Training"}
+          SageMaker by component: {"component": "Training"}
 
         Data transfer (inter-region egress):
           get_service_price(provider="aws", service="data_transfer", region="us-east-1",
                             filters={"fromRegionCode": "us-east-1", "toRegionCode": "eu-west-1"})
           # Returns tiered egress rates (first 10TB, next 40TB, etc.)
           # Note: AWS charges based on the source region; set region= to the source.
+
+        SageMaker instance pricing:
+          get_service_price(provider="aws", service="sagemaker", region="us-east-1",
+                            filters={"instanceType": "ml.m5.xlarge-Training"})
+          # Suffix -Training, -Hosting, or -Notebook must be appended to instanceType.
+          # Or use: filters={"component": "Training"} to list all training prices.
 
         Args:
             provider: Cloud provider — "aws" (GCP generic service pricing coming soon)
@@ -1030,6 +1039,241 @@ def register_lookup_tools(mcp: Any) -> None:
         result["provider"] = provider
         result["region_name"] = _rdn(provider, region)
         return result
+
+    # -----------------------------------------------------------------------
+    # Fargate pricing
+    # -----------------------------------------------------------------------
+
+    # Bedrock model alias map — slug -> AWS catalog name
+    _BEDROCK_MODEL_ALIASES: dict[str, str] = {
+        "claude-3-5-sonnet": "Claude 3.5 Sonnet",
+        "claude-3-5-haiku": "Claude 3.5 Haiku",
+        "claude-3-7-sonnet": "Claude 3.7 Sonnet",
+        "claude-3-opus": "Claude 3 Opus",
+        "claude-3-sonnet": "Claude 3 Sonnet",
+        "claude-3-haiku": "Claude 3 Haiku",
+        "nova-pro": "Nova Pro",
+        "nova-lite": "Nova Lite",
+        "nova-micro": "Nova Micro",
+        "llama-3-1-70b": "Llama 3.1 70B",
+        "llama-3-1-8b": "Llama 3.1 8B",
+        "llama-3-2-90b": "Llama 3.2 90B",
+        "llama-3-2-11b": "Llama 3.2 11B",
+        "llama-3-2-3b": "Llama 3.2 3B",
+        "llama-3-2-1b": "Llama 3.2 1B",
+        "mistral-large": "Mistral Large",
+        "mistral-small": "Mistral Small",
+        "titan-text-express": "Titan Text G1 - Express",
+        "titan-text-lite": "Titan Text G1 - Lite",
+        "titan-text-premier": "Titan Text Premier",
+        "titan-embeddings": "Titan Embeddings G1 - Text",
+        "cohere-command-r": "Cohere Command R",
+        "cohere-command-r-plus": "Cohere Command R+",
+        "gemma-2-27b": "Gemma 2 27B IT",
+        "gemma-2-9b": "Gemma 2 9B IT",
+        "jamba-1-5-large": "AI21 Jamba 1.5 Large",
+    }
+
+    @mcp.tool()
+    async def get_fargate_price(
+        ctx: Context,
+        region: str,
+        vcpu: float,
+        memory_gb: float,
+        os: str = "Linux",
+        hours_per_month: float = 730.0,
+    ) -> dict[str, Any]:
+        """
+        Get AWS Fargate task pricing for a given vCPU + memory configuration.
+
+        Fargate bills per-vCPU-hour and per-GB-hour separately. This tool fetches
+        both rates and combines them into a total hourly and monthly cost.
+
+        Valid task sizes (vCPU -> memory range):
+          0.25 vCPU: 0.5-2 GB | 0.5 vCPU: 1-4 GB | 1 vCPU: 2-8 GB
+          2 vCPU: 4-16 GB | 4 vCPU: 8-30 GB | 8 vCPU: 16-60 GB | 16 vCPU: 32-120 GB
+
+        Args:
+            region: AWS region code, e.g. "us-east-1"
+            vcpu: Task vCPU count (e.g. 0.25, 0.5, 1, 2, 4, 8, 16)
+            memory_gb: Task memory in GB (e.g. 0.5, 2, 4, 8, 16, 30)
+            os: "Linux" (default) or "Windows"
+            hours_per_month: Hours per month the task runs (default 730 = always-on)
+        """
+        pvdr = _providers(ctx).get("aws")
+        if pvdr is None:
+            return {"error": "AWS provider is not configured."}
+
+        if not hasattr(pvdr, "get_service_price"):
+            return {"error": "AWS provider does not support get_service_price."}
+
+        # Build vCPU rate filters
+        vcpu_filters: dict[str, str] = {"cputype": "perCPU"}
+        mem_filters: dict[str, str] = {"memorytype": "perGB"}
+        if os.lower() == "windows":
+            vcpu_filters["operatingSystem"] = "Windows"
+
+        try:
+            vcpu_prices = await pvdr.get_service_price(
+                "fargate", region, vcpu_filters, max_results=5
+            )
+            mem_prices = await pvdr.get_service_price(
+                "fargate", region, mem_filters, max_results=5
+            )
+        except Exception as e:
+            logger.error("get_fargate_price error: %s", e)
+            return {"error": f"API error: {e}"}
+
+        if not vcpu_prices:
+            return {
+                "result": "no_prices_found",
+                "message": f"No Fargate vCPU pricing found in {region} for os={os}.",
+                "tip": "Check region code and os parameter ('Linux' or 'Windows').",
+            }
+        if not mem_prices:
+            return {
+                "result": "no_prices_found",
+                "message": f"No Fargate memory pricing found in {region}.",
+                "tip": "Check region code.",
+            }
+
+        from decimal import Decimal as _D
+        vcpu_rate = vcpu_prices[0].price_per_unit
+        mem_rate = mem_prices[0].price_per_unit
+
+        hourly_total = vcpu_rate * _D(str(vcpu)) + mem_rate * _D(str(memory_gb))
+        monthly_total = hourly_total * _D(str(hours_per_month))
+
+        return {
+            "provider": "aws",
+            "region": region,
+            "os": os,
+            "vcpu": vcpu,
+            "memory_gb": memory_gb,
+            "hours_per_month": hours_per_month,
+            "vcpu_rate_per_hour": f"${vcpu_rate:.6f}",
+            "memory_rate_per_gb_hour": f"${mem_rate:.6f}",
+            "hourly_total": f"${hourly_total:.6f}",
+            "monthly_total": f"${monthly_total:.2f}",
+            "formula": (
+                f"hourly = {vcpu} vCPU * ${vcpu_rate:.6f}/vCPU-hr "
+                f"+ {memory_gb} GB * ${mem_rate:.6f}/GB-hr"
+            ),
+        }
+
+    @mcp.tool()
+    async def get_bedrock_price(
+        ctx: Context,
+        model: str,
+        region: str = "us-east-1",
+        input_tokens: int = 1000000,
+        output_tokens: int = 1000000,
+        mode: str = "on_demand",
+    ) -> dict[str, Any]:
+        """
+        Get AWS Bedrock model inference pricing.
+
+        Bedrock bills per 1,000 tokens (input and output separately). Fetches both
+        rates and calculates total cost for the given monthly token volumes.
+
+        Args:
+            model: Model identifier — canonical name or alias:
+                   Anthropic Claude: "claude-3-5-sonnet", "claude-3-5-haiku",
+                     "claude-3-7-sonnet", "claude-3-opus", "claude-3-sonnet", "claude-3-haiku"
+                   Amazon Nova: "nova-pro", "nova-lite", "nova-micro"
+                   Meta Llama: "llama-3-1-70b", "llama-3-1-8b", "llama-3-2-90b"
+                   Mistral: "mistral-large", "mistral-small"
+                   Pass the full AWS catalog name (e.g. "Claude 3.5 Sonnet") to skip alias lookup.
+            region: AWS region (default "us-east-1"). Not all models are in all regions.
+            input_tokens: Monthly input token volume (default 1,000,000 = 1M tokens)
+            output_tokens: Monthly output token volume (default 1,000,000 = 1M tokens)
+            mode: "on_demand" (default) or "batch" (50% discount, async only)
+        """
+        pvdr = _providers(ctx).get("aws")
+        if pvdr is None:
+            return {"error": "AWS provider is not configured."}
+
+        if not hasattr(pvdr, "get_service_price"):
+            return {"error": "AWS provider does not support get_service_price."}
+
+        # Resolve alias
+        catalog_name = _BEDROCK_MODEL_ALIASES.get(model.lower(), model)
+
+        if mode == "batch":
+            input_inference_type = "input tokens batch"
+            output_inference_type = "output tokens batch"
+        else:
+            input_inference_type = "Input tokens"
+            output_inference_type = "Output tokens"
+
+        input_filters: dict[str, str] = {
+            "model": catalog_name,
+            "inferenceType": input_inference_type,
+        }
+        output_filters: dict[str, str] = {
+            "model": catalog_name,
+            "inferenceType": output_inference_type,
+        }
+
+        try:
+            input_prices = await pvdr.get_service_price(
+                "bedrock", region, input_filters, max_results=5
+            )
+            output_prices = await pvdr.get_service_price(
+                "bedrock", region, output_filters, max_results=5
+            )
+        except Exception as e:
+            logger.error("get_bedrock_price error: %s", e)
+            return {"error": f"API error: {e}"}
+
+        if not input_prices:
+            return {
+                "result": "no_prices_found",
+                "model": catalog_name,
+                "region": region,
+                "mode": mode,
+                "message": (
+                    f"No Bedrock input token pricing found for model '{catalog_name}' "
+                    f"in {region} (mode={mode})."
+                ),
+                "tip": (
+                    "Check model name and region. Not all models are available in all regions. "
+                    "Pass the full AWS catalog name (e.g. 'Claude 3.5 Sonnet') to bypass alias lookup."
+                ),
+            }
+        if not output_prices:
+            return {
+                "result": "no_prices_found",
+                "model": catalog_name,
+                "region": region,
+                "mode": mode,
+                "message": (
+                    f"No Bedrock output token pricing found for model '{catalog_name}' "
+                    f"in {region} (mode={mode})."
+                ),
+            }
+
+        from decimal import Decimal as _D
+        input_rate = input_prices[0].price_per_unit   # price per 1k tokens
+        output_rate = output_prices[0].price_per_unit
+
+        input_cost = input_rate * _D(str(input_tokens)) / _D("1000")
+        output_cost = output_rate * _D(str(output_tokens)) / _D("1000")
+        total_cost = input_cost + output_cost
+
+        return {
+            "model": catalog_name,
+            "region": region,
+            "mode": mode,
+            "input_rate_per_1k_tokens": f"${input_rate:.6f}",
+            "output_rate_per_1k_tokens": f"${output_rate:.6f}",
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "monthly_input_cost": f"${input_cost:.4f}",
+            "monthly_output_cost": f"${output_cost:.4f}",
+            "monthly_total_cost": f"${total_cost:.4f}",
+            "note": "Prices are per 1,000 tokens. Batch mode is 50% cheaper but async-only.",
+        }
 
     @mcp.tool()
     async def refresh_cache(

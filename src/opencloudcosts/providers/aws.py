@@ -107,6 +107,8 @@ _SERVICE_ALIASES: dict[str, str] = {
     "glue": "AWSGlue",
     "athena": "AmazonAthena",
     "sagemaker": "AmazonSageMaker",
+    "fargate": "AmazonECS",
+    "bedrock": "AmazonBedrock",
     # NAT Gateway pricing lives under AmazonEC2, not AmazonVPC
     "nat_gateway": "AmazonEC2",
     "natgateway": "AmazonEC2",

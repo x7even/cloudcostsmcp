@@ -637,6 +637,13 @@ def register_availability_tools(mcp: Any) -> None:
                 "filters={'group': 'AWS-Lambda-Requests'}) → returns per-request rate. "
                 "Free tier: first 1M requests/month and 400,000 GB-seconds/month are free."
             ),
+            "AmazonSageMaker": (
+                "SageMaker instance pricing uses instanceType with a category suffix: "
+                "Training: get_service_price(service='sagemaker', region='us-east-1', filters={'instanceType': 'ml.m5.xlarge-Training'}) "
+                "Hosting/inference: filters={'instanceType': 'ml.p3.2xlarge-Hosting'} "
+                "Notebook: filters={'instanceType': 'ml.t3.medium-Notebook'} "
+                "Or use component filter: filters={'component': 'Training'} to list all training instance prices."
+            ),
         }
         annotated_services = []
         for svc in services:
