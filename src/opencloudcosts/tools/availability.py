@@ -729,6 +729,24 @@ def register_availability_tools(mcp: Any) -> None:
                 "  gateway_count: number of Cloud NAT gateways billed per hour.\n"
                 "  data_gb: total GB flowing through NAT (both directions) per month."
             ),
+            "CloudArmor": (
+                "Cloud Armor security policy and request evaluation pricing:\n"
+                "  Rates only: get_cloud_armor_price()\n"
+                "  With cost estimate: get_cloud_armor_price(policy_count=3, monthly_requests_millions=50.0)\n"
+                "  policy_count: number of enforced Cloud Armor security policies per month.\n"
+                "  monthly_requests_millions: millions of requests evaluated by Cloud Armor per month.\n"
+                "  Standard tier: $0.75/policy/month + $0.75/million requests.\n"
+                "  Enterprise tier ($3,000/month/project) adds advanced DDoS and threat intelligence."
+            ),
+            "CloudMonitoring": (
+                "Cloud Monitoring custom and external metric ingestion pricing:\n"
+                "  Rates only: get_cloud_monitoring_price()\n"
+                "  With cost estimate: get_cloud_monitoring_price(ingestion_mib=200.0)\n"
+                "  ingestion_mib: MiB of custom/external metrics ingested per month.\n"
+                "  Free tier: first 150 MiB/month per billing account is free.\n"
+                "  Tiered rates: $0.258/MiB (0–100,000), $0.151/MiB (100,001–250,000), $0.062/MiB (>250,000).\n"
+                "  GCP built-in (system) metrics are always free."
+            ),
         }
         annotated_services = []
         for svc in services:

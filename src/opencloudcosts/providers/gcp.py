@@ -58,6 +58,8 @@ _GKE_SERVICE_ID = "CCD8-9BF1-090E"       # Google Kubernetes Engine
 _MEMORYSTORE_SERVICE_ID = "5AF5-2C11-D467"  # Memorystore for Redis
 _VERTEX_SERVICE_ID = "C7E2-9256-1C43"       # Vertex AI
 _BIGQUERY_SERVICE_ID = "24E6-581D-38E5"     # BigQuery
+_CLOUD_ARMOR_SERVICE_ID = "E3D3-8838-A232"  # Cloud Armor (best-effort)
+_CLOUD_MONITORING_SERVICE_ID = "58CD-E7C3-72CA"  # Cloud Monitoring (best-effort)
 
 # GCS storage class -> description substring in SKU catalog
 _GCS_STORAGE_CLASSES: dict[str, str] = {
@@ -1648,6 +1650,181 @@ class GCPProvider:
             "Cloud NAT gateway uptime is billed per hour regardless of traffic. "
             "Data processed includes all bytes flowing through NAT (both directions). "
             "Intra-region traffic is not charged for data processing."
+        )
+        return result
+
+    async def get_cloud_armor_price(
+        self,
+        policy_count: int = 1,
+        monthly_requests_millions: float = 0.0,
+    ) -> dict:
+        """Return Cloud Armor pricing for security policies and request evaluation.
+
+        Attempts live catalog lookup; falls back to published GCP rates if the
+        service ID is unavailable or returns no matching SKUs.
+
+        Args:
+            policy_count: Number of enforced security policies.
+            monthly_requests_millions: Millions of requests evaluated per month.
+        """
+        # Published GCP fallback rates (2024)
+        _FALLBACK_POLICY_RATE = Decimal("0.75")   # per policy per month
+        _FALLBACK_REQUEST_RATE = Decimal("0.75")  # per million requests
+
+        policy_rate: Decimal | None = None
+        request_rate: Decimal | None = None
+        fallback = False
+        catalog_available = True
+
+        try:
+            skus = await self._fetch_skus(_CLOUD_ARMOR_SERVICE_ID)
+        except Exception:
+            catalog_available = False
+            skus = []
+
+        if catalog_available:
+            for sku in skus:
+                desc = sku.get("description", "").lower()
+                if "cloud armor" not in desc:
+                    continue
+                if policy_rate is None and ("policy" in desc or "security policy" in desc):
+                    price = self._sku_price(sku)
+                    if price > 0:
+                        policy_rate = price
+                if request_rate is None and "request" in desc:
+                    price = self._sku_price(sku)
+                    if price > 0:
+                        request_rate = price
+                if policy_rate is not None and request_rate is not None:
+                    break
+
+        if policy_rate is None:
+            policy_rate = _FALLBACK_POLICY_RATE
+            fallback = True
+        if request_rate is None:
+            request_rate = _FALLBACK_REQUEST_RATE
+            if not fallback:
+                fallback = True
+
+        result: dict[str, Any] = {
+            "provider": "gcp",
+            "service": "cloud_armor",
+            "policy_rate_per_month": f"${policy_rate:.2f}/policy/month",
+            "request_rate_per_million": f"${request_rate:.6f}/million requests",
+        }
+
+        if policy_count > 0:
+            policy_cost = policy_rate * Decimal(str(policy_count))
+            result["estimated_policy_cost"] = f"${policy_cost:.2f}"
+
+        if monthly_requests_millions > 0:
+            request_cost = request_rate * Decimal(str(monthly_requests_millions))
+            result["estimated_request_cost"] = f"${request_cost:.2f}"
+
+        if policy_count > 0 or monthly_requests_millions > 0:
+            policy_cost_val = policy_rate * Decimal(str(policy_count))
+            request_cost_val = request_rate * Decimal(str(monthly_requests_millions))
+            result["estimated_total_monthly"] = f"${policy_cost_val + request_cost_val:.2f}"
+
+        if fallback:
+            result["fallback"] = True
+
+        result["note"] = (
+            "Cloud Armor Standard: $0.75/policy/month + $0.75/million requests evaluated. "
+            "Enterprise tier ($3,000/month per project) adds advanced DDoS protection, "
+            "adaptive protection, and threat intelligence — contact GCP for details."
+        )
+        return result
+
+    async def get_cloud_monitoring_price(
+        self,
+        ingestion_mib: float = 0.0,
+    ) -> dict:
+        """Return Cloud Monitoring pricing for custom/external metric ingestion.
+
+        Applies a 150 MiB/month free tier per billing account, then tiered rates.
+        Attempts live catalog lookup; falls back to published GCP rates if unavailable.
+
+        Args:
+            ingestion_mib: MiB of custom or external metrics ingested per month.
+        """
+        # Published GCP fallback rates (2024) — tiered, per MiB
+        _FREE_TIER_MIB = Decimal("150")
+        _TIER1_RATE = Decimal("0.258")   # 0 – 100,000 MiB/month
+        _TIER2_RATE = Decimal("0.151")   # 100,001 – 250,000 MiB/month
+        _TIER3_RATE = Decimal("0.062")   # above 250,000 MiB/month
+        _TIER1_LIMIT = Decimal("100000")
+        _TIER2_LIMIT = Decimal("250000")
+
+        tier1_rate = _TIER1_RATE
+        tier2_rate = _TIER2_RATE
+        tier3_rate = _TIER3_RATE
+        fallback = False
+
+        try:
+            skus = await self._fetch_skus(_CLOUD_MONITORING_SERVICE_ID)
+        except Exception:
+            skus = []
+            fallback = True
+
+        if not fallback:
+            # Search for an ingestion SKU — if found, use the first-tier price
+            sku_matched = False
+            for sku in skus:
+                desc = sku.get("description", "").lower()
+                # Real SKU description: "Workload Metrics Samples Ingested"
+                if ("monitoring" in desc or "workload metric" in desc) and ("metric" in desc or "ingest" in desc):
+                    price = self._sku_price(sku)
+                    if price > 0:
+                        tier1_rate = price
+                        sku_matched = True
+                        break
+            if not sku_matched:
+                fallback = True
+
+        result: dict[str, Any] = {
+            "provider": "gcp",
+            "service": "cloud_monitoring",
+            "free_tier_mib": 150,
+            "tier1_rate_per_mib": f"${tier1_rate:.3f}/MiB (0–100,000 MiB/month)",
+            "tier2_rate_per_mib": f"${tier2_rate:.3f}/MiB (100,001–250,000 MiB/month)",
+            "tier3_rate_per_mib": f"${tier3_rate:.3f}/MiB (above 250,000 MiB/month)",
+        }
+
+        if ingestion_mib > 0:
+            total_mib = Decimal(str(ingestion_mib))
+            # Apply free tier
+            billable_mib = max(Decimal("0"), total_mib - _FREE_TIER_MIB)
+
+            cost = Decimal("0")
+            remaining = billable_mib
+
+            # Tier 1: up to 100,000 MiB
+            tier1_billable = min(remaining, _TIER1_LIMIT)
+            cost += tier1_billable * tier1_rate
+            remaining -= tier1_billable
+
+            # Tier 2: 100,001 – 250,000 MiB
+            if remaining > 0:
+                tier2_billable = min(remaining, _TIER2_LIMIT - _TIER1_LIMIT)
+                cost += tier2_billable * tier2_rate
+                remaining -= tier2_billable
+
+            # Tier 3: above 250,000 MiB
+            if remaining > 0:
+                cost += remaining * tier3_rate
+
+            result["ingestion_mib"] = ingestion_mib
+            result["estimated_monthly_cost"] = f"${cost:.2f}"
+
+        if fallback:
+            result["fallback"] = True
+
+        result["note"] = (
+            "Cloud Monitoring: first 150 MiB/month of custom and external metrics per "
+            "billing account is free. Chargeable volume uses tiered rates: "
+            "$0.258/MiB (0–100,000), $0.151/MiB (100,001–250,000), $0.062/MiB (above 250,000). "
+            "GCP built-in metrics are always free."
         )
         return result
 

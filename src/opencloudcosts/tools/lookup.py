@@ -431,6 +431,12 @@ def register_lookup_tools(mcp: Any) -> None:
             "cloud-cdn": "CloudCDN",
             "nat": "CloudNAT",
             "cloud-nat": "CloudNAT",
+            "armor": "CloudArmor",
+            "cloud-armor": "CloudArmor",
+            "cloudarmor": "CloudArmor",
+            "monitoring": "CloudMonitoring",
+            "cloud-monitoring": "CloudMonitoring",
+            "stackdriver": "CloudMonitoring",
         }
         resolved_service = _SERVICE_ALIASES.get(service.lower(), service)
 
@@ -1720,6 +1726,77 @@ def register_lookup_tools(mcp: Any) -> None:
             )
         except Exception as e:
             logger.error("get_cloud_nat_price error: %s", e)
+            return {"error": f"Pricing lookup failed: {e}"}
+        return result
+
+    @mcp.tool()
+    async def get_cloud_armor_price(
+        ctx: Context,
+        policy_count: int = 1,
+        monthly_requests_millions: float = 0.0,
+    ) -> dict[str, Any]:
+        """Get GCP Cloud Armor pricing for security policies and request evaluation.
+
+        Returns per-policy monthly rate and per-million-requests rate.
+        Pass quantities to get monthly cost estimates.
+
+        Uses published GCP rates as a fallback if the billing catalog is unavailable
+        (same fallback-first pattern as Cloud NAT and Cloud CDN).
+
+        Args:
+            policy_count: Number of enforced Cloud Armor security policies (default 1).
+            monthly_requests_millions: Millions of requests evaluated per month (default 0).
+
+        Examples:
+            get_cloud_armor_price()
+            get_cloud_armor_price(policy_count=3, monthly_requests_millions=50.0)
+        """
+        pvdr = _providers(ctx).get("gcp")
+        if pvdr is None:
+            return {"error": "GCP provider is not configured."}
+        if not hasattr(pvdr, "get_cloud_armor_price"):
+            return {"error": "Cloud Armor pricing not available."}
+        try:
+            result = await pvdr.get_cloud_armor_price(
+                policy_count=policy_count,
+                monthly_requests_millions=monthly_requests_millions,
+            )
+        except Exception as e:
+            logger.error("get_cloud_armor_price error: %s", e)
+            return {"error": f"Pricing lookup failed: {e}"}
+        return result
+
+    @mcp.tool()
+    async def get_cloud_monitoring_price(
+        ctx: Context,
+        ingestion_mib: float = 0.0,
+    ) -> dict[str, Any]:
+        """Get GCP Cloud Monitoring pricing for custom and external metric ingestion.
+
+        Returns tiered per-MiB rates. The first 150 MiB/month per billing account
+        is free. Pass ingestion_mib to get a monthly cost estimate with free tier applied.
+
+        Uses published GCP rates as a fallback if the billing catalog is unavailable.
+
+        Args:
+            ingestion_mib: MiB of custom/external metrics ingested per month (default 0).
+
+        Examples:
+            get_cloud_monitoring_price()
+            get_cloud_monitoring_price(ingestion_mib=200.0)
+            get_cloud_monitoring_price(ingestion_mib=150000.0)
+        """
+        pvdr = _providers(ctx).get("gcp")
+        if pvdr is None:
+            return {"error": "GCP provider is not configured."}
+        if not hasattr(pvdr, "get_cloud_monitoring_price"):
+            return {"error": "Cloud Monitoring pricing not available."}
+        try:
+            result = await pvdr.get_cloud_monitoring_price(
+                ingestion_mib=ingestion_mib,
+            )
+        except Exception as e:
+            logger.error("get_cloud_monitoring_price error: %s", e)
             return {"error": f"Pricing lookup failed: {e}"}
         return result
 
