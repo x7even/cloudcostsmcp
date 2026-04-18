@@ -423,6 +423,14 @@ def register_lookup_tools(mcp: Any) -> None:
             "vertex-ai": "VertexAI",
             "vertexai": "VertexAI",
             "gemini": "Gemini",
+            "load-balancer": "CloudLoadBalancing",
+            "loadbalancer": "CloudLoadBalancing",
+            "lb": "CloudLoadBalancing",
+            "cloud-lb": "CloudLoadBalancing",
+            "cdn": "CloudCDN",
+            "cloud-cdn": "CloudCDN",
+            "nat": "CloudNAT",
+            "cloud-nat": "CloudNAT",
         }
         resolved_service = _SERVICE_ALIASES.get(service.lower(), service)
 
@@ -1590,6 +1598,130 @@ def register_lookup_tools(mcp: Any) -> None:
         except Exception as e:
             logger.error("get_gemini_price error: %s", e)
             return {"error": f"Pricing lookup failed: {e}"}
+
+    @mcp.tool()
+    async def get_cloud_lb_price(
+        ctx: Context,
+        region: str = "us-central1",
+        lb_type: str = "https",
+        rule_count: int = 1,
+        data_gb: float = 0.0,
+        hours_per_month: float = 730.0,
+    ) -> dict[str, Any]:
+        """Get GCP Cloud Load Balancing pricing for forwarding rules and data processed.
+
+        Returns per-rule hourly rates and per-GB data-processed rates for the
+        specified load balancer type. Pass quantities to get monthly cost estimates.
+
+        Args:
+            region: GCP region, e.g. "us-central1" (default), "europe-west1".
+            lb_type: LB type — "https" (External HTTP(S), default), "tcp" (TCP Proxy),
+                     "ssl" (SSL Proxy), "network" (L4 Network LB), "internal" (Internal LB).
+            rule_count: Number of forwarding rules (default 1).
+            data_gb: GB of data processed per month (omit for rule cost only).
+            hours_per_month: Hours active per month (default 730 = always-on).
+
+        Examples:
+            get_cloud_lb_price(region="us-central1", lb_type="https", rule_count=2)
+            get_cloud_lb_price(region="us-central1", lb_type="network", rule_count=3, data_gb=1000.0)
+            get_cloud_lb_price(region="europe-west1", lb_type="tcp", hours_per_month=730)
+        """
+        pvdr = _providers(ctx).get("gcp")
+        if pvdr is None:
+            return {"error": "GCP provider is not configured."}
+        if not hasattr(pvdr, "get_cloud_lb_price"):
+            return {"error": "Cloud Load Balancing pricing not available."}
+        try:
+            result = await pvdr.get_cloud_lb_price(
+                region=region,
+                lb_type=lb_type,
+                rule_count=rule_count,
+                data_gb=data_gb,
+                hours_per_month=hours_per_month,
+            )
+        except Exception as e:
+            logger.error("get_cloud_lb_price error: %s", e)
+            return {"error": f"Pricing lookup failed: {e}"}
+        return result
+
+    @mcp.tool()
+    async def get_cloud_cdn_price(
+        ctx: Context,
+        region: str = "us-central1",
+        egress_gb: float = 0.0,
+        cache_fill_gb: float = 0.0,
+    ) -> dict[str, Any]:
+        """Get GCP Cloud CDN pricing for cache egress and cache fill.
+
+        Returns egress and cache fill rates. Pass quantities to get monthly cost
+        estimates. Egress rates vary by destination region.
+
+        Args:
+            region: GCP region for destination / CDN PoP, e.g. "us-central1" (default).
+            egress_gb: GB egressed from CDN to end users per month.
+            cache_fill_gb: GB filled into CDN from origin per month.
+
+        Examples:
+            get_cloud_cdn_price(region="us-central1")
+            get_cloud_cdn_price(region="us-central1", egress_gb=5000.0, cache_fill_gb=500.0)
+            get_cloud_cdn_price(region="europe-west1", egress_gb=1000.0)
+        """
+        pvdr = _providers(ctx).get("gcp")
+        if pvdr is None:
+            return {"error": "GCP provider is not configured."}
+        if not hasattr(pvdr, "get_cloud_cdn_price"):
+            return {"error": "Cloud CDN pricing not available."}
+        try:
+            result = await pvdr.get_cloud_cdn_price(
+                region=region,
+                egress_gb=egress_gb,
+                cache_fill_gb=cache_fill_gb,
+            )
+        except Exception as e:
+            logger.error("get_cloud_cdn_price error: %s", e)
+            return {"error": f"Pricing lookup failed: {e}"}
+        return result
+
+    @mcp.tool()
+    async def get_cloud_nat_price(
+        ctx: Context,
+        region: str = "us-central1",
+        gateway_count: int = 1,
+        data_gb: float = 0.0,
+        hours_per_month: float = 730.0,
+    ) -> dict[str, Any]:
+        """Get GCP Cloud NAT pricing for gateway uptime and data processed.
+
+        Returns per-gateway hourly rates and per-GB data-processed rates.
+        Pass quantities to get monthly cost estimates.
+
+        Args:
+            region: GCP region, e.g. "us-central1" (default), "europe-west1".
+            gateway_count: Number of Cloud NAT gateways (default 1).
+            data_gb: GB processed through NAT per month.
+            hours_per_month: Hours active per month (default 730 = always-on).
+
+        Examples:
+            get_cloud_nat_price(region="us-central1")
+            get_cloud_nat_price(region="us-central1", gateway_count=2, data_gb=500.0)
+            get_cloud_nat_price(region="europe-west1", gateway_count=1, data_gb=100.0, hours_per_month=730)
+        """
+        pvdr = _providers(ctx).get("gcp")
+        if pvdr is None:
+            return {"error": "GCP provider is not configured."}
+        if not hasattr(pvdr, "get_cloud_nat_price"):
+            return {"error": "Cloud NAT pricing not available."}
+        try:
+            result = await pvdr.get_cloud_nat_price(
+                region=region,
+                gateway_count=gateway_count,
+                data_gb=data_gb,
+                hours_per_month=hours_per_month,
+            )
+        except Exception as e:
+            logger.error("get_cloud_nat_price error: %s", e)
+            return {"error": f"Pricing lookup failed: {e}"}
+        return result
 
     @mcp.tool()
     async def refresh_cache(

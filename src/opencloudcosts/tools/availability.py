@@ -702,6 +702,33 @@ def register_availability_tools(mcp: Any) -> None:
                 "  Returns input and output rates per character or per token.\n"
                 "  Most Gemini SKUs are global or in us-central1 — try that region if others return nothing."
             ),
+            "CloudLoadBalancing": (
+                "Cloud Load Balancing forwarding-rule and data-processed pricing:\n"
+                "  Rates only: get_cloud_lb_price(region='us-central1', lb_type='https')\n"
+                "  With cost estimate: get_cloud_lb_price(region='us-central1', lb_type='https', rule_count=2, data_gb=1000.0)\n"
+                "  TCP Proxy: get_cloud_lb_price(region='us-central1', lb_type='tcp', rule_count=1)\n"
+                "  Network (L4): get_cloud_lb_price(region='us-central1', lb_type='network', rule_count=3, data_gb=500.0)\n"
+                "  lb_type options: 'https' (External HTTP(S)), 'tcp' (TCP Proxy), 'ssl' (SSL Proxy),\n"
+                "    'network' (L4 Network LB), 'internal' (Internal LB).\n"
+                "  Forwarding rules billed per hour; data processed billed per GB."
+            ),
+            "CloudCDN": (
+                "Cloud CDN cache egress and cache fill pricing:\n"
+                "  Rates only: get_cloud_cdn_price(region='us-central1')\n"
+                "  With cost estimate: get_cloud_cdn_price(region='us-central1', egress_gb=5000.0, cache_fill_gb=500.0)\n"
+                "  EU destination: get_cloud_cdn_price(region='europe-west1', egress_gb=1000.0)\n"
+                "  egress_gb: GB delivered from CDN to end users per month.\n"
+                "  cache_fill_gb: GB fetched from origin into CDN cache per month.\n"
+                "  Egress rates vary by destination region (NA/EU cheapest). First 10 GiB/month free."
+            ),
+            "CloudNAT": (
+                "Cloud NAT gateway uptime and data-processed pricing:\n"
+                "  Rates only: get_cloud_nat_price(region='us-central1')\n"
+                "  With cost estimate: get_cloud_nat_price(region='us-central1', gateway_count=2, data_gb=500.0)\n"
+                "  get_cloud_nat_price(region='europe-west1', gateway_count=1, data_gb=100.0, hours_per_month=730)\n"
+                "  gateway_count: number of Cloud NAT gateways billed per hour.\n"
+                "  data_gb: total GB flowing through NAT (both directions) per month."
+            ),
         }
         annotated_services = []
         for svc in services:

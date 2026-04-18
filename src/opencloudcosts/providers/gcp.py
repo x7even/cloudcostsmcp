@@ -1368,6 +1368,289 @@ class GCPProvider:
             ),
         }
 
+    # ------------------------------------------------------------------
+    # Cloud Load Balancing / Cloud CDN / Cloud NAT pricing
+    # All three use Compute Engine service ID, so _fetch_skus hits the
+    # already-cached payload — no extra HTTP calls.
+    # ------------------------------------------------------------------
+
+    async def _build_networking_price_index(
+        self, region: str
+    ) -> dict[str, Decimal]:
+        """Build a price index for LB / CDN / NAT SKUs from Compute Engine catalog.
+
+        Filters to descriptions that mention load balancing, CDN, or NAT so the
+        index stays small. Returns a dict keyed by lowercase SKU description.
+        """
+        cache_key = f"gcp:networking_price_index:{region}"
+        cached = await self._cache.get_metadata(cache_key)
+        if cached is not None:
+            return {k: Decimal(v) for k, v in cached.items()}
+
+        # Reuses the already-cached Compute Engine SKU payload.
+        skus = await self._fetch_skus(_COMPUTE_SERVICE_ID)
+
+        _NETWORKING_KEYWORDS = ("load bal", "tcp proxy", "ssl proxy", "cloud cdn", "cloud nat", "nat gateway")
+
+        index: dict[str, Decimal] = {}
+        for sku in skus:
+            service_regions = sku.get("serviceRegions", [])
+            if region not in service_regions and "global" not in service_regions:
+                continue
+
+            desc = sku.get("description", "")
+            desc_lower = desc.lower()
+            if not any(kw in desc_lower for kw in _NETWORKING_KEYWORDS):
+                continue
+
+            price = self._sku_price(sku)
+            if price > 0:
+                index[desc_lower] = price
+
+        serialisable = {k: str(v) for k, v in index.items()}
+        await self._cache.set_metadata(
+            cache_key,
+            serialisable,
+            ttl_hours=self._settings.cache_ttl_hours,
+        )
+        return index
+
+    async def get_cloud_lb_price(
+        self,
+        region: str = "us-central1",
+        lb_type: str = "https",
+        rule_count: int = 1,
+        data_gb: float = 0.0,
+        hours_per_month: float = 730.0,
+    ) -> dict:
+        """Return Cloud Load Balancing pricing for forwarding rules and data processed.
+
+        Args:
+            region: GCP region, e.g. "us-central1".
+            lb_type: Load balancer type — "https" (External HTTP(S), default),
+                     "tcp" (TCP Proxy), "ssl" (SSL Proxy), "network" (L4 Network LB),
+                     "internal" (Internal LB, billed as network forwarding rules).
+            rule_count: Number of forwarding rules.
+            data_gb: GB of data processed per month (omit for rule cost only).
+            hours_per_month: Hours active per month (default 730 = always-on).
+        """
+        index = await self._build_networking_price_index(region)
+
+        # Documented GCP list price fallback: $0.008/hr per forwarding rule
+        _FALLBACK_RULE_RATE = Decimal("0.008")
+        # Documented GCP data-processed fallback: $0.008/GB (HTTPS LB)
+        _FALLBACK_DATA_RATE = Decimal("0.008")
+
+        lb_type_lower = lb_type.lower()
+
+        rule_rate: Decimal | None = None
+        data_rate: Decimal | None = None
+        fallback = False
+
+        for desc, price in index.items():
+            # Match rule rate by lb_type
+            if rule_rate is None:
+                if lb_type_lower in ("https", "http"):
+                    if ("external http" in desc or "https load balancing rule" in desc) and "rule" in desc:
+                        rule_rate = price
+                elif lb_type_lower in ("tcp",):
+                    if "tcp proxy" in desc and "rule" in desc:
+                        rule_rate = price
+                elif lb_type_lower in ("ssl",):
+                    if "ssl proxy" in desc and "rule" in desc:
+                        rule_rate = price
+                elif lb_type_lower in ("network", "internal"):
+                    if "network load balancing" in desc and "forwarding rule" in desc:
+                        rule_rate = price
+
+            # Match data-processed rate
+            if data_rate is None:
+                if "data processed by" in desc and "load bal" in desc:
+                    data_rate = price
+
+        if rule_rate is None:
+            rule_rate = _FALLBACK_RULE_RATE
+            fallback = True
+        if data_rate is None:
+            data_rate = _FALLBACK_DATA_RATE
+
+        rule_monthly = rule_rate * Decimal(str(rule_count)) * Decimal(str(hours_per_month))
+        data_cost = data_rate * Decimal(str(data_gb))
+        total = rule_monthly + data_cost
+
+        result: dict[str, Any] = {
+            "provider": "gcp",
+            "region": region,
+            "service": "cloud_load_balancing",
+            "lb_type": lb_type,
+            "rule_count": rule_count,
+            "rule_rate_per_hr": f"${rule_rate:.6f}/hr",
+            "data_processed_rate_per_gb": f"${data_rate:.6f}/GB",
+            "monthly_rule_cost": f"${rule_monthly:.2f}",
+        }
+
+        if data_gb > 0:
+            result["data_gb"] = data_gb
+            result["monthly_data_cost"] = f"${data_cost:.2f}"
+            result["monthly_total"] = f"${total:.2f}"
+
+        if fallback:
+            result["fallback"] = True
+
+        result["note"] = (
+            "Cloud Load Balancing: forwarding rules are billed per hour. "
+            "First 5 rules on an LB are each billed separately; additional rules at reduced rate. "
+            "Data processed (ingress + egress) is billed per GB. "
+            "Internal LB pricing differs — consult GCP docs for internal forwarding rule rates."
+        )
+        return result
+
+    async def get_cloud_cdn_price(
+        self,
+        region: str = "us-central1",
+        egress_gb: float = 0.0,
+        cache_fill_gb: float = 0.0,
+    ) -> dict:
+        """Return Cloud CDN pricing for cache egress and cache fill.
+
+        Args:
+            region: GCP region for destination/origin, e.g. "us-central1".
+            egress_gb: GB egressed from CDN to end users per month.
+            cache_fill_gb: GB filled into CDN from origin per month.
+        """
+        index = await self._build_networking_price_index(region)
+
+        # Documented GCP list price fallback: $0.02/GB egress (NA destination)
+        _FALLBACK_EGRESS_RATE = Decimal("0.02")
+        # Documented GCP list price fallback: $0.01/GB cache fill
+        _FALLBACK_FILL_RATE = Decimal("0.01")
+
+        egress_rate: Decimal | None = None
+        fill_rate: Decimal | None = None
+        fallback = False
+
+        for desc, price in index.items():
+            if egress_rate is None and "cloud cdn cache egress" in desc:
+                egress_rate = price
+            if fill_rate is None and "cloud cdn cache fill" in desc:
+                fill_rate = price
+            if egress_rate is not None and fill_rate is not None:
+                break
+
+        if egress_rate is None:
+            egress_rate = _FALLBACK_EGRESS_RATE
+            fallback = True
+        if fill_rate is None:
+            fill_rate = _FALLBACK_FILL_RATE
+            if not fallback:
+                fallback = True
+
+        egress_cost = egress_rate * Decimal(str(egress_gb))
+        fill_cost = fill_rate * Decimal(str(cache_fill_gb))
+        total = egress_cost + fill_cost
+
+        result: dict[str, Any] = {
+            "provider": "gcp",
+            "region": region,
+            "service": "cloud_cdn",
+            "egress_rate_per_gb": f"${egress_rate:.6f}/GB",
+            "cache_fill_rate_per_gb": f"${fill_rate:.6f}/GB",
+        }
+
+        if egress_gb > 0:
+            result["egress_gb"] = egress_gb
+            result["monthly_egress_cost"] = f"${egress_cost:.2f}"
+
+        if cache_fill_gb > 0:
+            result["cache_fill_gb"] = cache_fill_gb
+            result["monthly_cache_fill_cost"] = f"${fill_cost:.2f}"
+
+        if egress_gb > 0 or cache_fill_gb > 0:
+            result["monthly_total"] = f"${total:.2f}"
+
+        if fallback:
+            result["fallback"] = True
+
+        result["note"] = (
+            "Cloud CDN egress rates vary by destination region (NA/EU cheapest, "
+            "APAC/Oceania/LATAM/ME/Africa higher). Cache fill (origin → CDN) is "
+            "charged at network egress rates. First 10 GiB/month CDN egress is free."
+        )
+        return result
+
+    async def get_cloud_nat_price(
+        self,
+        region: str = "us-central1",
+        gateway_count: int = 1,
+        data_gb: float = 0.0,
+        hours_per_month: float = 730.0,
+    ) -> dict:
+        """Return Cloud NAT pricing for gateway uptime and data processed.
+
+        Args:
+            region: GCP region, e.g. "us-central1".
+            gateway_count: Number of Cloud NAT gateways.
+            data_gb: GB processed through NAT per month.
+            hours_per_month: Hours active per month (default 730 = always-on).
+        """
+        index = await self._build_networking_price_index(region)
+
+        # Documented GCP list price fallback: $0.044/hr per NAT gateway
+        _FALLBACK_GATEWAY_RATE = Decimal("0.044")
+        # Documented GCP list price fallback: $0.045/GB data processed
+        _FALLBACK_DATA_RATE = Decimal("0.045")
+
+        gateway_rate: Decimal | None = None
+        data_rate: Decimal | None = None
+        fallback = False
+
+        for desc, price in index.items():
+            if gateway_rate is None and "cloud nat gateway" in desc:
+                gateway_rate = price
+            if data_rate is None and "cloud nat" in desc and (
+                "data processed" in desc or "nat gateway data" in desc
+            ):
+                data_rate = price
+            if gateway_rate is not None and data_rate is not None:
+                break
+
+        if gateway_rate is None:
+            gateway_rate = _FALLBACK_GATEWAY_RATE
+            fallback = True
+        if data_rate is None:
+            data_rate = _FALLBACK_DATA_RATE
+            if not fallback:
+                fallback = True
+
+        gateway_monthly = gateway_rate * Decimal(str(gateway_count)) * Decimal(str(hours_per_month))
+        data_cost = data_rate * Decimal(str(data_gb))
+        total = gateway_monthly + data_cost
+
+        result: dict[str, Any] = {
+            "provider": "gcp",
+            "region": region,
+            "service": "cloud_nat",
+            "gateway_count": gateway_count,
+            "gateway_rate_per_hr": f"${gateway_rate:.6f}/hr",
+            "data_processed_rate_per_gb": f"${data_rate:.6f}/GB",
+            "monthly_gateway_cost": f"${gateway_monthly:.2f}",
+        }
+
+        if data_gb > 0:
+            result["data_gb"] = data_gb
+            result["monthly_data_cost"] = f"${data_cost:.2f}"
+            result["monthly_total"] = f"${total:.2f}"
+
+        if fallback:
+            result["fallback"] = True
+
+        result["note"] = (
+            "Cloud NAT gateway uptime is billed per hour regardless of traffic. "
+            "Data processed includes all bytes flowing through NAT (both directions). "
+            "Intra-region traffic is not charged for data processing."
+        )
+        return result
+
     async def get_effective_price(
         self,
         service: str,
