@@ -186,6 +186,15 @@ class AzureProvider:
             if p:
                 prices.append(p)
 
+        # Reservation prices from the API are the total upfront/annual cost, not per-hour.
+        # Convert to per-hour so all terms are comparable.
+        if term == PricingTerm.RESERVED_1YR:
+            hours = Decimal("8760")
+            prices = [p.model_copy(update={"price_per_unit": p.price_per_unit / hours}) for p in prices]
+        elif term == PricingTerm.RESERVED_3YR:
+            hours = Decimal("26280")
+            prices = [p.model_copy(update={"price_per_unit": p.price_per_unit / hours}) for p in prices]
+
         # Sort by price ascending so the cheapest canonical result appears first
         prices.sort(key=lambda p: p.price_per_unit)
 

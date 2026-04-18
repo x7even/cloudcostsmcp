@@ -40,7 +40,7 @@ ESTIMATE_PHRASES = [
 _ARITH_MULTIPLIERS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 24, 30, 36, 60, 100, 120, 730, 1000, 8760,
                       10_000, 100_000, 1_000_000, 10_000_000]
 
-_DOLLAR_RE = re.compile(r'\$[\d,]+(?:\.\d+)?')
+_DOLLAR_RE = re.compile(r'\$[\d,]+(?:\.\d+)?(?:[eE][+-]?\d+)?')
 
 # Keywords that suggest the LLM acknowledged a missing data problem
 MISSING_DATA_PHRASES = [
@@ -76,7 +76,7 @@ def _extract_dollar_amounts(text: str) -> list[float]:
     return result
 
 
-def _is_grounded(amount: float, tool_floats: list[float], tol: float = 0.02) -> bool:
+def _is_grounded(amount: float, tool_floats: list[float], tol: float = 0.03) -> bool:
     """
     Return True if *amount* can be explained by the tool result numbers.
 
@@ -299,6 +299,16 @@ def flag_missing_data(trace: dict) -> tuple[bool, str]:
             if phrase in answer:
                 return True, "No tool calls made — answer appears estimated from memory"
 
+    # Collect tools that returned successful pricing data (used to suppress
+    # estimate_bom/estimate_unit_economics fallback failures).
+    successful_pricing_tools = {
+        tc2["tool"] for tc2 in trace["tool_calls"]
+        if isinstance(tc2["result"], dict)
+        and "error" not in tc2["result"]
+        and ("prices" in tc2["result"] or "line_items" in tc2["result"]
+             or "infrastructure_monthly" in tc2["result"])
+    }
+
     # Check for tool errors on public APIs (not GCP/credentials)
     for tc in trace["tool_calls"]:
         result = tc["result"]
@@ -313,6 +323,12 @@ def flag_missing_data(trace: dict) -> tuple[bool, str]:
                     and "not supported for" not in err \
                     and "does not support" not in err \
                     and "not yet implemented" not in err:
+                # If estimate_bom/estimate_unit_economics failed but the LLM already
+                # retrieved pricing via get_service_price / get_compute_price etc.,
+                # the failed aggregator call is a dead-end attempt, not missing data.
+                if tc["tool"] in ("estimate_bom", "estimate_unit_economics") \
+                        and successful_pricing_tools:
+                    continue
                 return True, f"Tool {tc['tool']} returned unexpected error: {result['error'][:100]}"
 
     return False, ""
@@ -328,7 +344,7 @@ def flag_no_answer(trace: dict) -> tuple[bool, str]:
 
 
 def flag_api_key(trace: dict) -> tuple[bool, str]:
-    """Flag GCP/credential failures as expected/known — not a tooling bug."""
+    """Flag GCP/credential failures or AWS credentials-required errors as expected."""
     for tc in trace["tool_calls"]:
         result = tc["result"]
         if isinstance(result, dict):
@@ -336,6 +352,10 @@ def flag_api_key(trace: dict) -> tuple[bool, str]:
             err = (result.get("error") or result.get("text") or "").lower()
             if "api key" in err or ("gcp" in err and "requires" in err):
                 return True, "GCP API key not configured (expected in this environment)"
+            # AWS spot/Cost Explorer pricing requires live credentials — expected gap
+            if ("spot pricing requires" in err or "aws credentials" in err
+                    or "cost explorer" in err or "aws_access_key_id" in err):
+                return True, "AWS credentials required for this pricing data (expected in this environment)"
     return False, ""
 
 

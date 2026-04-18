@@ -35,8 +35,8 @@ _AZURE_VM_ITEM = {
 _AZURE_API_RESPONSE = {"Items": [_AZURE_VM_ITEM], "NextPageLink": None}
 
 _AZURE_RESERVED_ITEM = {
-    "retailPrice": 0.116,
-    "unitPrice": 0.116,
+    "retailPrice": 1016.16,   # annual total (API returns total reservation cost, not hourly)
+    "unitPrice": 1016.16,
     "armRegionName": "eastus",
     "armSkuName": "Standard_D4s_v3",
     "productName": "Virtual Machines DSv3 Series",
@@ -44,7 +44,7 @@ _AZURE_RESERVED_ITEM = {
     "meterName": "D4s v3",
     "serviceName": "Virtual Machines",
     "serviceFamily": "Compute",
-    "unitOfMeasure": "1 Hour",
+    "unitOfMeasure": "1 Year",
     "type": "Reservation",
     "currencyCode": "USD",
     "meterId": "test-meter-reserved-id",
@@ -125,7 +125,8 @@ async def test_azure_get_compute_price_reserved_1yr(azure_provider: AzureProvide
 
     assert len(prices) == 1
     assert prices[0].pricing_term == PricingTerm.RESERVED_1YR
-    assert prices[0].price_per_unit == Decimal("0.116")
+    # 1016.16 annual ÷ 8760 hr/yr ≈ $0.116/hr
+    assert abs(prices[0].price_per_unit - Decimal("0.116")) < Decimal("0.001")
 
 
 async def test_azure_get_compute_price_zero_price_filtered(azure_provider: AzureProvider):
