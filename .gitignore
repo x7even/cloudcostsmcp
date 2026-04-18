@@ -42,8 +42,11 @@ htmlcov/
 # Claude Code local state
 .claude/
 
-# Local LLM test harness — results, traces, scratch work
-local-test-harness/
+# Local LLM test harness — exclude run results and local config only
+local-test-harness/results/*
+!local-test-harness/results/.gitkeep
+local-test-harness/.env
+local-test-harness/__pycache__/
 
 # macOS
 .DS_Store
