@@ -420,6 +420,15 @@ def print_report(report: dict, run_dir: Path):
             "AZ": "Azure Simple",
             "AA": "Advanced AWS",
             "MC": "Multi-Cloud 3-way",
+            "GK": "GCP GKE",
+            "GM": "GCP Memorystore",
+            "GB": "GCP BigQuery",
+            "GV": "GCP Vertex AI + Gemini",
+            "GN": "GCP Networking",
+            "GC": "GCP Armor + Monitoring",
+            "GCX": "GCP Complex Stacks",
+            "GGCS": "GCP Cloud Storage",
+            "GSQL": "GCP Cloud SQL",
         }.get(prefix, prefix)
         print(f"\n── {label} ──")
         for pid, r in sorted(items):

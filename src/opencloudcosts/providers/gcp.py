@@ -1392,7 +1392,7 @@ class GCPProvider:
         # Reuses the already-cached Compute Engine SKU payload.
         skus = await self._fetch_skus(_COMPUTE_SERVICE_ID)
 
-        _NETWORKING_KEYWORDS = ("load bal", "tcp proxy", "ssl proxy", "cloud cdn", "cloud nat", "nat gateway")
+        _NETWORKING_KEYWORDS = ("load bal", "tcp proxy", "ssl proxy", "network cdn", "cdn cache", "cloud nat", "nat gateway", "nat data")
 
         index: dict[str, Decimal] = {}
         for sku in skus:
@@ -1498,6 +1498,7 @@ class GCPProvider:
 
         if fallback:
             result["fallback"] = True
+            result["price_source"] = "GCP documentation (Cloud Load Balancing SKUs are not exposed by the public Cloud Billing Catalog API)"
 
         result["note"] = (
             "Cloud Load Balancing: forwarding rules are billed per hour. "
@@ -1532,10 +1533,12 @@ class GCPProvider:
         fallback = False
 
         for desc, price in index.items():
-            if egress_rate is None and "cloud cdn cache egress" in desc:
-                egress_rate = price
-            if fill_rate is None and "cloud cdn cache fill" in desc:
+            # Real SKU: "Network CDN Cache Fill from <src> to <dest>"
+            if fill_rate is None and "cdn cache fill" in desc:
                 fill_rate = price
+            # Egress SKU may appear as "Network CDN Cache Egress ..." or "CDN Egress ..."
+            if egress_rate is None and "cdn" in desc and "egress" in desc:
+                egress_rate = price
             if egress_rate is not None and fill_rate is not None:
                 break
 
@@ -1572,6 +1575,7 @@ class GCPProvider:
 
         if fallback:
             result["fallback"] = True
+            result["price_source"] = "GCP documentation (live CDN egress SKU not matched in region; cache fill SKU pattern updated to match 'Network CDN Cache Fill from X to Y')"
 
         result["note"] = (
             "Cloud CDN egress rates vary by destination region (NA/EU cheapest, "
@@ -1645,6 +1649,7 @@ class GCPProvider:
 
         if fallback:
             result["fallback"] = True
+            result["price_source"] = "GCP documentation (Cloud NAT SKUs are not exposed by the public Cloud Billing Catalog API)"
 
         result["note"] = (
             "Cloud NAT gateway uptime is billed per hour regardless of traffic. "

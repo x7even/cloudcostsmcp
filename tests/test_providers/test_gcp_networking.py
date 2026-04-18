@@ -70,17 +70,17 @@ _LB_DATA_SKU = _make_sku(
     price_nanos=8_000_000,  # $0.008
 )
 
-# $0.02/GB – Cloud CDN cache egress (North America)
+# $0.02/GB – Cloud CDN cache egress (North America) — real SKU format from GCP catalog
 _CDN_EGRESS_SKU = _make_sku(
-    "Cloud CDN Cache Egress North America",
+    "Network CDN Cache Egress from North America",
     ["us-central1", "global"],
     price_units="0",
     price_nanos=20_000_000,  # $0.02
 )
 
-# $0.01/GB – Cloud CDN cache fill
+# $0.01/GB – Cloud CDN cache fill — real SKU format: "Network CDN Cache Fill from X to Y"
 _CDN_FILL_SKU = _make_sku(
-    "Cloud CDN Cache Fill",
+    "Network CDN Cache Fill from North America to North America",
     ["us-central1", "global"],
     price_units="0",
     price_nanos=10_000_000,  # $0.01
