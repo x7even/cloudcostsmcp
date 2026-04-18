@@ -16,18 +16,32 @@ Supports both **public list pricing** (no credentials needed for AWS and Azure; 
 
 ## Tools
 
-| Tool | Description |
-|------|-------------|
 **Pricing Lookup**
 
 | Tool | Description |
 |------|-------------|
 | `get_compute_price` | Price for a specific instance type in a region |
-| `get_storage_price` | EBS/S3/GCS storage pricing |
-| `get_service_price` | **Generic pricing for any AWS service** — CloudWatch, data transfer, RDS, Lambda, ELB, Route53, DynamoDB, EFS, and 250+ others |
+| `get_storage_price` | EBS / S3 / GCS (Standard, Nearline, Coldline, Archive) / PD / Azure managed disk pricing |
+| `get_database_price` | Managed database pricing — AWS RDS and GCP Cloud SQL |
+| `get_service_price` | **Generic pricing for any AWS service** — CloudWatch, data transfer, Lambda, ELB, Route53, DynamoDB, EFS, ElastiCache, and 250+ others |
 | `get_prices_batch` | Prices for multiple instance types in one call (concurrent) |
 | `compare_compute_prices` | Compare same instance across multiple regions with optional baseline deltas |
 | `search_pricing` | Search pricing catalog by keyword — any service, not just EC2 |
+
+**GCP-Specific Services**
+
+| Tool | Description |
+|------|-------------|
+| `get_gke_price` | GKE cluster pricing — Standard (flat management fee + node compute) or Autopilot (per vCPU/RAM) |
+| `get_memorystore_price` | Memorystore for Redis pricing — Basic and Standard (HA) tiers |
+| `get_bigquery_price` | BigQuery on-demand query, active storage, long-term storage, and streaming insert pricing |
+| `get_vertex_price` | Vertex AI custom training and prediction compute pricing by machine type |
+| `get_gemini_price` | Gemini generative model input/output token rates (1.5 Flash, 1.5 Pro, 1.0 Pro, etc.) |
+| `get_cloud_lb_price` | Cloud Load Balancing — forwarding rule and data-processed pricing |
+| `get_cloud_cdn_price` | Cloud CDN cache egress and cache fill pricing |
+| `get_cloud_nat_price` | Cloud NAT gateway uptime and data-processed pricing |
+| `get_cloud_armor_price` | Cloud Armor Standard security policy and request evaluation pricing |
+| `get_cloud_monitoring_price` | Cloud Monitoring custom metric ingestion pricing (tiered, 150 MiB/mo free) |
 
 **Effective & Discount Pricing**
 
@@ -278,4 +292,7 @@ With credentials configured: actual spend, contract/negotiated pricing, reservat
 - **Phase 4** ✅ Azure public pricing (Retail Prices API, no credentials)
 - **Phase 4** ✅ Streamable-HTTP transport (`--transport http`), Dockerfile
 - **Phase 4** ✅ Spot price history tool (`get_spot_history`), GCP Windows pricing
-- **Phase 5**: GCP effective pricing (BigQuery billing export)
+- **Phase 5** ✅ GCP managed services — GKE, Memorystore, BigQuery, Vertex AI, Gemini
+- **Phase 5** ✅ GCP networking — Cloud LB, CDN, NAT, Cloud Armor, Cloud Monitoring
+- **Phase 5** ✅ GCP Cloud SQL via `get_database_price`; Azure reserved pricing fix
+- **Phase 6**: GCP effective pricing (BigQuery billing export)

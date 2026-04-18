@@ -93,7 +93,7 @@ Get block or object storage pricing in a region.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `provider` | string | ✓ | `"aws"`, `"gcp"`, or `"azure"` |
-| `storage_type` | string | ✓ | AWS: `"gp3"`, `"gp2"`, `"io1"`, `"io2"`, `"st1"`, `"sc1"`, `"s3"`. GCP: `"pd-ssd"`, `"pd-balanced"`, `"pd-standard"`, `"pd-extreme"`. Azure: `"premium-ssd"`, `"standard-ssd"`, `"standard-hdd"`, `"ultra-ssd"`, `"blob"` |
+| `storage_type` | string | ✓ | AWS: `"gp3"`, `"gp2"`, `"io1"`, `"io2"`, `"st1"`, `"sc1"`, `"s3"`. GCP Persistent Disk: `"pd-ssd"`, `"pd-balanced"`, `"pd-standard"`, `"pd-extreme"`. GCP Cloud Storage (GCS): `"standard"`, `"nearline"`, `"coldline"`, `"archive"`. Azure: `"premium-ssd"`, `"standard-ssd"`, `"standard-hdd"`, `"ultra-ssd"`, `"blob"` |
 | `region` | string | ✓ | Region code |
 | `size_gb` | float | | Size for monthly cost estimate (default `100`) |
 
@@ -101,16 +101,16 @@ Get block or object storage pricing in a region.
 
 ### `get_database_price`
 
-Get pricing for a managed database instance (RDS).
+Get pricing for a managed database instance — AWS RDS or GCP Cloud SQL.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `provider` | string | ✓ | `"aws"` (GCP Cloud SQL not yet supported) |
-| `instance_type` | string | ✓ | e.g. `"db.r5.large"`, `"db.t4g.micro"` |
+| `provider` | string | ✓ | `"aws"` or `"gcp"` |
+| `instance_type` | string | ✓ | AWS: e.g. `"db.r5.large"`, `"db.t4g.micro"`. GCP Cloud SQL: e.g. `"db-n1-standard-4"`, `"db-n1-standard-8"` |
 | `region` | string | ✓ | Region code |
-| `engine` | string | | `"MySQL"` (default), `"PostgreSQL"`, `"MariaDB"`, `"Oracle"`, `"SQLServer"`, `"Aurora-MySQL"`, `"Aurora-PostgreSQL"` |
-| `deployment` | string | | `"single-az"` (default) or `"multi-az"` |
-| `term` | string | | `"on_demand"` (default), `"reserved_1yr"`, `"reserved_3yr"` |
+| `engine` | string | | AWS: `"MySQL"` (default), `"PostgreSQL"`, `"MariaDB"`, `"Oracle"`, `"SQLServer"`, `"Aurora-MySQL"`, `"Aurora-PostgreSQL"`. GCP: `"MySQL"` (default), `"PostgreSQL"`, `"SQL Server"` |
+| `deployment` | string | | AWS: `"single-az"` (default) or `"multi-az"`. GCP: `"single-zone"` (default), `"ha"`, or `"regional"` (HA = cross-zone replication, ~2× cost) |
+| `term` | string | | `"on_demand"` (default), `"reserved_1yr"`, `"reserved_3yr"` (AWS only) |
 
 **Example response:**
 ```json
@@ -221,6 +221,155 @@ Search the pricing catalog by keyword. Defaults to EC2 compute — set `service`
 | `region` | string | | Filter to a specific region |
 | `service` | string | | AWS service to search (default: `"ec2"`). Use `list_services()` to discover options. |
 | `max_results` | int | | Max results (default `10`, max `50`) |
+
+---
+
+## GCP-Specific Services
+
+### `get_gke_price`
+
+Get GKE (Google Kubernetes Engine) cluster pricing.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `region` | string | ✓ | GCP region, e.g. `"us-central1"` |
+| `mode` | string | | `"standard"` (default) or `"autopilot"` |
+| `node_count` | int | | Standard mode: number of worker nodes (default `3`) |
+| `node_type` | string | | Standard mode: node instance type, e.g. `"n2-standard-4"` (default `"n1-standard-4"`) |
+| `vcpu` | float | | Autopilot mode: total vCPUs requested across all pods |
+| `memory_gb` | float | | Autopilot mode: total memory GiB requested across all pods |
+| `hours_per_month` | float | | Hours active per month (default `730` = always-on) |
+
+**Standard mode** charges a flat $0.10/hr cluster management fee plus normal Compute Engine rates for worker nodes. **Autopilot mode** bills per vCPU-hour and per GiB-RAM-hour of pod requests (no separate node cost).
+
+---
+
+### `get_memorystore_price`
+
+Get GCP Memorystore for Redis pricing.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `capacity_gb` | float | ✓ | Provisioned cache size in GB |
+| `region` | string | ✓ | GCP region, e.g. `"us-central1"` |
+| `tier` | string | | `"basic"` (single-zone) or `"standard"` (HA, default) |
+| `hours_per_month` | float | | Hours active per month (default `730`) |
+
+Standard tier includes cross-zone replication and typically costs ~1.3–2× Basic.
+
+---
+
+### `get_bigquery_price`
+
+Get BigQuery pricing for storage, on-demand queries, and streaming inserts.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `region` | string | | Location — multi-region `"us"` (default), `"eu"`, or a single region e.g. `"us-central1"` |
+| `query_tb` | float | | TiB of data scanned by on-demand queries per month |
+| `active_storage_gb` | float | | GB of active table storage (modified in last 90 days) |
+| `longterm_storage_gb` | float | | GB of long-term table storage (unmodified 90+ days, ~50% cheaper) |
+| `streaming_gb` | float | | GB of data inserted via streaming API per month |
+
+First 1 TiB of queries and 10 GiB of storage are free each month.
+
+---
+
+### `get_vertex_price`
+
+Get Vertex AI custom training or prediction compute pricing.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `machine_type` | string | ✓ | GCP machine type, e.g. `"n1-standard-4"`, `"n1-highmem-8"`, `"a2-highgpu-1g"` |
+| `region` | string | | GCP region (default `"us-central1"`) |
+| `hours` | float | | Hours of compute time (default `730`) |
+| `task` | string | | `"training"` (default) or `"prediction"` |
+
+Returns per-vCPU-hour and per-GiB-RAM-hour rates for the machine family.
+
+---
+
+### `get_gemini_price`
+
+Get Gemini generative model token pricing via the Vertex AI catalog.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `model` | string | | Model name substring: `"gemini-1.5-flash"` (default), `"gemini-1.5-pro"`, `"gemini-1.0-pro"` |
+| `region` | string | | GCP region (default `"us-central1"`) |
+
+Returns input and output token rates (per 1,000 tokens). Most Gemini SKUs are global so region has limited effect on price.
+
+---
+
+### `get_cloud_lb_price`
+
+Get GCP Cloud Load Balancing pricing for forwarding rules and data processed.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `region` | string | | GCP region (default `"us-central1"`) |
+| `lb_type` | string | | `"https"` (External HTTP(S), default), `"tcp"` (TCP Proxy), `"ssl"` (SSL Proxy), `"network"` (L4), `"internal"` |
+| `rule_count` | int | | Number of forwarding rules (default `1`) |
+| `data_gb` | float | | GB of data processed per month (default `0`) |
+| `hours_per_month` | float | | Hours active (default `730`) |
+
+Forwarding rules are billed per hour. Data processed (ingress + egress through LB) billed per GB.
+
+---
+
+### `get_cloud_cdn_price`
+
+Get GCP Cloud CDN pricing for cache egress and cache fill.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `region` | string | | GCP region for CDN PoP (default `"us-central1"`) |
+| `egress_gb` | float | | GB served from CDN to end users per month (default `0`) |
+| `cache_fill_gb` | float | | GB pulled from origin into CDN cache per month (default `0`) |
+
+Egress rates vary by destination (North America / EU cheapest; APAC / LATAM / ME / Africa higher). First 10 GiB/month egress is free.
+
+---
+
+### `get_cloud_nat_price`
+
+Get GCP Cloud NAT pricing for gateway uptime and data processing.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `region` | string | | GCP region (default `"us-central1"`) |
+| `gateway_count` | int | | Number of Cloud NAT gateways (default `1`) |
+| `data_gb` | float | | GB of data processed through NAT per month (default `0`) |
+| `hours_per_month` | float | | Hours active (default `730`) |
+
+Gateway uptime charged per hour regardless of traffic. Data processing charged per GB (both directions). Intra-region traffic is not charged.
+
+---
+
+### `get_cloud_armor_price`
+
+Get GCP Cloud Armor Standard pricing for security policies and request evaluation.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `policy_count` | int | | Number of enforced security policies (default `1`) |
+| `monthly_requests_millions` | float | | Millions of requests evaluated per month (default `0`) |
+
+Standard tier: ~$0.75/policy/month + ~$0.75/million requests evaluated. Cloud Armor Enterprise ($3,000/month) is a separate SKU not returned by this tool.
+
+---
+
+### `get_cloud_monitoring_price`
+
+Get GCP Cloud Monitoring pricing for custom and external metric ingestion.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `ingestion_mib` | float | | MiB of custom/external metrics ingested per month (default `0`) |
+
+First 150 MiB/month per billing account is free. Tiered pricing above that: ~$0.258/MiB up to 100,000 MiB, then lower rates for higher volumes.
 
 ---
 

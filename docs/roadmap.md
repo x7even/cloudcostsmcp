@@ -16,11 +16,19 @@ Each task has a detailed plan file in `docs/plans/`:
 | T24 — Test coverage expansion | [T24-test-coverage.md](plans/T24-test-coverage.md) | **done** |
 | T25 — No-results hints | [T25-no-results-hints.md](plans/T25-no-results-hints.md) | **done** |
 | T26 — GCP effective pricing (BigQuery) | [T26-gcp-effective-pricing.md](plans/T26-gcp-effective-pricing.md) | pending |
-| T27 — get_database_price tool | [T27-get-database-price-tool.md](plans/T27-get-database-price-tool.md) | **done** |
+| T27 — get_database_price tool | [T27-get-database-price-tool.md](plans/T27-get-database-price-tool.md) | **done** (AWS RDS + GCP Cloud SQL) |
 | T28 — Azure provider | [T28-azure-provider.md](plans/T28-azure-provider.md) | **done** |
 | T29 — HTTP/SSE transport | [T29-http-transport.md](plans/T29-http-transport.md) | **done** |
 | T30 — Spot price history tool | [T30-spot-price-history.md](plans/T30-spot-price-history.md) | **done** |
 | T31 — GCP Windows pricing | [T31-gcp-windows-pricing.md](plans/T31-gcp-windows-pricing.md) | **done** |
+| T32 — GCP GKE + Memorystore pricing | — | **done** (v0.7.2) |
+| T33 — GCP GCS + Cloud SQL pricing | — | **done** (v0.7.3) |
+| T34 — GCP BigQuery pricing | — | **done** (v0.7.4) |
+| T35 — GCP Vertex AI + Gemini pricing | — | **done** (v0.7.5) |
+| T36 — GCP Cloud LB / CDN / NAT pricing | — | **done** (v0.7.6) |
+| T37 — GCP Cloud Armor + Monitoring pricing | — | **done** (v0.7.7) |
+| T38 — Azure reserved pricing unit fix | — | **done** (v0.7.8) |
+| T39 — CDN SKU filter + harness GCS/SQL coverage | — | **done** (v0.7.9) |
 
 ---
 
