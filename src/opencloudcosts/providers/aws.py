@@ -182,9 +182,13 @@ _AWS_CAPABILITIES: dict[tuple[str, str | None], bool] = {
     (PricingDomain.ANALYTICS.value, "athena"): True,
     (PricingDomain.NETWORK.value, None): True,
     (PricingDomain.NETWORK.value, "lb"): True,
+    (PricingDomain.NETWORK.value, "cloud_lb"): True,    # GCP-style alias
     (PricingDomain.NETWORK.value, "cdn"): True,
     (PricingDomain.NETWORK.value, "nat"): True,
+    (PricingDomain.NETWORK.value, "cloud_nat"): True,   # GCP-style alias
     (PricingDomain.NETWORK.value, "waf"): True,
+    (PricingDomain.NETWORK.value, "data_transfer"): True,
+    (PricingDomain.NETWORK.value, "egress"): True,
     (PricingDomain.OBSERVABILITY.value, None): True,
     (PricingDomain.OBSERVABILITY.value, "cloudwatch"): True,
     (PricingDomain.CONTAINER.value, None): True,
@@ -1334,9 +1338,12 @@ class AWSProvider(ProviderBase):
     async def _price_network(self, spec: NetworkPricingSpec) -> list[NormalizedPrice]:
         _NET_SERVICE_MAP = {
             "lb": "elb", "load_balancer": "elb", "elb": "elb",
+            "cloud_lb": "elb",                              # GCP-style alias
             "cdn": "cloudfront", "cloudfront": "cloudfront",
             "nat": "nat_gateway", "nat_gateway": "nat_gateway",
+            "cloud_nat": "nat_gateway",                     # GCP-style alias
             "waf": "waf",
+            "data_transfer": "data_transfer", "egress": "data_transfer",
         }
         svc = _NET_SERVICE_MAP.get(spec.service or "lb", spec.service or "elb")
         return await self.get_service_price(svc, spec.region, {}, max_results=10)
@@ -1371,7 +1378,7 @@ class AWSProvider(ProviderBase):
                 "ai": ["bedrock", "sagemaker"],
                 "serverless": ["lambda"],
                 "analytics": ["redshift", "athena"],
-                "network": ["lb", "cdn", "nat", "waf"],
+                "network": ["lb", "cdn", "nat", "waf", "data_transfer"],
                 "observability": ["cloudwatch"],
                 "container": ["eks"],
             },
@@ -1391,9 +1398,10 @@ class AWSProvider(ProviderBase):
                 "serverless/lambda": {"service": "lambda"},
                 "analytics/redshift": {"service": "redshift"},
                 "analytics/athena": {"service": "athena"},
-                "network/lb": {"service": "lb"},
+                "network/lb": {"service": "lb", "note": "also accepts 'cloud_lb'"},
                 "network/cdn": {"service": "cdn"},
-                "network/nat": {"service": "nat"},
+                "network/nat": {"service": "nat", "note": "also accepts 'cloud_nat'"},
+                "network/data_transfer": {"service": "data_transfer"},
                 "observability/cloudwatch": {"service": "cloudwatch"},
                 "container/eks": {"service": "eks"},
             },
@@ -1420,10 +1428,11 @@ class AWSProvider(ProviderBase):
                 "SageMaker endpoints": "ai/sagemaker",
                 "EKS clusters": "container/eks",
                 "CloudWatch metrics": "observability/cloudwatch",
-                "Application Load Balancer": "network/lb",
-                "NAT Gateway": "network/nat",
+                "Application Load Balancer": "network/lb (also: service='cloud_lb')",
+                "NAT Gateway": "network/nat (also: service='cloud_nat')",
                 "CloudFront CDN": "network/cdn",
                 "AWS WAF": "network/waf",
+                "Data transfer / egress": "network/data_transfer",
             },
         )
 

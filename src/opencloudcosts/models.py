@@ -257,7 +257,7 @@ class BasePricingSpec(BaseModel):
     provider: CloudProvider
     domain: PricingDomain
     service: str | None = None   # e.g. "rds", "bedrock", "gke", "bigquery"
-    region: str
+    region: str = ""   # optional for multi-region tools (compare_prices, find_cheapest_region)
     term: PricingTerm = PricingTerm.ON_DEMAND
     schema_version: Literal["1"] = "1"
 
