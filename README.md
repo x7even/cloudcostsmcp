@@ -14,63 +14,39 @@ Supports both **public list pricing** (no credentials needed for AWS and Azure; 
 - "List all c6g instances in eu-west-1 with >= 8 vCPUs"
 - "What's my effective hourly rate on m5.xlarge after Savings Plans?"
 
-## Tools
+## Tools (v0.8.0 — 15 tools)
 
-**Pricing Lookup**
+**Pricing**
 
 | Tool | Description |
 |------|-------------|
-| `get_compute_price` | Price for a specific instance type in a region |
-| `get_storage_price` | EBS / S3 / GCS (Standard, Nearline, Coldline, Archive) / PD / Azure managed disk pricing |
-| `get_database_price` | Managed database pricing — AWS RDS and GCP Cloud SQL |
-| `get_service_price` | **Generic pricing for any AWS service** — CloudWatch, data transfer, Lambda, ELB, Route53, DynamoDB, EFS, ElastiCache, and 250+ others |
+| `get_price` | Unified pricing dispatcher — compute, storage, database, AI, networking, serverless, analytics, observability |
 | `get_prices_batch` | Prices for multiple instance types in one call (concurrent) |
-| `compare_compute_prices` | Compare same instance across multiple regions with optional baseline deltas |
-| `search_pricing` | Search pricing catalog by keyword — any service, not just EC2 |
-
-**GCP-Specific Services**
-
-| Tool | Description |
-|------|-------------|
-| `get_gke_price` | GKE cluster pricing — Standard (flat management fee + node compute) or Autopilot (per vCPU/RAM) |
-| `get_memorystore_price` | Memorystore for Redis pricing — Basic and Standard (HA) tiers |
-| `get_bigquery_price` | BigQuery on-demand query, active storage, long-term storage, and streaming insert pricing |
-| `get_vertex_price` | Vertex AI custom training and prediction compute pricing by machine type |
-| `get_gemini_price` | Gemini generative model input/output token rates (1.5 Flash, 1.5 Pro, 1.0 Pro, etc.) |
-| `get_cloud_lb_price` | Cloud Load Balancing — forwarding rule and data-processed pricing |
-| `get_cloud_cdn_price` | Cloud CDN cache egress and cache fill pricing |
-| `get_cloud_nat_price` | Cloud NAT gateway uptime and data-processed pricing |
-| `get_cloud_armor_price` | Cloud Armor Standard security policy and request evaluation pricing |
-| `get_cloud_monitoring_price` | Cloud Monitoring custom metric ingestion pricing (tiered, 150 MiB/mo free) |
-
-**Effective & Discount Pricing**
-
-| Tool | Description |
-|------|-------------|
-| `get_effective_price` | Effective rate after account discounts (requires credentials) |
-| `get_discount_summary` | All active RIs and Savings Plans with utilization % |
+| `compare_prices` | Compare a spec across multiple regions with optional baseline deltas |
+| `search_pricing` | Free-text search across the pricing catalog |
 
 **Discovery**
 
 | Tool | Description |
 |------|-------------|
-| `list_services` | All 260+ AWS services with pricing data |
+| `describe_catalog` | Full support matrix or targeted field guidance + copy-paste `example_invocation` for `get_price` |
 | `list_regions` | All regions with friendly names |
 | `list_instance_types` | Available instance types with vCPU/memory filters |
-| `check_availability` | Is a SKU available in a region? |
 
 **Region Analysis**
 
 | Tool | Description |
 |------|-------------|
-| `find_cheapest_region` | Cheapest region for an instance type with optional baseline deltas |
-| `find_available_regions` | Every region where an instance exists — prices, region names, deltas |
+| `find_cheapest_region` | Cheapest region for any service spec, concurrently |
+| `find_available_regions` | Every region where a service is available, sorted by price |
+| `get_spot_history` | AWS spot price history and stability analysis (requires credentials) |
 
-**Cost Estimation**
+**FinOps**
 
 | Tool | Description |
 |------|-------------|
-| `estimate_bom` | TCO for a Bill of Materials |
+| `get_discount_summary` | Account-wide RI / Savings Plan / CUD utilisation (requires credentials) |
+| `estimate_bom` | TCO for a multi-resource Bill of Materials |
 | `estimate_unit_economics` | Cost per user/request/transaction |
 
 **Cache**
@@ -294,5 +270,6 @@ With credentials configured: actual spend, contract/negotiated pricing, reservat
 - **Phase 4** ✅ Spot price history tool (`get_spot_history`), GCP Windows pricing
 - **Phase 5** ✅ GCP managed services — GKE, Memorystore, BigQuery, Vertex AI, Gemini
 - **Phase 5** ✅ GCP networking — Cloud LB, CDN, NAT, Cloud Armor, Cloud Monitoring
-- **Phase 5** ✅ GCP Cloud SQL via `get_database_price`; Azure reserved pricing fix
-- **Phase 6**: GCP effective pricing (BigQuery billing export)
+- **Phase 5** ✅ GCP Cloud SQL; Azure reserved pricing
+- **v0.8.0** ✅ Consolidated to 15-tool surface; unified `get_price(spec)` dispatcher; `describe_catalog` discovery
+- **Next**: GCP effective pricing (BigQuery billing export)
