@@ -60,9 +60,9 @@ FAKE_SKUS = [
     # N2 preemptible
     _make_sku("Preemptible N2 Instance Core running in Americas", "Preemptible", ["us-central1", "us-east1"], 7610000),  # $0.007610/core-hr
     _make_sku("Preemptible N2 Instance Ram running in Americas",  "Preemptible", ["us-central1", "us-east1"], 1020000),  # $0.001020/GB-hr
-    # N2 CUD 1yr
-    _make_sku("Committed Use Discount for N2 VCPU in Americas", "Commit1Yr", ["us-central1", "us-east1"], 19560000),     # $0.019560/core-hr
-    _make_sku("Committed Use Discount for N2 Memory in Americas", "Commit1Yr", ["us-central1", "us-east1"], 2626000),    # $0.002626/GB-hr
+    # N2 CUD 1yr (actual GCP API format: "Commitment v1: N2 Cpu in Americas for 1 Year")
+    _make_sku("Commitment v1: N2 Cpu in Americas for 1 Year", "Commit1Yr", ["us-central1", "us-east1"], 19560000),     # $0.019560/core-hr
+    _make_sku("Commitment v1: N2 Ram in Americas for 1 Year", "Commit1Yr", ["us-central1", "us-east1"], 2626000),      # $0.002626/GB-hr
     # N2 Windows license SKUs (T31: per-vCPU and per-GB-RAM on top of base Linux)
     _make_sku("N2 Instance Core running Windows", "OnDemand", ["us-central1", "us-east1"], 45000000),                    # $0.045/core-hr
     _make_sku("N2 Instance Ram running Windows",  "OnDemand", ["us-central1", "us-east1"], 6000000),                     # $0.006/GB-hr

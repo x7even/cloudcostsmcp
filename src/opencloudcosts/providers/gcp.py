@@ -107,6 +107,7 @@ _GCP_CAPABILITIES: dict[tuple[str, str | None], bool] = {
     (PricingDomain.COMPUTE.value, "compute_engine"): True,
     (PricingDomain.STORAGE.value, None): True,
     (PricingDomain.STORAGE.value, "gcs"): True,
+    (PricingDomain.STORAGE.value, "persistent_disk"): True,
     (PricingDomain.DATABASE.value, None): True,
     (PricingDomain.DATABASE.value, "cloud_sql"): True,
     (PricingDomain.DATABASE.value, "memorystore"): True,
@@ -392,6 +393,14 @@ class GCPProvider(ProviderBase):
 
         cpu_desc = family_skus[cpu_key]
         ram_desc = family_skus[ram_key]
+
+        # Empty desc means this family doesn't support this term (e.g. N1/T2A CUDs)
+        if not cpu_desc or not ram_desc:
+            logger.info(
+                "GCP: %s family does not support term=%s — returning empty.",
+                family, term.value,
+            )
+            return []
 
         # For CUDs, the usageType in the SKU catalog is "Commit1Yr" / "Commit3Yr"
         if cud_year:
@@ -1951,8 +1960,8 @@ class GCPProvider(ProviderBase):
         return await self.get_compute_price(resource_type, spec.region, os_type, spec.term)
 
     async def _price_storage(self, spec: StoragePricingSpec) -> list[NormalizedPrice]:
-        storage_class = spec.storage_type or "standard"
-        return await self._get_gcs_storage_price(storage_class, spec.region)
+        storage_type = spec.storage_type or "standard"
+        return await self.get_storage_price(storage_type, spec.region, spec.size_gb)
 
     async def _price_database(self, spec: DatabasePricingSpec) -> list[NormalizedPrice]:
         svc = (spec.service or "").lower()
@@ -2532,7 +2541,7 @@ class GCPProvider(ProviderBase):
             ],
             services={
                 "compute": ["compute_engine"],
-                "storage": ["gcs"],
+                "storage": ["gcs", "persistent_disk"],
                 "database": ["cloud_sql", "memorystore"],
                 "container": ["gke"],
                 "ai": ["vertex", "gemini"],
@@ -2543,6 +2552,7 @@ class GCPProvider(ProviderBase):
             supported_terms={
                 "compute/compute_engine": ["on_demand", "spot", "cud_1yr", "cud_3yr"],
                 "storage/gcs": ["on_demand"],
+                "storage/persistent_disk": ["on_demand"],
                 "database/cloud_sql": ["on_demand"],
                 "database/memorystore": ["on_demand"],
                 "container/gke": ["on_demand"],
@@ -2563,6 +2573,10 @@ class GCPProvider(ProviderBase):
                 },
                 "storage/gcs": {
                     "storage_type": "standard | nearline | coldline | archive",
+                },
+                "storage/persistent_disk": {
+                    "storage_type": "pd-ssd | pd-balanced | pd-standard | pd-extreme",
+                    "size_gb": "Disk size in GiB for monthly cost estimate",
                 },
                 "database/cloud_sql": {
                     "resource_type": "Cloud SQL instance type e.g. 'db-n1-standard-4', 'db-custom-2-3840'",
@@ -2633,6 +2647,10 @@ class GCPProvider(ProviderBase):
                 "storage/gcs": {
                     "provider": "gcp", "domain": "storage",
                     "storage_type": "standard", "region": "us-central1",
+                },
+                "storage/persistent_disk": {
+                    "provider": "gcp", "domain": "storage", "service": "persistent_disk",
+                    "storage_type": "pd-ssd", "size_gb": 500, "region": "us-central1",
                 },
                 "database/cloud_sql": {
                     "provider": "gcp", "domain": "database", "service": "cloud_sql",
