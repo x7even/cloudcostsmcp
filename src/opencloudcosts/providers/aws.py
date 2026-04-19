@@ -22,14 +22,27 @@ import httpx
 from opencloudcosts.cache import CacheManager
 from opencloudcosts.config import Settings
 from opencloudcosts.models import (
+    AiPricingSpec,
+    AnalyticsPricingSpec,
     CloudProvider,
+    ComputePricingSpec,
+    ContainerPricingSpec,
+    DatabasePricingSpec,
     EffectivePrice,
     InstanceTypeInfo,
+    NetworkPricingSpec,
     NormalizedPrice,
+    ObservabilityPricingSpec,
     PriceUnit,
+    PricingDomain,
+    PricingResult,
+    PricingSpec,
     PricingTerm,
+    ProviderCatalog,
+    ServerlessPricingSpec,
+    StoragePricingSpec,
 )
-from opencloudcosts.providers.base import NotConfiguredError
+from opencloudcosts.providers.base import NotConfiguredError, NotSupportedError, ProviderBase
 from opencloudcosts.utils.regions import aws_region_to_display, list_aws_regions
 from opencloudcosts.utils.units import parse_aws_unit
 
@@ -118,6 +131,66 @@ _SERVICE_ALIASES: dict[str, str] = {
 # Index of services available in the AWS bulk pricing API (cached after first fetch)
 _AWS_SERVICE_INDEX_URL = f"{_BULK_BASE}/index.json"
 
+# Bedrock model aliases — short names → AWS catalog names used in the pricing API
+_BEDROCK_MODEL_ALIASES: dict[str, str] = {
+    "claude-3-5-sonnet": "Claude 3.5 Sonnet",
+    "claude-3-5-haiku": "Claude 3.5 Haiku",
+    "claude-3-7-sonnet": "Claude 3.7 Sonnet",
+    "claude-3-opus": "Claude 3 Opus",
+    "claude-3-sonnet": "Claude 3 Sonnet",
+    "claude-3-haiku": "Claude 3 Haiku",
+    "nova-pro": "Nova Pro",
+    "nova-lite": "Nova Lite",
+    "nova-micro": "Nova Micro",
+    "llama-3-1-70b": "Llama 3.1 70B",
+    "llama-3-1-8b": "Llama 3.1 8B",
+    "llama-3-2-90b": "Llama 3.2 90B",
+    "llama-3-2-11b": "Llama 3.2 11B",
+    "llama-3-2-3b": "Llama 3.2 3B",
+    "llama-3-2-1b": "Llama 3.2 1B",
+    "mistral-large": "Mistral Large",
+    "mistral-small": "Mistral Small",
+    "titan-text-express": "Titan Text G1 - Express",
+    "titan-text-lite": "Titan Text G1 - Lite",
+    "titan-text-premier": "Titan Text Premier",
+    "titan-embeddings": "Titan Embeddings G1 - Text",
+    "cohere-command-r": "Cohere Command R",
+    "cohere-command-r-plus": "Cohere Command R+",
+    "gemma-2-27b": "Gemma 2 27B IT",
+    "gemma-2-9b": "Gemma 2 9B IT",
+    "jamba-1-5-large": "AI21 Jamba 1.5 Large",
+}
+
+# Capability matrix: (domain.value, service | None) → supported
+_AWS_CAPABILITIES: dict[tuple[str, str | None], bool] = {
+    (PricingDomain.COMPUTE.value, None): True,
+    (PricingDomain.COMPUTE.value, "ec2"): True,
+    (PricingDomain.COMPUTE.value, "fargate"): True,
+    (PricingDomain.STORAGE.value, None): True,
+    (PricingDomain.STORAGE.value, "ebs"): True,
+    (PricingDomain.STORAGE.value, "s3"): True,
+    (PricingDomain.DATABASE.value, None): True,
+    (PricingDomain.DATABASE.value, "rds"): True,
+    (PricingDomain.DATABASE.value, "elasticache"): True,
+    (PricingDomain.AI.value, None): True,
+    (PricingDomain.AI.value, "bedrock"): True,
+    (PricingDomain.AI.value, "sagemaker"): True,
+    (PricingDomain.SERVERLESS.value, None): True,
+    (PricingDomain.SERVERLESS.value, "lambda"): True,
+    (PricingDomain.ANALYTICS.value, None): True,
+    (PricingDomain.ANALYTICS.value, "redshift"): True,
+    (PricingDomain.ANALYTICS.value, "athena"): True,
+    (PricingDomain.NETWORK.value, None): True,
+    (PricingDomain.NETWORK.value, "lb"): True,
+    (PricingDomain.NETWORK.value, "cdn"): True,
+    (PricingDomain.NETWORK.value, "nat"): True,
+    (PricingDomain.NETWORK.value, "waf"): True,
+    (PricingDomain.OBSERVABILITY.value, None): True,
+    (PricingDomain.OBSERVABILITY.value, "cloudwatch"): True,
+    (PricingDomain.CONTAINER.value, None): True,
+    (PricingDomain.CONTAINER.value, "eks"): True,
+}
+
 
 def _resolve_service_code(service: str) -> str:
     """Resolve alias or pass through as-is (AWS offer codes are case-sensitive)."""
@@ -131,7 +204,7 @@ def _boto_session(settings: Settings) -> boto3.Session:
     return boto3.Session(**kwargs)
 
 
-class AWSProvider:
+class AWSProvider(ProviderBase):
     provider = CloudProvider.AWS
 
     def __init__(self, settings: Settings, cache: CacheManager) -> None:
@@ -1078,6 +1151,281 @@ class AWSProvider:
             Filters=[{"Name": "state", "Values": ["active"]}]
         )
         return resp.get("ReservedInstances", [])
+
+    # ------------------------------------------------------------------
+    # v0.8.0 capability protocol
+    # ------------------------------------------------------------------
+
+    def supports(self, domain: PricingDomain, service: str | None = None) -> bool:
+        return _AWS_CAPABILITIES.get((domain.value, service), False)
+
+    def supported_terms(
+        self, domain: PricingDomain, service: str | None = None
+    ) -> list[PricingTerm]:
+        base = [PricingTerm.ON_DEMAND]
+        if domain == PricingDomain.COMPUTE:
+            base += [
+                PricingTerm.SPOT,
+                PricingTerm.RESERVED_1YR, PricingTerm.RESERVED_1YR_PARTIAL,
+                PricingTerm.RESERVED_1YR_ALL, PricingTerm.RESERVED_3YR,
+                PricingTerm.RESERVED_3YR_PARTIAL, PricingTerm.RESERVED_3YR_ALL,
+                PricingTerm.COMPUTE_SP, PricingTerm.EC2_INSTANCE_SP,
+            ]
+        elif domain == PricingDomain.DATABASE:
+            base += [
+                PricingTerm.RESERVED_1YR, PricingTerm.RESERVED_3YR,
+                PricingTerm.RESERVED_1YR_PARTIAL, PricingTerm.RESERVED_1YR_ALL,
+            ]
+        elif domain == PricingDomain.AI and service == "bedrock":
+            base = [PricingTerm.ON_DEMAND, PricingTerm.SAVINGS_PLAN]
+        return base
+
+    async def get_price(self, spec: PricingSpec) -> PricingResult:
+        """Unified dispatcher — routes spec to the appropriate internal method."""
+        if not self.supports(spec.domain, spec.service):
+            raise NotSupportedError(
+                provider=self.provider,
+                domain=spec.domain,
+                service=spec.service,
+                reason=f"AWS does not support domain='{spec.domain.value}', service='{spec.service}'.",
+                alternatives=["Use describe_catalog(provider='aws') to see supported combinations."],
+            )
+
+        public_prices = await self._dispatch_public(spec)
+        result = PricingResult(public_prices=public_prices, source="catalog")
+
+        # Enrich with effective pricing when auth is configured
+        commitments = await self._applicable_commitments(spec)
+        if commitments:
+            result.auth_available = True
+            result.contracted_prices = [c.base_price for c in commitments]
+            result.effective_price = commitments[0] if commitments else None
+        elif self._settings.aws_enable_cost_explorer:
+            result.auth_available = True
+
+        return result
+
+    async def _dispatch_public(self, spec: PricingSpec) -> list[NormalizedPrice]:
+        """Route spec to the appropriate public-pricing internal method."""
+        if isinstance(spec, ComputePricingSpec):
+            return await self._price_compute(spec)
+        if isinstance(spec, StoragePricingSpec):
+            return await self._price_storage(spec)
+        if isinstance(spec, DatabasePricingSpec):
+            return await self._price_database(spec)
+        if isinstance(spec, AiPricingSpec):
+            return await self._price_ai(spec)
+        if isinstance(spec, ServerlessPricingSpec):
+            return await self._price_serverless(spec)
+        if isinstance(spec, AnalyticsPricingSpec):
+            return await self._price_analytics(spec)
+        if isinstance(spec, NetworkPricingSpec):
+            return await self._price_network(spec)
+        if isinstance(spec, ObservabilityPricingSpec):
+            return await self._price_observability(spec)
+        if isinstance(spec, ContainerPricingSpec):
+            return await self._price_container(spec)
+        raise NotSupportedError(
+            provider=self.provider,
+            domain=spec.domain,
+            service=spec.service,
+            reason=f"Unhandled domain '{spec.domain.value}'.",
+        )
+
+    async def _price_compute(self, spec: ComputePricingSpec) -> list[NormalizedPrice]:
+        if spec.service == "fargate" or (spec.vcpu is not None and spec.memory_gb is not None and not spec.resource_type):
+            return await self._price_fargate(spec)
+        if not spec.resource_type:
+            raise NotSupportedError(
+                provider=self.provider, domain=spec.domain, service=spec.service,
+                reason="ComputePricingSpec requires resource_type (instance type) or vcpu+memory_gb (Fargate).",
+                example_invocation={"provider": "aws", "domain": "compute", "resource_type": "m5.xlarge", "region": spec.region},
+            )
+        return await self.get_compute_price(spec.resource_type, spec.region, spec.os, spec.term)
+
+    async def _price_fargate(self, spec: ComputePricingSpec) -> list[NormalizedPrice]:
+        vcpu = spec.vcpu or 1.0
+        memory_gb = spec.memory_gb or 2.0
+        vcpu_filters: dict[str, str] = {"cputype": "perCPU"}
+        mem_filters: dict[str, str] = {"memorytype": "perGB"}
+        if spec.os.lower() == "windows":
+            vcpu_filters["operatingSystem"] = "Windows"
+        vcpu_prices = await self.get_service_price("fargate", spec.region, vcpu_filters, max_results=5)
+        mem_prices = await self.get_service_price("fargate", spec.region, mem_filters, max_results=5)
+        prices = []
+        if vcpu_prices:
+            prices.append(vcpu_prices[0].model_copy(update={
+                "description": f"Fargate vCPU ({vcpu} vCPU × ${vcpu_prices[0].price_per_unit:.6f}/hr)",
+                "attributes": {**vcpu_prices[0].attributes, "vcpu": str(vcpu), "os": spec.os},
+            }))
+        if mem_prices:
+            prices.append(mem_prices[0].model_copy(update={
+                "description": f"Fargate memory ({memory_gb} GB × ${mem_prices[0].price_per_unit:.6f}/GB-hr)",
+                "attributes": {**mem_prices[0].attributes, "memory_gb": str(memory_gb)},
+            }))
+        return prices
+
+    async def _price_storage(self, spec: StoragePricingSpec) -> list[NormalizedPrice]:
+        return await self.get_storage_price(
+            spec.storage_type, spec.region, spec.size_gb, spec.iops
+        )
+
+    async def _price_database(self, spec: DatabasePricingSpec) -> list[NormalizedPrice]:
+        svc = spec.service or "rds"
+        if svc in ("rds", "database", None):
+            _RDS_ENGINE_MAP = {
+                "mysql": "MySQL", "postgresql": "PostgreSQL", "postgres": "PostgreSQL",
+                "mariadb": "MariaDB", "oracle": "Oracle", "sqlserver": "SQL Server",
+                "aurora-mysql": "Aurora MySQL", "aurora-postgresql": "Aurora PostgreSQL",
+                "aurora-postgres": "Aurora PostgreSQL",
+            }
+            engine_normalized = _RDS_ENGINE_MAP.get(spec.engine.lower(), spec.engine)
+            deployment_option = "Multi-AZ" if spec.deployment.lower() in ("multi-az", "ha", "multi-zone") else "Single-AZ"
+            filters: dict[str, str] = {
+                "instanceType": spec.resource_type,
+                "databaseEngine": engine_normalized,
+                "deploymentOption": deployment_option,
+            }
+            return await self.get_service_price("rds", spec.region, filters, max_results=5, term=spec.term)
+        if svc == "elasticache":
+            filters = {"instanceType": spec.resource_type}
+            return await self.get_service_price("elasticache", spec.region, filters, max_results=5)
+        raise NotSupportedError(
+            provider=self.provider, domain=spec.domain, service=svc,
+            reason=f"AWS database service '{svc}' not recognised. Use 'rds' or 'elasticache'.",
+            alternatives=["service='rds'", "service='elasticache'"],
+        )
+
+    async def _price_ai(self, spec: AiPricingSpec) -> list[NormalizedPrice]:
+        svc = spec.service or "bedrock"
+        if svc == "bedrock":
+            catalog_name = _BEDROCK_MODEL_ALIASES.get((spec.model or "").lower(), spec.model or "")
+            mode = spec.mode or "on_demand"
+            if mode == "batch":
+                in_type, out_type = "input tokens batch", "output tokens batch"
+            else:
+                in_type, out_type = "Input tokens", "Output tokens"
+            in_prices = await self.get_service_price(
+                "bedrock", spec.region, {"model": catalog_name, "inferenceType": in_type}, max_results=5
+            )
+            out_prices = await self.get_service_price(
+                "bedrock", spec.region, {"model": catalog_name, "inferenceType": out_type}, max_results=5
+            )
+            return [p for p in in_prices + out_prices if p]
+        if svc == "sagemaker":
+            filters: dict[str, str] = {}
+            if spec.machine_type:
+                filters["instanceType"] = spec.machine_type
+            return await self.get_service_price("sagemaker", spec.region, filters, max_results=10)
+        raise NotSupportedError(
+            provider=self.provider, domain=spec.domain, service=svc,
+            reason=f"AWS AI service '{svc}' not recognised. Use 'bedrock' or 'sagemaker'.",
+            alternatives=["service='bedrock'", "service='sagemaker'"],
+        )
+
+    async def _price_serverless(self, spec: ServerlessPricingSpec) -> list[NormalizedPrice]:
+        svc = spec.service or "lambda"
+        return await self.get_service_price(svc, spec.region, {}, max_results=10)
+
+    async def _price_analytics(self, spec: AnalyticsPricingSpec) -> list[NormalizedPrice]:
+        svc = spec.service or "redshift"
+        return await self.get_service_price(svc, spec.region, {}, max_results=10)
+
+    async def _price_network(self, spec: NetworkPricingSpec) -> list[NormalizedPrice]:
+        _NET_SERVICE_MAP = {
+            "lb": "elb", "load_balancer": "elb", "elb": "elb",
+            "cdn": "cloudfront", "cloudfront": "cloudfront",
+            "nat": "nat_gateway", "nat_gateway": "nat_gateway",
+            "waf": "waf",
+        }
+        svc = _NET_SERVICE_MAP.get(spec.service or "lb", spec.service or "elb")
+        return await self.get_service_price(svc, spec.region, {}, max_results=10)
+
+    async def _price_observability(self, spec: ObservabilityPricingSpec) -> list[NormalizedPrice]:
+        svc = spec.service or "cloudwatch"
+        return await self.get_service_price(svc, spec.region, {}, max_results=10)
+
+    async def _price_container(self, spec: ContainerPricingSpec) -> list[NormalizedPrice]:
+        svc = spec.service or "eks"
+        return await self.get_service_price(svc, spec.region, {}, max_results=10)
+
+    async def _applicable_commitments(self, spec: PricingSpec) -> list[EffectivePrice]:
+        """Return account commitments applicable to this spec when Cost Explorer auth is present."""
+        if not self._settings.aws_enable_cost_explorer or self._ce is None:
+            return []
+        if not isinstance(spec, ComputePricingSpec) or not spec.resource_type:
+            return []
+        try:
+            return await self.get_effective_price("compute", spec.resource_type, spec.region)
+        except (NotConfiguredError, Exception):
+            return []
+
+    async def describe_catalog(self) -> ProviderCatalog:
+        return ProviderCatalog(
+            provider=CloudProvider.AWS,
+            domains=list({PricingDomain(d) for d, _ in _AWS_CAPABILITIES}),
+            services={
+                "compute": ["ec2", "fargate"],
+                "storage": ["ebs", "s3"],
+                "database": ["rds", "elasticache"],
+                "ai": ["bedrock", "sagemaker"],
+                "serverless": ["lambda"],
+                "analytics": ["redshift", "athena"],
+                "network": ["lb", "cdn", "nat", "waf"],
+                "observability": ["cloudwatch"],
+                "container": ["eks"],
+            },
+            supported_terms={
+                "compute": [t.value for t in self.supported_terms(PricingDomain.COMPUTE)],
+                "database": [t.value for t in self.supported_terms(PricingDomain.DATABASE)],
+                "ai/bedrock": [t.value for t in self.supported_terms(PricingDomain.AI, "bedrock")],
+            },
+            filter_hints={
+                "compute": {"resource_type": "EC2 instance type, e.g. 'm5.xlarge'", "os": "'Linux' or 'Windows'", "term": "pricing term"},
+                "compute/fargate": {"vcpu": "vCPU count (0.25–16)", "memory_gb": "memory in GB", "os": "'Linux' or 'Windows'"},
+                "storage": {"storage_type": "'gp3', 'io1', 'st1', 'sc1', 's3-standard'", "size_gb": "size for monthly estimate"},
+                "database/rds": {"resource_type": "DB instance type e.g. 'db.r5.large'", "engine": "MySQL/PostgreSQL/MariaDB/Oracle/SQLServer", "deployment": "'single-az' or 'multi-az'"},
+                "database/elasticache": {"resource_type": "cache.r6g.large", "service": "elasticache"},
+                "ai/bedrock": {"model": "e.g. 'claude-3-5-sonnet', 'nova-pro', 'llama-3-1-70b'", "mode": "'on_demand' or 'batch'"},
+                "ai/sagemaker": {"machine_type": "ml instance type e.g. 'ml.g5.xlarge'"},
+                "serverless/lambda": {"service": "lambda"},
+                "analytics/redshift": {"service": "redshift"},
+                "analytics/athena": {"service": "athena"},
+                "network/lb": {"service": "lb"},
+                "network/cdn": {"service": "cdn"},
+                "network/nat": {"service": "nat"},
+                "observability/cloudwatch": {"service": "cloudwatch"},
+                "container/eks": {"service": "eks"},
+            },
+            example_invocations={
+                "compute": {"provider": "aws", "domain": "compute", "resource_type": "m5.xlarge", "region": "us-east-1", "os": "Linux", "term": "on_demand"},
+                "compute/fargate": {"provider": "aws", "domain": "compute", "service": "fargate", "vcpu": 2.0, "memory_gb": 4.0, "region": "us-east-1"},
+                "storage": {"provider": "aws", "domain": "storage", "storage_type": "gp3", "region": "us-east-1", "size_gb": 100},
+                "database/rds": {"provider": "aws", "domain": "database", "service": "rds", "resource_type": "db.r5.large", "engine": "MySQL", "deployment": "single-az", "region": "us-east-1"},
+                "ai/bedrock": {"provider": "aws", "domain": "ai", "service": "bedrock", "model": "claude-3-5-sonnet", "region": "us-east-1", "input_tokens": 1000000, "output_tokens": 1000000},
+                "serverless/lambda": {"provider": "aws", "domain": "serverless", "service": "lambda", "region": "us-east-1"},
+                "observability/cloudwatch": {"provider": "aws", "domain": "observability", "service": "cloudwatch", "region": "us-east-1"},
+                "container/eks": {"provider": "aws", "domain": "container", "service": "eks", "region": "us-east-1"},
+            },
+            decision_matrix={
+                "ECS on Fargate": "compute/fargate — use vcpu + memory_gb params",
+                "ECS tasks (Fargate launch type)": "compute/fargate",
+                "EC2 instances": "compute/ec2",
+                "Lambda functions": "serverless/lambda",
+                "EBS volumes": "storage/ebs",
+                "S3 buckets": "storage/s3",
+                "RDS instances": "database/rds",
+                "ElastiCache clusters": "database/elasticache",
+                "Bedrock inference": "ai/bedrock",
+                "SageMaker endpoints": "ai/sagemaker",
+                "EKS clusters": "container/eks",
+                "CloudWatch metrics": "observability/cloudwatch",
+                "Application Load Balancer": "network/lb",
+                "NAT Gateway": "network/nat",
+                "CloudFront CDN": "network/cdn",
+                "AWS WAF": "network/waf",
+            },
+        )
 
     async def get_discount_summary(self) -> dict[str, Any]:
         """

@@ -22,13 +22,19 @@ from opencloudcosts.cache import CacheManager
 from opencloudcosts.config import Settings
 from opencloudcosts.models import (
     CloudProvider,
+    ComputePricingSpec,
     EffectivePrice,
     InstanceTypeInfo,
     NormalizedPrice,
     PriceUnit,
+    PricingDomain,
+    PricingResult,
+    PricingSpec,
     PricingTerm,
+    ProviderCatalog,
+    StoragePricingSpec,
 )
-from opencloudcosts.providers.base import NotConfiguredError
+from opencloudcosts.providers.base import NotConfiguredError, NotSupportedError, ProviderBase
 from opencloudcosts.utils.regions import AZURE_REGION_DISPLAY, list_azure_regions
 
 logger = logging.getLogger(__name__)
@@ -46,7 +52,16 @@ _AZURE_STORAGE_MAP: dict[str, str] = {
 }
 
 
-class AzureProvider:
+_AZURE_CAPABILITIES: dict[tuple[str, str | None], bool] = {
+    (PricingDomain.COMPUTE.value, None): True,
+    (PricingDomain.COMPUTE.value, "vm"): True,
+    (PricingDomain.STORAGE.value, None): True,
+    (PricingDomain.STORAGE.value, "managed_disks"): True,
+    (PricingDomain.STORAGE.value, "blob"): True,
+}
+
+
+class AzureProvider(ProviderBase):
     provider = CloudProvider.AZURE
 
     def __init__(self, settings: Settings, cache: CacheManager) -> None:
@@ -380,6 +395,119 @@ class AzureProvider:
                 break
 
         return results
+
+    # ------------------------------------------------------------------
+    # v0.8.0 capability surface — supports / get_price / describe_catalog
+    # ------------------------------------------------------------------
+
+    def supports(self, domain: PricingDomain, service: str | None = None) -> bool:
+        key = (domain.value if hasattr(domain, "value") else domain, service)
+        return _AZURE_CAPABILITIES.get(key, False)
+
+    def supported_terms(
+        self, domain: PricingDomain, service: str | None = None
+    ) -> list[PricingTerm]:
+        dv = domain.value if hasattr(domain, "value") else domain
+        if dv == PricingDomain.COMPUTE.value:
+            return [
+                PricingTerm.ON_DEMAND,
+                PricingTerm.SPOT,
+                PricingTerm.RESERVED_1YR,
+                PricingTerm.RESERVED_3YR,
+            ]
+        return [PricingTerm.ON_DEMAND]
+
+    async def get_price(self, spec: PricingSpec) -> PricingResult:
+        if not self.supports(spec.domain, spec.service):
+            raise NotSupportedError(
+                provider=self.provider,
+                domain=spec.domain,
+                service=spec.service,
+                reason=f"Azure does not support {spec.domain.value}/{spec.service}. "
+                       "Azure currently covers compute (VMs) and storage (managed disks, blob).",
+                alternatives=[
+                    "Use describe_catalog(provider='azure') to see supported services.",
+                    "For Azure AI services, Azure OpenAI is not yet implemented.",
+                ],
+                example_invocation={
+                    "provider": "azure", "domain": "compute",
+                    "resource_type": "Standard_D4s_v3", "region": "eastus",
+                },
+            )
+        if isinstance(spec, ComputePricingSpec):
+            public_prices = await self._price_compute(spec)
+        elif isinstance(spec, StoragePricingSpec):
+            public_prices = await self._price_storage(spec)
+        else:
+            raise NotSupportedError(
+                provider=self.provider,
+                domain=spec.domain,
+                service=spec.service,
+                reason=f"Azure does not implement domain={spec.domain.value} yet.",
+            )
+        return PricingResult(
+            public_prices=public_prices,
+            auth_available=False,
+            source="catalog",
+        )
+
+    async def _price_compute(self, spec: ComputePricingSpec) -> list[NormalizedPrice]:
+        resource_type = spec.resource_type or "Standard_D4s_v3"
+        os_type = spec.os or "Linux"
+        return await self.get_compute_price(resource_type, spec.region, os_type, spec.term)
+
+    async def _price_storage(self, spec: StoragePricingSpec) -> list[NormalizedPrice]:
+        storage_type = spec.storage_type or "premium-ssd"
+        return await self.get_storage_price(storage_type, spec.region, spec.size_gb)
+
+    async def describe_catalog(self) -> ProviderCatalog:
+        return ProviderCatalog(
+            provider=CloudProvider.AZURE,
+            domains=[PricingDomain.COMPUTE, PricingDomain.STORAGE],
+            services={
+                "compute": ["vm"],
+                "storage": ["managed_disks", "blob"],
+            },
+            supported_terms={
+                "compute/vm": ["on_demand", "spot", "reserved_1yr", "reserved_3yr"],
+                "storage/managed_disks": ["on_demand"],
+                "storage/blob": ["on_demand"],
+            },
+            filter_hints={
+                "compute/vm": {
+                    "resource_type": "Azure VM size e.g. 'Standard_D4s_v3', 'Standard_E8s_v3'",
+                    "os": "'Linux' (default) or 'Windows'",
+                    "term": "on_demand | spot | reserved_1yr | reserved_3yr",
+                },
+                "storage/managed_disks": {
+                    "storage_type": "premium-ssd | standard-ssd | standard-hdd | ultra-ssd",
+                    "size_gb": "Disk size for monthly estimate",
+                },
+                "storage/blob": {
+                    "storage_type": "blob",
+                    "size_gb": "Storage volume for monthly estimate",
+                },
+            },
+            example_invocations={
+                "compute/vm": {
+                    "provider": "azure", "domain": "compute",
+                    "resource_type": "Standard_D4s_v3", "region": "eastus",
+                    "os": "Linux", "term": "on_demand",
+                },
+                "storage/managed_disks": {
+                    "provider": "azure", "domain": "storage",
+                    "storage_type": "premium-ssd", "region": "eastus", "size_gb": 128,
+                },
+            },
+            decision_matrix={
+                "Azure VMs": "compute/vm",
+                "Virtual Machines": "compute/vm",
+                "Azure Managed Disks": "storage/managed_disks",
+                "Azure Blob Storage": "storage/blob",
+                "Premium SSD": "storage/managed_disks — set storage_type='premium-ssd'",
+                "Standard SSD": "storage/managed_disks — set storage_type='standard-ssd'",
+            },
+        )
 
     async def get_effective_price(
         self,
