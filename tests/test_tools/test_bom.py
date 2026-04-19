@@ -1,4 +1,4 @@
-"""Tests for estimate_bom and estimate_unit_economics os field (T20)."""
+"""Tests for estimate_bom and estimate_unit_economics os/spec handling (v0.8.0)."""
 from __future__ import annotations
 
 from decimal import Decimal
@@ -10,6 +10,7 @@ from opencloudcosts.models import (
     CloudProvider,
     NormalizedPrice,
     PriceUnit,
+    PricingResult,
     PricingTerm,
 )
 
@@ -29,32 +30,32 @@ def _make_price(region: str = "us-east-1", price: str = "0.192") -> NormalizedPr
     )
 
 
-@pytest.fixture
-def mock_provider():
+def _make_provider(price: NormalizedPrice | None = None):
     pvdr = MagicMock()
-    pvdr.get_compute_price = AsyncMock(return_value=[_make_price()])
+    pvdr.supports = MagicMock(return_value=True)
+    result = PricingResult(public_prices=[price or _make_price()])
+    pvdr.get_price = AsyncMock(return_value=result)
     return pvdr
 
 
-@pytest.fixture
-def bom_context(mock_provider):
+def _make_ctx(pvdr):
     ctx = MagicMock()
-    ctx.request_context.lifespan_context = {"providers": {"aws": mock_provider}}
-    return ctx, mock_provider
+    ctx.request_context.lifespan_context = {"providers": {"aws": pvdr}}
+    return ctx
 
 
 # ------------------------------------------------------------------
-# estimate_bom — os field
+# estimate_bom — os field passed through in spec
 # ------------------------------------------------------------------
 
-async def test_estimate_bom_windows_os(bom_context):
-    """Windows BoM item should pass os='Windows' to get_compute_price."""
+async def test_estimate_bom_windows_os():
+    """Windows BoM item should include os='Windows' in the ComputePricingSpec passed to get_price."""
     from opencloudcosts.server import create_server as create_mcp_server
 
-    ctx, mock_provider = bom_context
+    pvdr = _make_provider()
+    ctx = _make_ctx(pvdr)
     mcp = create_mcp_server()
 
-    # Find the registered tool function
     tool_fn = None
     for tool in mcp._tool_manager.list_tools():
         if tool.name == "estimate_bom":
@@ -66,8 +67,8 @@ async def test_estimate_bom_windows_os(bom_context):
     items = [
         {
             "provider": "aws",
-            "service": "compute",
-            "type": "m5.xlarge",
+            "domain": "compute",
+            "resource_type": "m5.xlarge",
             "region": "us-east-1",
             "os": "Windows",
         }
@@ -75,19 +76,17 @@ async def test_estimate_bom_windows_os(bom_context):
     result = await tool_fn(ctx, items)
 
     assert "error" not in result or result.get("error") is None
-    mock_provider.get_compute_price.assert_called_once()
-    call_args = mock_provider.get_compute_price.call_args
-    # Third positional arg (index 2) should be "Windows"
-    assert call_args.args[2] == "Windows", (
-        f"Expected os='Windows' but got '{call_args.args[2]}'"
-    )
+    pvdr.get_price.assert_called_once()
+    spec_arg = pvdr.get_price.call_args.args[0]
+    assert spec_arg.os == "Windows"
 
 
-async def test_estimate_bom_os_defaults_to_linux(bom_context):
-    """BoM item without os field should default to Linux (backwards compatible)."""
+async def test_estimate_bom_os_defaults_to_linux():
+    """BoM item without os field should default to Linux."""
     from opencloudcosts.server import create_server as create_mcp_server
 
-    ctx, mock_provider = bom_context
+    pvdr = _make_provider()
+    ctx = _make_ctx(pvdr)
     mcp = create_mcp_server()
 
     tool_fn = None
@@ -101,31 +100,29 @@ async def test_estimate_bom_os_defaults_to_linux(bom_context):
     items = [
         {
             "provider": "aws",
-            "service": "compute",
-            "type": "m5.xlarge",
+            "domain": "compute",
+            "resource_type": "m5.xlarge",
             "region": "us-east-1",
-            # no "os" field — should default to Linux
         }
     ]
     result = await tool_fn(ctx, items)
 
     assert "error" not in result or result.get("error") is None
-    mock_provider.get_compute_price.assert_called_once()
-    call_args = mock_provider.get_compute_price.call_args
-    assert call_args.args[2] == "Linux", (
-        f"Expected default os='Linux' but got '{call_args.args[2]}'"
-    )
+    pvdr.get_price.assert_called_once()
+    spec_arg = pvdr.get_price.call_args.args[0]
+    assert spec_arg.os == "Linux"
 
 
 # ------------------------------------------------------------------
-# estimate_unit_economics — os field
+# estimate_unit_economics — os field passed through in spec
 # ------------------------------------------------------------------
 
-async def test_estimate_unit_economics_windows_os(bom_context):
-    """estimate_unit_economics Windows item should pass os='Windows' to get_compute_price."""
+async def test_estimate_unit_economics_windows_os():
+    """estimate_unit_economics Windows item should pass os='Windows' in spec to get_price."""
     from opencloudcosts.server import create_server as create_mcp_server
 
-    ctx, mock_provider = bom_context
+    pvdr = _make_provider()
+    ctx = _make_ctx(pvdr)
     mcp = create_mcp_server()
 
     tool_fn = None
@@ -139,8 +136,8 @@ async def test_estimate_unit_economics_windows_os(bom_context):
     items = [
         {
             "provider": "aws",
-            "service": "compute",
-            "type": "m5.xlarge",
+            "domain": "compute",
+            "resource_type": "m5.xlarge",
             "region": "us-east-1",
             "os": "Windows",
         }
@@ -148,16 +145,17 @@ async def test_estimate_unit_economics_windows_os(bom_context):
     result = await tool_fn(ctx, items, units_per_month=1000.0)
 
     assert "error" not in result or result.get("error") is None
-    mock_provider.get_compute_price.assert_called_once()
-    call_args = mock_provider.get_compute_price.call_args
-    assert call_args.args[2] == "Windows"
+    pvdr.get_price.assert_called_once()
+    spec_arg = pvdr.get_price.call_args.args[0]
+    assert spec_arg.os == "Windows"
 
 
-async def test_estimate_unit_economics_os_defaults_to_linux(bom_context):
+async def test_estimate_unit_economics_os_defaults_to_linux():
     """estimate_unit_economics without os field should default to Linux."""
     from opencloudcosts.server import create_server as create_mcp_server
 
-    ctx, mock_provider = bom_context
+    pvdr = _make_provider()
+    ctx = _make_ctx(pvdr)
     mcp = create_mcp_server()
 
     tool_fn = None
@@ -171,14 +169,14 @@ async def test_estimate_unit_economics_os_defaults_to_linux(bom_context):
     items = [
         {
             "provider": "aws",
-            "service": "compute",
-            "type": "m5.xlarge",
+            "domain": "compute",
+            "resource_type": "m5.xlarge",
             "region": "us-east-1",
         }
     ]
     result = await tool_fn(ctx, items, units_per_month=1000.0)
 
     assert "error" not in result or result.get("error") is None
-    mock_provider.get_compute_price.assert_called_once()
-    call_args = mock_provider.get_compute_price.call_args
-    assert call_args.args[2] == "Linux"
+    pvdr.get_price.assert_called_once()
+    spec_arg = pvdr.get_price.call_args.args[0]
+    assert spec_arg.os == "Linux"

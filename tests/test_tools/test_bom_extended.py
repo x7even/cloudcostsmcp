@@ -1,4 +1,4 @@
-"""Extended tests for estimate_bom and estimate_unit_economics (T24)."""
+"""Extended tests for estimate_bom and estimate_unit_economics (v0.8.0)."""
 from __future__ import annotations
 
 from decimal import Decimal
@@ -11,20 +11,16 @@ from opencloudcosts.models import (
     CloudProvider,
     NormalizedPrice,
     PriceUnit,
+    PricingResult,
     PricingTerm,
 )
 from opencloudcosts.tools.bom import register_bom_tools
 
 
-# ---------------------------------------------------------------------------
-# Helpers / shared fixtures
-# ---------------------------------------------------------------------------
-
 def _make_compute_price(
     region: str = "us-east-1",
     price: str = "0.192",
     provider: CloudProvider = CloudProvider.AWS,
-    description: str = "m5.xlarge Linux",
     instance_type: str = "m5.xlarge",
 ) -> NormalizedPrice:
     return NormalizedPrice(
@@ -32,7 +28,7 @@ def _make_compute_price(
         service="compute",
         sku_id="TESTSKU",
         product_family="Compute Instance",
-        description=description,
+        description=f"{instance_type} Linux",
         region=region,
         attributes={"instanceType": instance_type, "vcpu": "4", "memory": "16 GiB"},
         pricing_term=PricingTerm.ON_DEMAND,
@@ -80,8 +76,6 @@ def _make_storage_price(region: str = "us-east-1", price: str = "0.10") -> Norma
 
 
 class _ToolCapture:
-    """Minimal mock MCP object that captures registered tool functions by name."""
-
     def __init__(self) -> None:
         self._tools: dict[str, Any] = {}
 
@@ -101,6 +95,13 @@ def _make_ctx(providers: dict[str, Any]) -> MagicMock:
     return ctx
 
 
+def _make_provider(price: NormalizedPrice) -> MagicMock:
+    pvdr = MagicMock()
+    pvdr.supports = MagicMock(return_value=True)
+    pvdr.get_price = AsyncMock(return_value=PricingResult(public_prices=[price]))
+    return pvdr
+
+
 @pytest.fixture
 def bom_tools():
     capture = _ToolCapture()
@@ -113,17 +114,16 @@ def bom_tools():
 # ---------------------------------------------------------------------------
 
 async def test_estimate_bom_database_aws(bom_tools):
-    """AWS database item should call get_service_price and return a valid line item."""
+    """AWS database item should call get_price and return a valid line item."""
     rds_price = _make_rds_price(instance_type="db.t4g.micro")
-    aws_mock = MagicMock()
-    aws_mock.get_service_price = AsyncMock(return_value=[rds_price])
+    aws_mock = _make_provider(rds_price)
     ctx = _make_ctx({"aws": aws_mock})
 
     items = [
         {
             "provider": "aws",
-            "service": "database",
-            "type": "db.t4g.micro",
+            "domain": "database",
+            "resource_type": "db.t4g.micro",
             "region": "us-east-1",
         }
     ]
@@ -136,32 +136,26 @@ async def test_estimate_bom_database_aws(bom_tools):
 
 
 # ---------------------------------------------------------------------------
-# test_estimate_bom_database_gcp_graceful_error
+# test_estimate_bom_database_gcp_graceful_error (unsupported domain)
 # ---------------------------------------------------------------------------
 
 async def test_estimate_bom_database_gcp_graceful_error(bom_tools):
-    """GCP provider without get_service_price should produce an error in errors list."""
-    # GCP mock has no get_service_price attribute
-    gcp_mock = MagicMock(spec=["get_compute_price", "get_storage_price"])
+    """Provider that returns supports()=False should produce a structured error."""
+    gcp_mock = MagicMock()
+    gcp_mock.supports = MagicMock(return_value=False)
     ctx = _make_ctx({"gcp": gcp_mock})
 
     items = [
         {
             "provider": "gcp",
-            "service": "database",
-            "type": "db-n1-standard-2",
+            "domain": "database",
+            "resource_type": "db-n1-standard-2",
             "region": "us-central1",
         }
     ]
     result = await bom_tools["estimate_bom"](ctx, items)
 
-    # Should not raise — should return structured error
     assert "error" in result or (result.get("errors") and len(result["errors"]) > 0)
-    # When all items error, the top-level "error" key is set
-    if "error" in result:
-        assert "database" in result["error"].lower()
-    else:
-        assert any("database" in e.lower() for e in result["errors"])
 
 
 # ---------------------------------------------------------------------------
@@ -174,29 +168,38 @@ async def test_estimate_bom_mixed_compute_storage_database(bom_tools):
     storage_price = _make_storage_price()
     rds_price = _make_rds_price()
 
+    call_count = 0
+    prices_seq = [compute_price, storage_price, rds_price]
+
+    async def get_price_side_effect(spec):
+        nonlocal call_count
+        p = prices_seq[call_count]
+        call_count += 1
+        return PricingResult(public_prices=[p])
+
     aws_mock = MagicMock()
-    aws_mock.get_compute_price = AsyncMock(return_value=[compute_price])
-    aws_mock.get_storage_price = AsyncMock(return_value=[storage_price])
-    aws_mock.get_service_price = AsyncMock(return_value=[rds_price])
+    aws_mock.supports = MagicMock(return_value=True)
+    aws_mock.get_price = AsyncMock(side_effect=get_price_side_effect)
     ctx = _make_ctx({"aws": aws_mock})
 
     items = [
         {
             "provider": "aws",
-            "service": "compute",
-            "type": "m5.xlarge",
+            "domain": "compute",
+            "resource_type": "m5.xlarge",
             "region": "us-east-1",
         },
         {
             "provider": "aws",
-            "service": "storage",
-            "type": "gp3",
+            "domain": "storage",
+            "storage_type": "gp3",
+            "size_gb": 100,
             "region": "us-east-1",
         },
         {
             "provider": "aws",
-            "service": "database",
-            "type": "db.t4g.micro",
+            "domain": "database",
+            "resource_type": "db.t4g.micro",
             "region": "us-east-1",
         },
     ]
@@ -214,15 +217,14 @@ async def test_estimate_unit_economics_basic(bom_tools):
     """estimate_unit_economics should return cost_per_unit, infrastructure_monthly, volume."""
     compute_price = _make_compute_price(instance_type="t3.micro", price="0.0104")
 
-    aws_mock = MagicMock()
-    aws_mock.get_compute_price = AsyncMock(return_value=[compute_price])
+    aws_mock = _make_provider(compute_price)
     ctx = _make_ctx({"aws": aws_mock})
 
     items = [
         {
             "provider": "aws",
-            "service": "compute",
-            "type": "t3.micro",
+            "domain": "compute",
+            "resource_type": "t3.micro",
             "region": "us-east-1",
         }
     ]
