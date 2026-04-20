@@ -334,7 +334,7 @@ def register_availability_tools(mcp: Any) -> None:
                 "region_name": region_display_name(provider_str, p.region),
                 "price_per_unit": f"${p.price_per_unit:.6f}/{p.unit.value}",
             }
-            if p.unit.value == "per_hour":
+            if p.unit.value in ("per_hour", "per_month"):
                 entry["monthly_estimate"] = f"${p.monthly_cost:.2f}/mo"
             entries.append(entry)
 
@@ -453,7 +453,7 @@ def register_availability_tools(mcp: Any) -> None:
                 "region_name": region_display_name(provider_str, region),
                 "price_per_unit": f"${p.price_per_unit:.6f}/{p.unit.value}",
             }
-            if p.unit.value == "per_hour":
+            if p.unit.value in ("per_hour", "per_month"):
                 entry["monthly_estimate"] = f"${p.monthly_cost:.2f}/mo"
             entries.append(entry)
 

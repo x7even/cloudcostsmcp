@@ -125,7 +125,11 @@ class NormalizedPrice(BaseModel):
                 if self.price_per_unit > 0 and self.price_per_unit < Decimal("0.0000005")
                 else f"${self.price_per_unit:.6f} {self.unit.value}"
             ),
-            "monthly_estimate": f"${self.monthly_cost:.2f}/mo" if self.unit == PriceUnit.PER_HOUR else None,
+            "monthly_estimate": (
+                f"${self.monthly_cost:.2f}/mo"
+                if self.unit in (PriceUnit.PER_HOUR, PriceUnit.PER_MONTH)
+                else None
+            ),
             **{k: v for k, v in self.attributes.items() if k in ("instanceType", "vcpu", "memory", "operatingSystem", "storage_type", "volumeType")},
         }
 
