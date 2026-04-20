@@ -340,7 +340,7 @@ def register_availability_tools(mcp: Any) -> None:
 
         if baseline_region:
             try:
-                apply_baseline_deltas(entries, baseline_region)
+                apply_baseline_deltas(entries, baseline_region, hourly_key="price_per_unit")
             except ValueError as e:
                 return {"error": str(e)}
 
@@ -459,7 +459,7 @@ def register_availability_tools(mcp: Any) -> None:
 
         if baseline_region:
             try:
-                apply_baseline_deltas(entries, baseline_region)
+                apply_baseline_deltas(entries, baseline_region, hourly_key="price_per_unit")
             except ValueError as e:
                 return {"error": str(e)}
 
