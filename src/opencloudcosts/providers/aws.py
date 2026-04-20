@@ -1330,8 +1330,80 @@ class AWSProvider(ProviderBase):
         )
 
     async def _price_serverless(self, spec: ServerlessPricingSpec) -> list[NormalizedPrice]:
-        svc = spec.service or "lambda"
+        svc = (spec.service or "lambda").lower()
+        if svc == "lambda":
+            return await self._price_lambda(spec)
         return await self.get_service_price(svc, spec.region, {}, max_results=10)
+
+    async def _price_lambda(self, spec: ServerlessPricingSpec) -> list[NormalizedPrice]:
+        region = spec.region or "us-east-1"
+        cache_key_extras = {"service": "lambda"}
+        cached = await self._cache.get_prices("aws", "lambda", region, cache_key_extras)
+        if cached:
+            return [NormalizedPrice.model_validate(p) for p in cached]
+
+        try:
+            display_name = aws_region_to_display(region)
+        except ValueError:
+            display_name = region
+
+        raw = await asyncio.to_thread(
+            self._get_products_bulk,
+            "AWSLambda", region,
+            [{"Field": "location", "Value": display_name}],
+            max_results=500,
+        )
+
+        request_price: Decimal | None = None
+        duration_price: Decimal | None = None
+        for item in raw:
+            attrs = item.get("product", {}).get("attributes", {})
+            group = attrs.get("group", "")
+            usagetype = attrs.get("usagetype", "")
+            extracted = self._extract_on_demand_price(item)
+            if not extracted or extracted[0] == 0:
+                continue
+            price_val, unit_str = extracted
+            # Standard x86 request rate (not ARM, not Edge, not managed instances)
+            if (group == "AWS-Lambda-Requests" and "ARM" not in usagetype
+                    and "Edge" not in usagetype and request_price is None):
+                request_price = price_val
+            # Standard x86 duration rate (first/highest tier at startUsageAmount=0)
+            elif (group == "AWS-Lambda-Duration" and usagetype == "Lambda-GB-Second"
+                  and duration_price is None):
+                duration_price = price_val
+
+        prices = []
+        if request_price:
+            per_million = request_price * 1_000_000
+            prices.append(NormalizedPrice(
+                provider=CloudProvider.AWS, service="serverless",
+                sku_id=f"aws:lambda:{region}:requests",
+                product_family="AWS Lambda",
+                description=f"Lambda requests — ${per_million:.2f} per 1M requests",
+                region=region, pricing_term=PricingTerm.ON_DEMAND,
+                price_per_unit=request_price, unit=PriceUnit.PER_REQUEST,
+                attributes={"billing_dimension": "requests",
+                            "per_million_requests": f"${per_million:.4f}"},
+            ))
+        if duration_price:
+            prices.append(NormalizedPrice(
+                provider=CloudProvider.AWS, service="serverless",
+                sku_id=f"aws:lambda:{region}:duration",
+                product_family="AWS Lambda",
+                description="Lambda duration (per GB-second)",
+                region=region, pricing_term=PricingTerm.ON_DEMAND,
+                price_per_unit=duration_price, unit=PriceUnit.PER_GB_SECOND,
+                attributes={"billing_dimension": "gb_second"},
+            ))
+
+        if prices:
+            await self._cache.set_prices(
+                "aws", "lambda", region, cache_key_extras,
+                [p.model_dump(mode="json") for p in prices],
+                ttl_hours=self._settings.cache_ttl_hours,
+            )
+        return prices
 
     async def _price_analytics(self, spec: AnalyticsPricingSpec) -> list[NormalizedPrice]:
         svc = spec.service or "redshift"

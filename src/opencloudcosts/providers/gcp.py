@@ -583,40 +583,31 @@ class GCPProvider(ProviderBase):
 
         index = await self._build_cloud_sql_price_index(region)
 
-        # Build SKU description substrings based on engine and HA/Zonal
         zone_type = "Regional" if ha else "Zonal"
-        cpu_desc = f"Cloud SQL for {engine_norm}: {zone_type} - Standard"
-        # RAM SKU contains "Standard Memory" — CPU SKU contains just "Standard" but not "Memory"
-        # We look up CPU first (without "Memory") then RAM (with "Memory")
-        ram_desc = f"Cloud SQL for {engine_norm}: {zone_type} - Standard Memory"
+        engine_prefix = f"cloud sql for {engine_norm}: {zone_type} -".lower()
 
-        # Find CPU price: matches cpu_desc but NOT "Memory"
-        cpu_price: Decimal | None = None
-        ram_price: Decimal | None = None
+        # GCP Cloud SQL SKUs encode instance size directly in the description:
+        # "Cloud SQL for MySQL: Zonal - 4 vCPU + 15GB RAM in Americas"
+        # Format RAM: drop trailing ".0" (15.0 → "15", 3.75 → "3.75")
+        vcpu_str = str(int(vcpus)) if vcpus == int(vcpus) else str(vcpus)
+        ram_str = str(int(memory_gb)) if memory_gb == int(memory_gb) else str(memory_gb)
+        size_pattern = f"{vcpu_str} vcpu + {ram_str}gb ram".lower()
+
+        total_price: Decimal | None = None
         for (desc, utype), price in index.items():
             if utype != "OnDemand":
                 continue
             desc_lower = desc.lower()
-            cpu_desc_lower = cpu_desc.lower()
-            ram_desc_lower = ram_desc.lower()
-            if ram_desc_lower in desc_lower and ram_price is None:
-                ram_price = price
-            elif cpu_desc_lower in desc_lower and "memory" not in desc_lower and cpu_price is None:
-                cpu_price = price
+            if engine_prefix in desc_lower and size_pattern in desc_lower:
+                total_price = price
+                break
 
-        if cpu_price is None or ram_price is None:
+        if total_price is None:
             logger.warning(
-                "GCP Cloud SQL: could not find %s/%s SKU for %s %s in %s (ha=%s). "
-                "CPU found: %s, RAM found: %s",
-                cpu_desc, ram_desc, engine_norm, instance_type, region, ha,
-                cpu_price is not None, ram_price is not None,
+                "GCP Cloud SQL: no SKU matching '%s vCPU + %sGB RAM' for %s %s in %s (ha=%s)",
+                vcpu_str, ram_str, engine_norm, instance_type, region, ha,
             )
             return []
-
-        total_price = (
-            Decimal(str(vcpus)) * cpu_price
-            + Decimal(str(memory_gb)) * ram_price
-        )
 
         ha_label = "HA/Regional" if ha else "Zonal"
         result = NormalizedPrice(
@@ -801,7 +792,7 @@ class GCPProvider(ProviderBase):
 
         Returns a dict keyed by SKU description.
         """
-        cache_key = f"gcp:bigquery_price_index:{region}"
+        cache_key = f"gcp:bigquery_price_index:v2:{region}"
         cached = await self._cache.get_metadata(cache_key)
         if cached is not None:
             return {k: Decimal(v) for k, v in cached.items()}
@@ -817,8 +808,10 @@ class GCPProvider(ProviderBase):
                 continue
 
             desc = sku.get("description", "")
-            # Use paid-price tier for Analysis SKUs (tier[0] is free quota = $0)
-            if "Analysis" in desc and "Streaming" not in desc:
+            # Storage and analysis SKUs have a free-quota tier at startUsageAmount=0 ($0)
+            # followed by the actual rate. Use _sku_paid_price to skip the free tier.
+            if ("Analysis" in desc and "Streaming" not in desc) or \
+               "Active Logical Storage" in desc or "Long Term Logical Storage" in desc:
                 price = self._sku_paid_price(sku)
             else:
                 price = self._sku_price(sku)
@@ -2219,22 +2212,44 @@ class GCPProvider(ProviderBase):
                 "first 10 GiB/month active storage free."
             ),
         }
-        if spec.query_tb:
-            breakdown["estimated_query_cost"] = float(
-                Decimal(str(spec.query_tb)) * analysis_rate
-            )
-        if spec.active_storage_gb:
-            breakdown["estimated_active_storage_cost"] = float(
-                Decimal(str(spec.active_storage_gb)) / Decimal("1024") * active_rate
-            )
-        if spec.longterm_storage_gb:
-            breakdown["estimated_longterm_storage_cost"] = float(
-                Decimal(str(spec.longterm_storage_gb)) / Decimal("1024") * longterm_rate
-            )
-        if spec.streaming_gb:
-            breakdown["estimated_streaming_cost"] = float(
-                Decimal(str(spec.streaming_gb)) * streaming_rate
-            )
+
+        # Compute per-component costs and build composite price for estimate_bom
+        total_cost = Decimal("0")
+        components: list[str] = []
+        if spec.query_tb and analysis_rate > 0:
+            q_cost = Decimal(str(spec.query_tb)) * analysis_rate
+            total_cost += q_cost
+            breakdown["estimated_query_cost"] = float(q_cost)
+            components.append(f"{spec.query_tb}TiB queries")
+        if spec.active_storage_gb and active_rate > 0:
+            s_cost = Decimal(str(spec.active_storage_gb)) / Decimal("1024") * active_rate
+            total_cost += s_cost
+            breakdown["estimated_active_storage_cost"] = float(s_cost)
+            components.append(f"{spec.active_storage_gb}GB active storage")
+        if spec.longterm_storage_gb and longterm_rate > 0:
+            lt_cost = Decimal(str(spec.longterm_storage_gb)) / Decimal("1024") * longterm_rate
+            total_cost += lt_cost
+            breakdown["estimated_longterm_storage_cost"] = float(lt_cost)
+            components.append(f"{spec.longterm_storage_gb}GB long-term storage")
+        if spec.streaming_gb and streaming_rate > 0:
+            st_cost = Decimal(str(spec.streaming_gb)) * streaming_rate
+            total_cost += st_cost
+            breakdown["estimated_streaming_cost"] = float(st_cost)
+            components.append(f"{spec.streaming_gb}GB streaming inserts")
+
+        if total_cost > 0 and components:
+            breakdown["monthly_total"] = float(total_cost)
+            # Prepend composite price so estimate_bom picks it up as the unit cost
+            prices.insert(0, NormalizedPrice(
+                provider=CloudProvider.GCP, service="analytics",
+                sku_id=f"gcp:bigquery:{region}:workload_total",
+                product_family="BigQuery",
+                description="BigQuery workload total: " + ", ".join(components),
+                region=region, pricing_term=PricingTerm.ON_DEMAND,
+                price_per_unit=total_cost, unit=PriceUnit.PER_UNIT,
+                attributes={"billing_dimension": "workload_total"},
+            ))
+
         return prices, breakdown
 
     async def _price_network(
