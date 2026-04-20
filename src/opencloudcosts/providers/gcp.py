@@ -105,6 +105,7 @@ _TERM_USAGE_TYPE: dict[PricingTerm, tuple[str, str, str]] = {
 _GCP_CAPABILITIES: dict[tuple[str, str | None], bool] = {
     (PricingDomain.COMPUTE.value, None): True,
     (PricingDomain.COMPUTE.value, "compute_engine"): True,
+    (PricingDomain.COMPUTE.value, "vm"): True,   # Azure-style alias
     (PricingDomain.STORAGE.value, None): True,
     (PricingDomain.STORAGE.value, "gcs"): True,
     (PricingDomain.STORAGE.value, "persistent_disk"): True,

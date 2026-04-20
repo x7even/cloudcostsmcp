@@ -5,7 +5,7 @@ from decimal import Decimal
 from enum import Enum
 from typing import Annotated, Any, Literal, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class CloudProvider(str, Enum):
@@ -281,6 +281,14 @@ class ComputePricingSpec(BasePricingSpec):
     vcpu: float | None = None          # Fargate-style sizing
     memory_gb: float | None = None
     hours_per_month: float = 730.0
+
+    @model_validator(mode="before")
+    @classmethod
+    def _alias_instance_type(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "instance_type" in data and "resource_type" not in data:
+            data = dict(data)
+            data["resource_type"] = data.pop("instance_type")
+        return data
 
     def cache_key(self) -> str:
         base = super().cache_key()

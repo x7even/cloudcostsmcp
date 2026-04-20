@@ -57,6 +57,11 @@ _AZURE_STORAGE_MAP: dict[str, str] = {
     "pd-balanced": "Standard SSD Managed Disks",
     "pd-standard": "Standard HDD Managed Disks",
     "standard": "Standard SSD Managed Disks",
+    # ARM SKU-style names
+    "standardssd_lrs": "Standard SSD Managed Disks",
+    "premium_lrs": "Premium SSD Managed Disks",
+    "standard_lrs": "Standard HDD Managed Disks",
+    "ultrassd_lrs": "Ultra Disks",
 }
 
 
