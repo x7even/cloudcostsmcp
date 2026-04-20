@@ -68,6 +68,7 @@ class PriceUnit(str, Enum):
     PER_GB_MONTH = "per_gb_month"
     PER_GB = "per_gb"
     PER_IOPS_MONTH = "per_iops_month"
+    PER_MBPS_MONTH = "per_mbps_month"  # gp3 provisioned throughput
     PER_REQUEST = "per_request"
     PER_GB_SECOND = "per_gb_second"    # Lambda duration
     PER_QUERY = "per_query"            # Route53, Athena

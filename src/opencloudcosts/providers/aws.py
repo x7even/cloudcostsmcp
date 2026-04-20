@@ -721,6 +721,37 @@ class AWSProvider(ProviderBase):
                     p = p.model_copy(update={"unit": PriceUnit.PER_GB_MONTH})
                 prices.append(p)
 
+        # For gp3, also fetch provisioned IOPS and throughput add-on rates.
+        # gp3 baseline (3000 IOPS, 125 MB/s) is included; provisioning above
+        # those baselines costs extra: $0.005/IOPS-month and $0.04/MB/s-month.
+        if storage_type.lower() == "gp3":
+            gp3_iops_filters = [
+                {"Field": "productFamily", "Value": "System Operation"},
+                {"Field": "group", "Value": "EBS IOPS"},
+                {"Field": "volumeApiName", "Value": "gp3"},
+                {"Field": "location", "Value": display_name},
+            ]
+            iops_raw = await self._get_products("AmazonEC2", gp3_iops_filters, max_results=5)
+            for item in iops_raw:
+                p = self._item_to_price(item, region, PricingTerm.ON_DEMAND, "storage-iops")
+                if p:
+                    if p.unit == PriceUnit.PER_UNIT:
+                        p = p.model_copy(update={"unit": PriceUnit.PER_IOPS_MONTH})
+                    prices.append(p)
+            gp3_tp_filters = [
+                {"Field": "productFamily", "Value": "System Operation"},
+                {"Field": "group", "Value": "EBS Throughput"},
+                {"Field": "volumeApiName", "Value": "gp3"},
+                {"Field": "location", "Value": display_name},
+            ]
+            tp_raw = await self._get_products("AmazonEC2", gp3_tp_filters, max_results=5)
+            for item in tp_raw:
+                p = self._item_to_price(item, region, PricingTerm.ON_DEMAND, "storage-throughput")
+                if p:
+                    if p.unit == PriceUnit.PER_UNIT:
+                        p = p.model_copy(update={"unit": PriceUnit.PER_MBPS_MONTH})
+                    prices.append(p)
+
         # For provisioned IOPS types, also fetch the per-IOPS-month rate
         if storage_type.lower() in {"io1", "io2"}:
             iops_filters = [
@@ -1317,7 +1348,48 @@ class AWSProvider(ProviderBase):
             out_prices = await self.get_service_price(
                 "bedrock", spec.region, {"model": catalog_name, "inferenceType": out_type}, max_results=5
             )
-            return [p for p in in_prices + out_prices if p]
+            prices = [p for p in in_prices + out_prices if p]
+
+            # When token counts are provided, compute and prepend a total-cost NormalizedPrice.
+            # Bedrock prices are per individual token; expose per-million-token rates too.
+            if prices and (spec.input_tokens or spec.output_tokens):
+                in_rate = next((p.price_per_unit for p in prices if "input" in p.description.lower()), None)
+                out_rate = next((p.price_per_unit for p in prices if "output" in p.description.lower()), None)
+                total = Decimal("0")
+                components: list[str] = []
+                if in_rate is not None and spec.input_tokens:
+                    in_cost = in_rate * Decimal(str(spec.input_tokens))
+                    total += in_cost
+                    per_m = in_rate * Decimal("1000000")
+                    components.append(
+                        f"{spec.input_tokens:,} input tokens × ${per_m:.4f}/1M = ${in_cost:.4f}"
+                    )
+                if out_rate is not None and spec.output_tokens:
+                    out_cost = out_rate * Decimal(str(spec.output_tokens))
+                    total += out_cost
+                    per_m = out_rate * Decimal("1000000")
+                    components.append(
+                        f"{spec.output_tokens:,} output tokens × ${per_m:.4f}/1M = ${out_cost:.4f}"
+                    )
+                if total > 0:
+                    prices.insert(0, NormalizedPrice(
+                        provider=CloudProvider.AWS,
+                        service="bedrock",
+                        sku_id=f"aws:bedrock:{catalog_name}:total",
+                        product_family="AI",
+                        description="Bedrock total: " + "; ".join(components),
+                        region=spec.region,
+                        pricing_term=spec.term,
+                        price_per_unit=total,
+                        unit=PriceUnit.PER_UNIT,
+                        attributes={
+                            "billing_dimension": "workload_total",
+                            "model": catalog_name,
+                            "input_tokens": str(spec.input_tokens or 0),
+                            "output_tokens": str(spec.output_tokens or 0),
+                        },
+                    ))
+            return prices
         if svc == "sagemaker":
             filters: dict[str, str] = {}
             if spec.machine_type:
@@ -1504,7 +1576,7 @@ class AWSProvider(ProviderBase):
                 "CloudWatch metrics": "observability/cloudwatch",
                 "Application Load Balancer": "network/lb (also: service='cloud_lb')",
                 "NAT Gateway": "network/nat (also: service='cloud_nat')",
-                "CloudFront CDN": "network/cdn",
+                "CloudFront CDN": "network/cdn — AWS-ONLY; for GCP Cloud CDN use provider='gcp', service='cloud_cdn'",
                 "AWS WAF": "network/waf",
                 "Data transfer / egress": "network/data_transfer",
             },

@@ -65,6 +65,27 @@ _AZURE_STORAGE_MAP: dict[str, str] = {
 }
 
 
+# Azure Premium SSD P-series tier sizes (GiB capacity per tier).
+# Each tier's price is a flat monthly fee covering disks up to that capacity.
+# When size_gb is specified, we select the smallest tier >= size_gb.
+_PREMIUM_SSD_TIERS: list[tuple[str, int]] = [
+    ("P1", 4), ("P2", 8), ("P3", 16), ("P4", 32), ("P6", 64),
+    ("P10", 128), ("P15", 256), ("P20", 512), ("P30", 1024),
+    ("P40", 2048), ("P50", 4096), ("P60", 8192), ("P70", 16384), ("P80", 32767),
+]
+
+# Storage types that use P-series fixed-size tiers
+_PREMIUM_SSD_PRODUCT_NAMES = {"Premium SSD Managed Disks"}
+
+
+def _select_premium_ssd_tier(size_gb: float) -> str:
+    """Return the smallest P-series tier name that covers size_gb."""
+    for tier_name, capacity in _PREMIUM_SSD_TIERS:
+        if capacity >= size_gb:
+            return tier_name
+    return "P80"
+
+
 _AZURE_CAPABILITIES: dict[tuple[str, str | None], bool] = {
     (PricingDomain.COMPUTE.value, None): True,
     (PricingDomain.COMPUTE.value, "vm"): True,
@@ -246,10 +267,14 @@ class AzureProvider(ProviderBase):
                 f"Supported: {sorted(_AZURE_STORAGE_MAP)}"
             )
 
+        is_premium_ssd = product_name in _PREMIUM_SSD_PRODUCT_NAMES
+
+        # Cache the full tier list, not size-specific slices
         cache_extras = {"storage_type": storage_type}
         cached = await self._cache.get_prices("azure", "storage", region, cache_extras)
         if cached is not None:
-            return [NormalizedPrice.model_validate(p) for p in cached]
+            all_prices = [NormalizedPrice.model_validate(p) for p in cached]
+            return self._filter_storage_by_size(all_prices, is_premium_ssd, size_gb)
 
         filters: dict[str, str] = {
             "armRegionName": region,
@@ -257,15 +282,20 @@ class AzureProvider(ProviderBase):
             "productName": product_name,
         }
 
-        items = await asyncio.to_thread(self._fetch_prices, filters, 10)
+        # Fetch enough items to cover all P-series tiers (14 tiers × LRS/ZRS = ~28)
+        max_results = 50 if is_premium_ssd else 10
+        items = await asyncio.to_thread(self._fetch_prices, filters, max_results)
 
         prices: list[NormalizedPrice] = []
         for item in items:
             p = self._item_to_price(item, region, PricingTerm.ON_DEMAND, "storage")
             if p is None:
                 continue
-            # Storage pricing is per GB/month
-            p = p.model_copy(update={"unit": PriceUnit.PER_GB_MONTH})
+            if is_premium_ssd:
+                # Premium SSD tiers are flat monthly fees — unit is per_month
+                p = p.model_copy(update={"unit": PriceUnit.PER_MONTH})
+            else:
+                p = p.model_copy(update={"unit": PriceUnit.PER_GB_MONTH})
             prices.append(p)
 
         await self._cache.set_prices(
@@ -273,7 +303,45 @@ class AzureProvider(ProviderBase):
             [p.model_dump(mode="json") for p in prices],
             ttl_hours=self._settings.cache_ttl_hours,
         )
-        return prices
+        return self._filter_storage_by_size(prices, is_premium_ssd, size_gb)
+
+    @staticmethod
+    def _filter_storage_by_size(
+        prices: list[NormalizedPrice],
+        is_premium_ssd: bool,
+        size_gb: float | None,
+    ) -> list[NormalizedPrice]:
+        """For Premium SSD with a known size_gb, return only the matching P-tier."""
+        if not is_premium_ssd or size_gb is None:
+            return prices
+        target_tier = _select_premium_ssd_tier(size_gb)
+        # skuName for a Premium SSD tier looks like "P20 LRS" or "P20 ZRS"
+        tier_prefix = target_tier + " "
+        filtered = [
+            p for p in prices
+            if p.description.startswith(tier_prefix)
+            # LRS is the standard redundancy option
+            and "ZRS" not in p.description
+        ]
+        if not filtered:
+            # Fallback: return any matching tier prefix (without ZRS filter)
+            filtered = [p for p in prices if p.description.startswith(tier_prefix)]
+        if not filtered:
+            return prices  # couldn't filter — return all
+        # Annotate with tier info
+        tier_gb = next(cap for name, cap in _PREMIUM_SSD_TIERS if name == target_tier)
+        return [
+            p.model_copy(update={
+                "description": f"{p.description} ({target_tier}: up to {tier_gb} GiB)",
+                "attributes": {
+                    **p.attributes,
+                    "disk_tier": target_tier,
+                    "tier_capacity_gib": str(tier_gb),
+                    "requested_size_gb": str(size_gb),
+                },
+            })
+            for p in filtered
+        ]
 
     async def list_regions(self, service: str = "compute") -> list[str]:
         return list_azure_regions()

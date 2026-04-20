@@ -2084,6 +2084,50 @@ class GCPProvider(ProviderBase):
                     attributes={"model": model_lower, "direction": direction},
                 ))
             breakdown: dict = {"model": model or "gemini-1.5-flash", "service": "gemini"}
+
+            # When token counts are provided, compute and prepend a total-cost NormalizedPrice.
+            if prices and (spec.input_tokens or spec.output_tokens):
+                in_rate = next(
+                    (p.price_per_unit for p in prices if p.attributes.get("direction") == "input"),
+                    None,
+                )
+                out_rate = next(
+                    (p.price_per_unit for p in prices if p.attributes.get("direction") == "output"),
+                    None,
+                )
+                total = Decimal("0")
+                components: list[str] = []
+                if in_rate is not None and spec.input_tokens:
+                    in_cost = in_rate * Decimal(str(spec.input_tokens))
+                    total += in_cost
+                    per_m = in_rate * Decimal("1000000")
+                    components.append(
+                        f"{spec.input_tokens:,} input tokens × ${per_m:.4f}/1M = ${in_cost:.4f}"
+                    )
+                if out_rate is not None and spec.output_tokens:
+                    out_cost = out_rate * Decimal(str(spec.output_tokens))
+                    total += out_cost
+                    per_m = out_rate * Decimal("1000000")
+                    components.append(
+                        f"{spec.output_tokens:,} output tokens × ${per_m:.4f}/1M = ${out_cost:.4f}"
+                    )
+                if total > 0:
+                    breakdown["monthly_total"] = float(total)
+                    prices.insert(0, NormalizedPrice(
+                        provider=CloudProvider.GCP, service="ai",
+                        sku_id=f"gcp:gemini:{model_lower}:total:{spec.region}",
+                        product_family="Vertex AI Gemini",
+                        description="Gemini total: " + "; ".join(components),
+                        region=spec.region, pricing_term=PricingTerm.ON_DEMAND,
+                        price_per_unit=total, unit=PriceUnit.PER_UNIT,
+                        attributes={
+                            "billing_dimension": "workload_total",
+                            "model": model_lower,
+                            "input_tokens": str(spec.input_tokens or 0),
+                            "output_tokens": str(spec.output_tokens or 0),
+                        },
+                    ))
+
             return prices, breakdown
 
         # Vertex AI training / prediction
@@ -2701,6 +2745,10 @@ class GCPProvider(ProviderBase):
                     "provider": "gcp", "domain": "network", "service": "cloud_lb",
                     "lb_type": "https", "rule_count": 1, "data_gb": 100.0, "region": "us-central1",
                 },
+                "network/cloud_cdn": {
+                    "provider": "gcp", "domain": "network", "service": "cloud_cdn",
+                    "egress_gb": 1000.0, "cache_fill_gb": 100.0, "region": "us-central1",
+                },
                 "observability/cloud_monitoring": {
                     "provider": "gcp", "domain": "observability", "service": "cloud_monitoring",
                     "ingestion_mib": 1000.0, "region": "us-central1",
@@ -2720,7 +2768,8 @@ class GCPProvider(ProviderBase):
                 "Gemini": "ai/gemini",
                 "BigQuery": "analytics/bigquery",
                 "Cloud Load Balancing": "network/cloud_lb",
-                "Cloud CDN": "network/cloud_cdn",
+                "Cloud CDN": "network/cloud_cdn — GCP-native CDN (use provider='gcp', service='cloud_cdn')",
+                "CDN (GCP)": "network/cloud_cdn — use provider='gcp', service='cloud_cdn', NOT provider='aws'",
                 "Cloud NAT": "network/cloud_nat",
                 "Cloud Armor": "network/cloud_armor",
                 "Cloud Monitoring": "observability/cloud_monitoring",
