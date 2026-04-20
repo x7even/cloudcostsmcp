@@ -63,7 +63,7 @@ LLM_API_KEY = os.environ.get("OCC_LLM_API_KEY", "")  # optional
 PROJECT_DIR = _HARNESS_DIR.parent
 MCP_COMMAND = "uv"
 MCP_ARGS = ["run", "--directory", str(PROJECT_DIR), "opencloudcosts"]
-MAX_TOOL_ROUNDS = 12
+MAX_TOOL_ROUNDS = 20
 RESULTS_DIR = _HARNESS_DIR / "results"
 
 SYSTEM_PROMPT = (
@@ -249,6 +249,119 @@ TEST_PROMPTS = {
         "Unit economics question: I run 3x m5.xlarge app servers and 1x db.r6g.large MySQL RDS (Single-AZ) "
         "in us-east-1 to serve 50,000 monthly active users. "
         "What is my infrastructure cost per user per month?"
+    ),
+    "CX_BOM": (
+        "Give me a full AWS Bill of Materials table for this production platform in us-east-1. "
+        "Look up every line item and present the results as a markdown table with columns: "
+        "Service | Type/SKU | Qty | Unit Price | Monthly Cost. "
+        "Then add a TOTAL row. Here is the full inventory:\n"
+        "COMPUTE:\n"
+        "  - 6x m5.xlarge (Linux, on-demand) — web tier\n"
+        "  - 4x m5.2xlarge (Linux, on-demand) — API tier\n"
+        "  - 2x c6i.4xlarge (Linux, on-demand) — batch processing\n"
+        "  - 2x r6g.2xlarge (Linux, on-demand) — in-memory analytics\n"
+        "  - 1x p3.2xlarge (Linux, on-demand) — ML inference\n"
+        "  - 3x t3.medium (Linux, on-demand) — bastion / management\n"
+        "  - 2x m5.4xlarge (Linux, 1-year reserved No Upfront) — reporting\n"
+        "DATABASE:\n"
+        "  - 1x db.r6g.2xlarge MySQL RDS Multi-AZ\n"
+        "  - 1x db.t4g.medium PostgreSQL RDS Single-AZ (dev)\n"
+        "  - 1x cache.r7g.large ElastiCache Redis node\n"
+        "  - DynamoDB on-demand: 50M read request units + 10M write request units/month\n"
+        "STORAGE:\n"
+        "  - 2TB gp3 EBS (across fleet)\n"
+        "  - 500GB io1 EBS at 3000 IOPS (for RDS data volume)\n"
+        "NETWORK:\n"
+        "  - 1x Application Load Balancer\n"
+        "  - 2x NAT Gateways processing 500GB/month each\n"
+        "  - CloudFront CDN serving 10TB/month egress\n"
+        "SERVERLESS / OTHER:\n"
+        "  - AWS Lambda: 10 million requests/month\n"
+        "  - CloudWatch: 500GB log ingestion/month\n"
+    ),
+    "CX11": (
+        "Monthly cost for an AWS media processing platform in us-west-2: "
+        "4x c6i.2xlarge transcoding servers, 2x r6i.xlarge caching nodes, "
+        "10TB st1 EBS for media storage, 2TB gp3 EBS for working storage. "
+        "Give me a full itemised bill."
+    ),
+    "CX12": (
+        "Give me the monthly bill for a data warehouse platform on AWS us-east-1: "
+        "2x m5.4xlarge ETL servers, 1x db.r6g.2xlarge PostgreSQL RDS Multi-AZ, "
+        "5TB gp3 EBS for staging data. What is the total monthly cost?"
+    ),
+    "CX13": (
+        "I need to run the same stack in three AWS regions for global coverage: "
+        "us-east-1, eu-west-1, and ap-northeast-1. "
+        "Stack per region: 2x m5.xlarge + 1x db.t4g.large MySQL RDS Single-AZ + 100GB gp3 EBS. "
+        "What is the total combined monthly cost? Break down by region and show which is most expensive."
+    ),
+    "CX14": (
+        "Disaster recovery budget for AWS: primary stack on us-east-1 "
+        "(3x m5.2xlarge + 1x db.r6g.xlarge MySQL Multi-AZ + 500GB gp3 EBS), "
+        "hot standby on us-west-2 (identical stack). "
+        "What is the total monthly DR bill and how do the two regions compare in price?"
+    ),
+
+    # -----------------------------------------------------------------------
+    # Azure Complex BoM/TCO (AZX)
+    # -----------------------------------------------------------------------
+    "AZX1": (
+        "Give me the monthly TCO for a 3-tier application on Azure eastus: "
+        "3x Standard_D4s_v3 web servers, 2x Standard_D8s_v3 app servers, "
+        "1x Standard_E8s_v3 database server, 500GB premium-ssd storage. "
+        "What should I budget?"
+    ),
+    "AZX2": (
+        "I'm running a production workload on Azure westeurope: "
+        "4x Standard_B4ms web servers, 1x Standard_D8s_v4 app server, 200GB premium-ssd. "
+        "Estimate total monthly on-demand cost."
+    ),
+    "AZX3": (
+        "Compare Azure eastus vs westeurope for this stack: "
+        "2x Standard_D4s_v3 + 1x Standard_E4s_v3 + 200GB premium-ssd. "
+        "What is the monthly cost in each region and which is cheaper?"
+    ),
+
+    # -----------------------------------------------------------------------
+    # Multi-region full-stack comparisons (MRS)
+    # -----------------------------------------------------------------------
+    "MRS1": (
+        "I run a 3-tier stack on AWS: 2x m5.xlarge web servers, 1x db.r6g.large MySQL RDS Single-AZ, "
+        "200GB gp3 EBS. Compare the total monthly cost across us-east-1, eu-west-1, and ap-southeast-1. "
+        "Which region is cheapest overall and by how much?"
+    ),
+    "MRS2": (
+        "Compare total monthly cost for a GCP stack (2x n2-standard-4 + 500GB pd-ssd) "
+        "across us-central1, europe-west1, and asia-east1. "
+        "Which region is cheapest and what is the % premium for the most expensive?"
+    ),
+    "MRS3": (
+        "Cross-cloud cross-region BoM: price this stack in four locations simultaneously — "
+        "AWS us-east-1, AWS eu-west-1, GCP us-central1, GCP europe-west1. "
+        "Stack: 2x 4-vCPU/16GB web servers + 500GB SSD block storage. "
+        "Rank all four options cheapest to most expensive with monthly totals."
+    ),
+
+    # -----------------------------------------------------------------------
+    # Cross-cloud BoM comparisons (CCR)
+    # -----------------------------------------------------------------------
+    "CCR1": (
+        "Price this identical 3-tier stack across all three clouds in their US East regions "
+        "(AWS us-east-1, GCP us-central1, Azure eastus): "
+        "4x general-purpose 4 vCPU/16GB web servers, 1x 8 vCPU/32GB database server, "
+        "500GB SSD block storage. Use real instance types. Which cloud is cheapest overall?"
+    ),
+    "CCR2": (
+        "Compare total monthly cost for a 3-tier stack with 1-year commitments across all three clouds "
+        "in US regions: 3x 4-vCPU/16GB web servers + 1x 8-vCPU/32GB database + 500GB SSD. "
+        "Use reserved_1yr for AWS/Azure and cud_1yr for GCP. "
+        "Which cloud offers the best committed pricing and what is the saving vs on-demand?"
+    ),
+    "CCR3": (
+        "I'm choosing a cloud provider for a new product. Compare monthly cost across AWS, GCP, and Azure "
+        "for this stack: 6x 4-vCPU/16GB app servers, 2x 8-vCPU/64GB memory-optimised DB servers, "
+        "1TB SSD block storage, in US East regions. Show itemised costs per provider."
     ),
 
     # -----------------------------------------------------------------------
@@ -454,11 +567,11 @@ TEST_PROMPTS = {
         "Is any of that free?"
     ),
     "GC3": (
-        "I'm ingesting 200,000 MiB of Cloud Monitoring metrics per month. "
+        "I'm ingesting 200,000 MiB of GCP Cloud Monitoring metrics per month. "
         "Walk me through the tiered pricing and give me the total monthly cost."
     ),
     "GC4": (
-        "At what monthly request volume does Cloud Armor Standard become more expensive "
+        "At what monthly request volume does GCP Cloud Armor Standard become more expensive "
         "than just using a basic WAF? Show the per-policy and per-request costs."
     ),
     "GC5": (
@@ -520,7 +633,7 @@ TEST_PROMPTS = {
         "What is the total monthly storage cost broken down by class?"
     ),
     "GGCS5": (
-        "What is the cheapest GCS storage class for archival data accessed less than once a year? "
+        "What is the cheapest GCP GCS storage class for archival data accessed less than once a year? "
         "Show the per-GB rate and monthly cost for 10TB in us-central1."
     ),
 
