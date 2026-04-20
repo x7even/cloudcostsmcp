@@ -83,14 +83,10 @@ def register_lookup_tools(mcp: Any) -> None:
             }
 
         if not parsed.region:
-            return {
-                "error": "invalid_spec",
-                "reason": "region is required for get_price.",
-                "hint": (
-                    "Add region to your spec, e.g. 'region': 'us-east-1'. "
-                    "For multi-region comparisons use compare_prices or find_cheapest_region."
-                ),
-            }
+            _DEFAULT_REGIONS = {"aws": "us-east-1", "gcp": "us-central1", "azure": "eastus"}
+            default = _DEFAULT_REGIONS.get(parsed.provider.value, "us-east-1")
+            parsed = parsed.model_copy(update={"region": default})
+            logger.info("get_price: region not specified, defaulting to %s for %s", default, parsed.provider.value)
 
         pvdr = _provider_for(ctx, parsed.provider.value)
         if pvdr is None:

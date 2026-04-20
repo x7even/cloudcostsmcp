@@ -74,7 +74,9 @@ SYSTEM_PROMPT = (
     "Be concise and structured in your final response. "
     "If some data is unavailable (e.g. a provider requires credentials you don't have), "
     "still provide a final answer covering what you were able to retrieve, and clearly "
-    "note which items are missing and why."
+    "note which items are missing and why. "
+    "IMPORTANT: You MUST always write your final answer as regular text in your response. "
+    "Do not leave your response blank — always end with a clear written answer."
 )
 
 # ---------------------------------------------------------------------------
@@ -638,8 +640,37 @@ async def run_single(
             # back to reasoning_content so we at least capture something.
             content = assistant_msg.get("content") or ""
             reasoning = assistant_msg.get("reasoning_content") or ""
-            if finish_reason == "stop" and not content.strip() and reasoning:
-                assistant_msg["content"] = f"[thinking only — no final answer generated]\n\n{reasoning[:500]}"
+            thinking_only = finish_reason == "stop" and not content.strip() and reasoning
+
+            if thinking_only:
+                # Model finished thinking but left content empty — re-prompt once.
+                stub = {**assistant_msg, "content": ""}
+                messages.append(stub)
+                trace["messages"].append(stub)
+                recovery_user = {"role": "user", "content": "Please write your final answer now."}
+                messages.append(recovery_user)
+                trace["messages"].append(recovery_user)
+                try:
+                    headers = {"Authorization": f"Bearer {LLM_API_KEY}"} if LLM_API_KEY else {}
+                    recovery_resp = await client.post(
+                        f"{LLM_BASE_URL}/v1/chat/completions",
+                        json={**payload, "messages": messages, "tools": []},
+                        headers=headers,
+                    )
+                    recovery_resp.raise_for_status()
+                    recovery_data = recovery_resp.json()
+                    if recovery_data.get("choices"):
+                        rc = recovery_data["choices"][0]
+                        assistant_msg = rc["message"]
+                        finish_reason = rc.get("finish_reason", "")
+                        content = assistant_msg.get("content") or ""
+                        reasoning = assistant_msg.get("reasoning_content") or ""
+                        thinking_only = not content.strip()
+                except Exception:
+                    pass  # fall through with thinking_only still True
+
+            if thinking_only:
+                assistant_msg = {**assistant_msg, "content": f"[thinking only — no final answer generated]\n\n{reasoning[:500]}"}
 
             messages.append(assistant_msg)
             trace["messages"].append(assistant_msg)
@@ -710,7 +741,47 @@ async def run_single(
 # Entry point
 # ---------------------------------------------------------------------------
 
-async def main(ids: list[str]):
+async def run_worker(
+    items: list[tuple[str, str]],
+    run_dir: "Path",
+    results: dict,
+    print_lock: asyncio.Lock,
+) -> None:
+    """Run a subset of prompts sequentially, each with its own MCP session."""
+    server_params = StdioServerParameters(
+        command=MCP_COMMAND,
+        args=MCP_ARGS,
+        env={**os.environ},
+    )
+    async with stdio_client(server_params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            tools_resp = await session.list_tools()
+            openai_tools = [mcp_tool_to_openai(t) for t in tools_resp.tools]
+            for pid, prompt in items:
+                try:
+                    trace = await run_single(pid, prompt, session, openai_tools, run_dir)
+                    results[pid] = {
+                        "status": "error" if trace["error"] else "ok",
+                        "rounds": trace["rounds"],
+                        "tool_calls": len(trace["tool_calls"]),
+                        "tools_used": list({tc["tool"] for tc in trace["tool_calls"]}),
+                        "error": trace["error"],
+                        "answer_preview": (trace["final_answer"] or "")[:200],
+                    }
+                except Exception as e:
+                    async with print_lock:
+                        print(f"  FATAL [{pid}]: {e}")
+                    results[pid] = {
+                        "status": "fatal",
+                        "error": str(e),
+                        "rounds": 0,
+                        "tool_calls": 0,
+                        "tools_used": [],
+                    }
+
+
+async def main(ids: list[str], parallel: int = 1):
     run_dir = RESULTS_DIR / datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     run_dir.mkdir(parents=True, exist_ok=True)
     print(f"Run directory: {run_dir}")
@@ -728,50 +799,30 @@ async def main(ids: list[str]):
         print("No prompts selected. Use --ids C1,C2,... or --ids all")
         sys.exit(1)
 
-    print(f"Running {len(selected)} prompt(s): {', '.join(selected)}")
+    parallel = max(1, min(parallel, len(selected)))
+    print(f"Running {len(selected)} prompt(s) with {parallel} worker(s): {', '.join(selected)}")
 
-    # Start MCP server (stdio transport — no separate process to manage)
-    server_params = StdioServerParameters(
-        command=MCP_COMMAND,
-        args=MCP_ARGS,
-        env={**os.environ},
-    )
+    # Distribute prompts round-robin across workers
+    items = list(selected.items())
+    buckets: list[list[tuple[str, str]]] = [[] for _ in range(parallel)]
+    for i, item in enumerate(items):
+        buckets[i % parallel].append(item)
 
-    async with stdio_client(server_params) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            tools_resp = await session.list_tools()
-            openai_tools = [mcp_tool_to_openai(t) for t in tools_resp.tools]
-            print(f"MCP server ready — {len(openai_tools)} tools loaded\n")
+    results: dict = {}
+    print_lock = asyncio.Lock()
 
-            summary = {
-                "run_dir": str(run_dir),
-                "model": LLM_MODEL,
-                "timestamp": datetime.utcnow().isoformat() + "Z",
-                "prompts_run": list(selected),
-                "results": {},
-            }
+    await asyncio.gather(*[
+        run_worker(bucket, run_dir, results, print_lock)
+        for bucket in buckets if bucket
+    ])
 
-            for pid, prompt in selected.items():
-                try:
-                    trace = await run_single(pid, prompt, session, openai_tools, run_dir)
-                    summary["results"][pid] = {
-                        "status": "error" if trace["error"] else "ok",
-                        "rounds": trace["rounds"],
-                        "tool_calls": len(trace["tool_calls"]),
-                        "tools_used": list({tc["tool"] for tc in trace["tool_calls"]}),
-                        "error": trace["error"],
-                        "answer_preview": (trace["final_answer"] or "")[:200],
-                    }
-                except Exception as e:
-                    print(f"  FATAL [{pid}]: {e}")
-                    summary["results"][pid] = {
-                        "status": "fatal",
-                        "error": str(e),
-                        "rounds": 0,
-                        "tool_calls": 0,
-                        "tools_used": [],
-                    }
+    summary = {
+        "run_dir": str(run_dir),
+        "model": LLM_MODEL,
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "prompts_run": list(selected),
+        "results": results,
+    }
 
     # Save summary
     summary_file = run_dir / "summary.json"
@@ -822,6 +873,12 @@ if __name__ == "__main__":
         default="",
         help="Override OCC_LLM_API_KEY — API key (if required by the server)",
     )
+    parser.add_argument(
+        "--parallel",
+        type=int,
+        default=1,
+        help="Number of parallel workers (each with its own MCP session). Default: 1",
+    )
     args = parser.parse_args()
 
     # CLI flags override env / .env
@@ -842,4 +899,4 @@ if __name__ == "__main__":
         sys.exit(1)
 
     ids = [x.strip() for x in args.ids.split(",")]
-    asyncio.run(main(ids))
+    asyncio.run(main(ids, parallel=args.parallel))

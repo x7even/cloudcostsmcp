@@ -184,6 +184,8 @@ _AWS_CAPABILITIES: dict[tuple[str, str | None], bool] = {
     (PricingDomain.NETWORK.value, "lb"): True,
     (PricingDomain.NETWORK.value, "cloud_lb"): True,    # GCP-style alias
     (PricingDomain.NETWORK.value, "cdn"): True,
+    (PricingDomain.NETWORK.value, "cloud_cdn"): True,   # GCP-style alias
+    (PricingDomain.NETWORK.value, "cloudfront"): True,  # direct service name
     (PricingDomain.NETWORK.value, "nat"): True,
     (PricingDomain.NETWORK.value, "cloud_nat"): True,   # GCP-style alias
     (PricingDomain.NETWORK.value, "waf"): True,
@@ -1339,7 +1341,7 @@ class AWSProvider(ProviderBase):
         _NET_SERVICE_MAP = {
             "lb": "elb", "load_balancer": "elb", "elb": "elb",
             "cloud_lb": "elb",                              # GCP-style alias
-            "cdn": "cloudfront", "cloudfront": "cloudfront",
+            "cdn": "cloudfront", "cloudfront": "cloudfront", "cloud_cdn": "cloudfront",
             "nat": "nat_gateway", "nat_gateway": "nat_gateway",
             "cloud_nat": "nat_gateway",                     # GCP-style alias
             "waf": "waf",

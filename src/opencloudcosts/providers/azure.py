@@ -49,6 +49,14 @@ _AZURE_STORAGE_MAP: dict[str, str] = {
     "standard-hdd": "Standard HDD Managed Disks",
     "ultra-ssd": "Ultra Disks",
     "blob": "Blob Storage",
+    # Cross-provider aliases so LLMs can use AWS/GCP names
+    "gp3": "Premium SSD Managed Disks",   # AWS gp3 → closest Azure equivalent
+    "gp2": "Standard SSD Managed Disks",
+    "io1": "Premium SSD Managed Disks",
+    "pd-ssd": "Premium SSD Managed Disks",   # GCP alias
+    "pd-balanced": "Standard SSD Managed Disks",
+    "pd-standard": "Standard HDD Managed Disks",
+    "standard": "Standard SSD Managed Disks",
 }
 
 
