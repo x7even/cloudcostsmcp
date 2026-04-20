@@ -642,7 +642,7 @@ class GCPProvider(ProviderBase):
         self, region: str
     ) -> dict[tuple[str, str], Decimal]:
         """Build price index for Memorystore for Redis SKUs in a given region."""
-        cache_key = f"gcp:memorystore_price_index:{region}"
+        cache_key = f"gcp:memorystore_price_index:v2:{region}"
         cached = await self._cache.get_metadata(cache_key)
         if cached is not None:
             return {(k.split("|")[0], k.split("|")[1]): Decimal(v) for k, v in cached.items()}
@@ -732,11 +732,11 @@ class GCPProvider(ProviderBase):
                         raw_rate = price
                         matched_desc = desc
                         break
-                else:  # standard
-                    if (
-                        f"redis standard node capacity {m_tier}" in desc_lower
-                        or f"redis capacity standard {m_tier}" in desc_lower
-                    ):
+                else:  # standard (classic HA tier)
+                    # "Redis Capacity Standard MX" is the classic HA tier SKU.
+                    # "Redis Standard Node Capacity MX" is the Redis Cluster product —
+                    # exclude it to avoid picking Cluster node rates for classic Redis HA.
+                    if f"redis capacity standard {m_tier}" in desc_lower:
                         raw_rate = price
                         matched_desc = desc
                         break
@@ -872,7 +872,8 @@ class GCPProvider(ProviderBase):
             elif "Analysis" in desc and "Streaming" not in desc and analysis_rate == 0:
                 analysis_rate = price
             elif "Streaming Insert" in desc and streaming_rate == 0:
-                streaming_rate = price
+                # SKU unit is MiBy — convert to per-GiB rate for consistency
+                streaming_rate = price * Decimal("1024")
 
         result: dict[str, Any] = {
             "region": region,
@@ -897,7 +898,7 @@ class GCPProvider(ProviderBase):
             result["estimated_longterm_storage_cost"] = f"${cost:.2f}"
 
         if streaming_gb is not None:
-            cost = Decimal(str(streaming_gb)) * streaming_rate
+            cost = Decimal(str(streaming_gb)) / Decimal("1024") * streaming_rate
             result["estimated_streaming_cost"] = f"${cost:.2f}"
 
         result["note"] = (
@@ -2158,7 +2159,8 @@ class GCPProvider(ProviderBase):
             elif "Analysis" in desc and "Streaming" not in desc and analysis_rate == 0:
                 analysis_rate = price
             elif "Streaming Insert" in desc and streaming_rate == 0:
-                streaming_rate = price
+                # SKU unit is MiBy — convert to per-GiB rate
+                streaming_rate = price * Decimal("1024")
 
         prices = []
         if analysis_rate > 0:
@@ -2232,7 +2234,7 @@ class GCPProvider(ProviderBase):
             breakdown["estimated_longterm_storage_cost"] = float(lt_cost)
             components.append(f"{spec.longterm_storage_gb}GB long-term storage")
         if spec.streaming_gb and streaming_rate > 0:
-            st_cost = Decimal(str(spec.streaming_gb)) * streaming_rate
+            st_cost = Decimal(str(spec.streaming_gb)) / Decimal("1024") * streaming_rate
             total_cost += st_cost
             breakdown["estimated_streaming_cost"] = float(st_cost)
             components.append(f"{spec.streaming_gb}GB streaming inserts")
