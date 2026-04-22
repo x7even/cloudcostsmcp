@@ -3,6 +3,9 @@
 An open source MCP server that gives AI assistants accurate cloud pricing data for AWS, GCP, and Azure.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![PyPI version](https://badge.fury.io/py/opencloudcosts.svg)](https://pypi.org/project/opencloudcosts/)
+[![Tests](https://github.com/x7even/cloudcostmcp/actions/workflows/tests.yml/badge.svg)](https://github.com/x7even/cloudcostmcp/actions/workflows/tests.yml)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 
 Supports both **public list pricing** (no credentials needed for AWS and Azure; GCP requires a free API key) and **effective/bespoke pricing** (post-discount: Reserved Instances, Savings Plans, CUDs, EDPs).
 
@@ -60,14 +63,25 @@ See [docs/tools.md](docs/tools.md) for full parameter reference and [docs/finops
 
 ## Setup
 
-### Prerequisites
+### Quick install (recommended)
+
+```bash
+# Run directly from PyPI — no clone needed
+uvx opencloudcosts
+
+# Or install permanently
+pip install opencloudcosts
+opencloudcosts
+```
+
+### Prerequisites (for development / clone-based install)
 - [uv](https://docs.astral.sh/uv/) installed (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
 - AWS credentials (optional — public pricing works without them)
 
 ### Clone & configure
 
 ```bash
-git clone https://github.com/x7even/cloudcostsmcp opencloudcosts
+git clone https://github.com/x7even/cloudcostmcp opencloudcosts
 cd opencloudcosts
 cp .env.example .env
 # Edit .env if you want effective pricing / Cost Explorer
@@ -115,11 +129,16 @@ Connect to Claude Code via `.mcp.json`:
 ### Docker
 
 ```bash
-docker build -t opencloudcosts .
+# Pull from registry (recommended)
+docker pull ghcr.io/x7even/opencloudcosts:latest
 docker run -p 8080:8080 \
   -e OCC_GCP_API_KEY=AIza... \
   -v ~/.aws:/root/.aws:ro \
-  opencloudcosts
+  ghcr.io/x7even/opencloudcosts:latest
+
+# Or build locally
+docker build -t opencloudcosts .
+docker run -p 8080:8080 opencloudcosts
 ```
 
 The container starts in HTTP transport mode by default (bound to `0.0.0.0:8080`).
