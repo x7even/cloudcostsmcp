@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from datetime import UTC
 from decimal import Decimal
 from typing import Any
 
@@ -541,10 +542,10 @@ class AWSProvider(ProviderBase):
         availability_zone: str = "",
         hours: int = 24,
     ) -> dict:
-        from datetime import datetime, timezone, timedelta
         from collections import defaultdict
+        from datetime import datetime, timedelta
 
-        start_time = datetime.now(timezone.utc) - timedelta(hours=min(hours, 720))
+        start_time = datetime.now(UTC) - timedelta(hours=min(hours, 720))
         product_desc = "Linux/UNIX" if os == "Linux" else "Windows"
 
         def _fetch():
@@ -1612,13 +1613,12 @@ class AWSProvider(ProviderBase):
         ri_list = self.get_active_reserved_instances()
         ri_summary = []
         for ri in ri_list:
-            from datetime import timezone
             end_dt = ri.get("End")
             days_remaining = None
             if end_dt:
                 from datetime import datetime
-                now = datetime.now(timezone.utc)
-                end_aware = end_dt if end_dt.tzinfo else end_dt.replace(tzinfo=timezone.utc)
+                now = datetime.now(UTC)
+                end_aware = end_dt if end_dt.tzinfo else end_dt.replace(tzinfo=UTC)
                 days_remaining = max(0, (end_aware - now).days)
             ri_summary.append({
                 "instance_type": ri.get("InstanceType", ""),

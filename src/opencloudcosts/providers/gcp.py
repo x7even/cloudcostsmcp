@@ -723,7 +723,6 @@ class GCPProvider(ProviderBase):
         m_tier_order = [preferred_m] + [m for m in all_m_tiers if m != preferred_m]
 
         raw_rate: Decimal | None = None
-        matched_desc: str = ""
 
         for m_tier in m_tier_order:
             for (desc, utype), price in index.items():
@@ -733,7 +732,6 @@ class GCPProvider(ProviderBase):
                 if tier_lower == "basic":
                     if f"redis capacity basic {m_tier}" in desc_lower:
                         raw_rate = price
-                        matched_desc = desc
                         break
                 else:  # standard (classic HA tier)
                     # "Redis Capacity Standard MX" is the classic HA tier SKU.
@@ -741,7 +739,6 @@ class GCPProvider(ProviderBase):
                     # exclude it to avoid picking Cluster node rates for classic Redis HA.
                     if f"redis capacity standard {m_tier}" in desc_lower:
                         raw_rate = price
-                        matched_desc = desc
                         break
             if raw_rate is not None:
                 break

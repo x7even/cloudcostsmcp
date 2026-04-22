@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -44,12 +44,12 @@ def _make_key(*parts: Any) -> str:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _expires(hours: float) -> str:
     from datetime import timedelta
-    return (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat()
+    return (datetime.now(UTC) + timedelta(hours=hours)).isoformat()
 
 
 class CacheManager:
@@ -93,7 +93,7 @@ class CacheManager:
             row = await cur.fetchone()
         if row is None:
             return None
-        if datetime.fromisoformat(row["expires_at"]) < datetime.now(timezone.utc):
+        if datetime.fromisoformat(row["expires_at"]) < datetime.now(UTC):
             await self.db.execute("DELETE FROM prices WHERE cache_key = ?", (key,))
             await self.db.commit()
             return None
@@ -130,7 +130,7 @@ class CacheManager:
             row = await cur.fetchone()
         if row is None:
             return None
-        if datetime.fromisoformat(row["expires_at"]) < datetime.now(timezone.utc):
+        if datetime.fromisoformat(row["expires_at"]) < datetime.now(UTC):
             await self.db.execute("DELETE FROM metadata WHERE cache_key = ?", (key,))
             await self.db.commit()
             return None

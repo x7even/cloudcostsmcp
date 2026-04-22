@@ -1,0 +1,40 @@
+name: Tests
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Lint (ruff)
+        run: uv run ruff check src/
+
+      # mypy strict mode cleanup tracked for v0.9 — run in non-strict mode for now
+      - name: Type check (mypy)
+        run: uv run mypy src/ --ignore-missing-imports --allow-untyped-defs --allow-untyped-calls --no-warn-return-any
+        continue-on-error: true
+
+      - name: Run tests
+        run: uv run pytest tests/ --tb=short -q

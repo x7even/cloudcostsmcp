@@ -36,7 +36,7 @@ from opencloudcosts.models import (
 )
 from opencloudcosts.providers.base import NotConfiguredError, NotSupportedError, ProviderBase
 from opencloudcosts.utils.http_retry import sync_retry
-from opencloudcosts.utils.regions import AZURE_REGION_DISPLAY, list_azure_regions
+from opencloudcosts.utils.regions import list_azure_regions
 
 logger = logging.getLogger(__name__)
 

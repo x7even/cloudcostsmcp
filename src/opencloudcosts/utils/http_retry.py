@@ -4,7 +4,6 @@ from __future__ import annotations
 import httpx
 from tenacity import (
     AsyncRetrying,
-    RetryError,
     Retrying,
     retry_if_exception,
     stop_after_attempt,

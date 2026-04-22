@@ -69,6 +69,10 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
+ignore = [
+    "E501",   # line-too-long: pre-existing, fixed incrementally
+    "UP042",  # replace-str-enum: requires StrEnum which changes runtime behaviour
+]
 
 [tool.mypy]
 python_version = "3.11"
