@@ -271,5 +271,5 @@ With credentials configured: actual spend, contract/negotiated pricing, reservat
 - **Phase 5** ✅ GCP managed services — GKE, Memorystore, BigQuery, Vertex AI, Gemini
 - **Phase 5** ✅ GCP networking — Cloud LB, CDN, NAT, Cloud Armor, Cloud Monitoring
 - **Phase 5** ✅ GCP Cloud SQL; Azure reserved pricing
-- **v0.8.0** ✅ Consolidated to 15-tool surface; unified `get_price(spec)` dispatcher; `describe_catalog` discovery
+- **v0.8.0** ✅ Consolidated to 15-tool surface; unified `get_price(spec)` dispatcher; `describe_catalog` discovery; 123/123 (100%) harness pass rate
 - **Next**: GCP effective pricing (BigQuery billing export)

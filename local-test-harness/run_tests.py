@@ -63,7 +63,7 @@ LLM_API_KEY = os.environ.get("OCC_LLM_API_KEY", "")  # optional
 PROJECT_DIR = _HARNESS_DIR.parent
 MCP_COMMAND = "uv"
 MCP_ARGS = ["run", "--directory", str(PROJECT_DIR), "opencloudcosts"]
-MAX_TOOL_ROUNDS = 20
+MAX_TOOL_ROUNDS = 30
 RESULTS_DIR = _HARNESS_DIR / "results"
 
 SYSTEM_PROMPT = (
