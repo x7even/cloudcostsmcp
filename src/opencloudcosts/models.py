@@ -5,7 +5,7 @@ from decimal import Decimal
 from enum import Enum
 from typing import Annotated, Any, Literal, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class CloudProvider(str, Enum):
@@ -68,6 +68,7 @@ class PriceUnit(str, Enum):
     PER_GB_MONTH = "per_gb_month"
     PER_GB = "per_gb"
     PER_IOPS_MONTH = "per_iops_month"
+    PER_MBPS_MONTH = "per_mbps_month"  # gp3 provisioned throughput
     PER_REQUEST = "per_request"
     PER_GB_SECOND = "per_gb_second"    # Lambda duration
     PER_QUERY = "per_query"            # Route53, Athena
@@ -124,7 +125,11 @@ class NormalizedPrice(BaseModel):
                 if self.price_per_unit > 0 and self.price_per_unit < Decimal("0.0000005")
                 else f"${self.price_per_unit:.6f} {self.unit.value}"
             ),
-            "monthly_estimate": f"${self.monthly_cost:.2f}/mo" if self.unit == PriceUnit.PER_HOUR else None,
+            "monthly_estimate": (
+                f"${self.monthly_cost:.2f}/mo"
+                if self.unit in (PriceUnit.PER_HOUR, PriceUnit.PER_MONTH)
+                else None
+            ),
             **{k: v for k, v in self.attributes.items() if k in ("instanceType", "vcpu", "memory", "operatingSystem", "storage_type", "volumeType")},
         }
 
@@ -257,7 +262,7 @@ class BasePricingSpec(BaseModel):
     provider: CloudProvider
     domain: PricingDomain
     service: str | None = None   # e.g. "rds", "bedrock", "gke", "bigquery"
-    region: str
+    region: str = ""   # optional for multi-region tools (compare_prices, find_cheapest_region)
     term: PricingTerm = PricingTerm.ON_DEMAND
     schema_version: Literal["1"] = "1"
 
@@ -281,6 +286,14 @@ class ComputePricingSpec(BasePricingSpec):
     vcpu: float | None = None          # Fargate-style sizing
     memory_gb: float | None = None
     hours_per_month: float = 730.0
+
+    @model_validator(mode="before")
+    @classmethod
+    def _alias_instance_type(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "instance_type" in data and "resource_type" not in data:
+            data = dict(data)
+            data["resource_type"] = data.pop("instance_type")
+        return data
 
     def cache_key(self) -> str:
         base = super().cache_key()

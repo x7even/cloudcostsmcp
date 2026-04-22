@@ -32,17 +32,18 @@ def apply_baseline_deltas(
         )
 
     def parse_hourly(s: str) -> Decimal:
-        return Decimal(s.lstrip("$"))
+        # Handle both "$0.544000" and "$0.544000/per_hour" formats
+        return Decimal(s.lstrip("$").split("/")[0])
 
     def parse_monthly(s: str) -> Decimal:
         return Decimal(s.lstrip("$").replace("/mo", ""))
 
     base_h = parse_hourly(baseline[hourly_key])
-    base_m = parse_monthly(baseline[monthly_key])
+    base_m = parse_monthly(baseline.get(monthly_key, "$0.00/mo"))
 
     for r in results:
         h = parse_hourly(r[hourly_key])
-        m = parse_monthly(r[monthly_key])
+        m = parse_monthly(r.get(monthly_key, "$0.00/mo"))
         dh = h - base_h
         dm = m - base_m
         pct = float((dh / base_h) * 100) if base_h > 0 else 0.0

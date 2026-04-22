@@ -1,4 +1,4 @@
-"""Bill of Materials (BoM) and TCO estimation MCP tools."""
+"""Bill of Materials (BoM) and unit-economics MCP tools — v0.8.0."""
 from __future__ import annotations
 
 import logging
@@ -6,10 +6,14 @@ from decimal import Decimal
 from typing import Any
 
 from mcp.server.fastmcp import Context
+from pydantic import TypeAdapter
 
-from opencloudcosts.models import BomEstimate, BomLineItem, CloudProvider, PricingTerm
+from opencloudcosts.models import BomEstimate, BomLineItem, PricingSpec
+from opencloudcosts.providers.base import NotSupportedError
 
 logger = logging.getLogger(__name__)
+
+_SPEC_ADAPTER: TypeAdapter[PricingSpec] = TypeAdapter(PricingSpec)
 
 
 def register_bom_tools(mcp: Any) -> None:
@@ -20,190 +24,175 @@ def register_bom_tools(mcp: Any) -> None:
         items: list[dict[str, Any]],
     ) -> dict[str, Any]:
         """
-        Use this tool for any question about total infrastructure cost, TCO, monthly spend
-        for a multi-resource stack, or cost comparison between two architectures.
+        Use this tool for total infrastructure cost, TCO, monthly spend for a multi-resource
+        stack, or cost comparison between architectures.
 
-        Handles compute + storage + database together in a single call — do NOT call
-        get_compute_price / get_storage_price / get_database_price individually for
-        multi-resource questions; use this tool instead.
+        Handles compute + storage + database + AI together in a single call — do NOT call
+        get_price individually for multi-resource questions; use this tool instead.
 
-        Returns per-item and total monthly/annual costs using real public pricing data,
-        plus a `not_included` field with actionable follow-up tool calls for hidden costs
-        such as egress, load balancers, NAT Gateway, CloudWatch monitoring, and RDS backups.
+        Returns per-item and total monthly/annual costs with real public pricing data,
+        plus a not_included list with follow-up get_price calls for hidden costs
+        (egress, load balancers, NAT Gateway, monitoring, backups).
 
-        Each item in the BoM should be a dict with:
-          - provider: "aws", "gcp", or "azure"
-          - service: "compute", "storage", or "database"
-          - type: instance type or storage type, e.g. "m5.xlarge", "gp3", "db.r6g.large"
-          - region: region code, e.g. "us-east-1"
+        Each item should be a PricingSpec dict PLUS a quantity field:
+          - provider: "aws" | "gcp" | "azure"
+          - domain: "compute" | "storage" | "database" | "ai" | ...
+          - region: region code
           - quantity: number of units (default 1)
           - hours_per_month: hours/month for compute (default 730 = always-on)
-          - term: pricing term (default "on_demand")
           - description: optional label for this line item
-          - os: "Linux" (default) or "Windows"
-          - size_gb: storage size in GB for storage items (default 100)
+          Plus domain-specific fields (see get_price or describe_catalog for details).
 
-        Example — full monthly TCO for a realistic stack (3 app servers + RDS + EBS):
+        Examples:
+          Compute + database + storage on AWS:
           [
-            {"provider": "aws", "service": "compute", "type": "m5.xlarge", "region": "us-east-1", "quantity": 3},
-            {"provider": "aws", "service": "database", "type": "db.r6g.large", "region": "us-east-1", "quantity": 1},
-            {"provider": "aws", "service": "storage", "type": "gp3", "region": "us-east-1", "quantity": 1, "size_gb": 500}
+            {"provider": "aws", "domain": "compute", "resource_type": "m5.xlarge",   "region": "us-east-1", "quantity": 3},
+            {"provider": "aws", "domain": "database", "service": "rds", "resource_type": "db.r6g.large", "engine": "MySQL", "deployment": "single-az", "region": "us-east-1"},
+            {"provider": "aws", "domain": "storage",  "storage_type": "gp3", "size_gb": 500, "region": "us-east-1"}
+          ]
+
+          Mixed cloud:
+          [
+            {"provider": "gcp",   "domain": "compute", "resource_type": "n1-standard-4", "region": "us-central1", "quantity": 2},
+            {"provider": "azure", "domain": "compute", "resource_type": "Standard_D4s_v3", "region": "eastus", "quantity": 1}
           ]
         """
         providers = ctx.request_context.lifespan_context["providers"]
         line_items: list[BomLineItem] = []
         errors: list[str] = []
-        unsupported_items: list[dict[str, str]] = []
 
         for idx, item in enumerate(items):
             label = f"Item {idx + 1}"
             try:
-                provider_name = item.get("provider", "aws")
-                service = item.get("service", "compute")
-                # Accept both "type" and "storage_type"/"instance_type" keys
-                resource_type = item.get("type") or item.get("storage_type") or item.get("instance_type", "")
-                region = item.get("region", "us-east-1")
                 quantity = int(item.get("quantity", 1))
                 hours_per_month = float(item.get("hours_per_month", 730.0))
-                term_str = item.get("term", "on_demand")
-                description = item.get("description") or f"{resource_type} ({region})"
                 size_gb = float(item.get("size_gb", 100.0))
-                os_type = item.get("os", "Linux")
+                description = item.get("description")
 
-                pvdr = providers.get(provider_name)
+                # Build a clean spec dict (remove BoM-only fields)
+                spec_dict = {k: v for k, v in item.items()
+                             if k not in ("quantity", "hours_per_month", "description")}
+                # Fill hours_per_month into spec for compute
+                if spec_dict.get("domain") == "compute" and "hours_per_month" not in spec_dict:
+                    spec_dict["hours_per_month"] = hours_per_month
+                if spec_dict.get("domain") == "storage" and "size_gb" not in spec_dict and size_gb:
+                    spec_dict["size_gb"] = size_gb
+
+                try:
+                    parsed = _SPEC_ADAPTER.validate_python(spec_dict)
+                except Exception as e:
+                    errors.append(f"{label}: invalid spec — {e}")
+                    continue
+
+                pvdr = providers.get(parsed.provider.value)
                 if pvdr is None:
-                    errors.append(f"{label}: provider '{provider_name}' not configured")
+                    errors.append(f"{label}: provider '{parsed.provider.value}' not configured")
                     continue
 
-                pricing_term = PricingTerm(term_str)
-
-                if service == "compute":
-                    prices = await pvdr.get_compute_price(resource_type, region, os_type, pricing_term)
-                elif service == "storage":
-                    prices = await pvdr.get_storage_price(resource_type, region, size_gb)
-                elif service == "database":
-                    if not hasattr(pvdr, "get_service_price"):
-                        unsupported_items.append({
-                            "item": description,
-                            "provider": provider_name,
-                            "service": service,
-                            "type": resource_type,
-                            "region": region,
-                            "price": "unavailable for this provider",
-                            "reason": f"database pricing not supported for provider '{provider_name}'",
-                        })
-                        continue
-                    db_filters: dict[str, str] = {"instanceType": resource_type}
-                    # Infer deployment option from term (default Single-AZ)
-                    if "multi" in term_str.lower():
-                        db_filters["deploymentOption"] = "Multi-AZ"
-                    else:
-                        db_filters["deploymentOption"] = "Single-AZ"
-                    prices = await pvdr.get_service_price("rds", region, db_filters, max_results=5)
-                    if not prices and db_filters.get("deploymentOption"):
-                        # Retry without deploymentOption filter
-                        del db_filters["deploymentOption"]
-                        prices = await pvdr.get_service_price("rds", region, db_filters, max_results=5)
-                else:
-                    errors.append(f"{label}: unsupported service '{service}'")
+                if not pvdr.supports(parsed.domain, parsed.service):
+                    errors.append(
+                        f"{label}: {parsed.provider.value} does not support "
+                        f"{parsed.domain.value}/{parsed.service}"
+                    )
                     continue
 
-                if not prices:
-                    errors.append(f"{label}: no pricing found for {resource_type} in {region}")
+                result = await pvdr.get_price(parsed)
+
+                if not result.public_prices:
+                    errors.append(f"{label}: no pricing found for spec {spec_dict}")
                     continue
+
+                if not description:
+                    resource_id = (
+                        getattr(parsed, "resource_type", None)
+                        or getattr(parsed, "storage_type", None)
+                        or getattr(parsed, "model", None)
+                        or parsed.service
+                        or parsed.domain.value
+                    )
+                    description = f"{resource_id} ({parsed.region})"
 
                 bom_item = BomLineItem.from_price(
                     description=description,
-                    price=prices[0],
+                    price=result.public_prices[0],
                     quantity=quantity,
                     hours_per_month=hours_per_month,
                     size_gb=size_gb,
                 )
                 line_items.append(bom_item)
 
-            except (ValueError, KeyError) as e:
+            except NotSupportedError as e:
+                errors.append(f"{label}: {e.reason}")
+            except Exception as e:
                 errors.append(f"{label}: {e}")
 
         if not line_items:
-            if unsupported_items:
-                unsupported_providers = {ui["provider"] for ui in unsupported_items}
-                provider_list = ", ".join(sorted(unsupported_providers))
-                return {
-                    "error": (
-                        f"No items could be priced. "
-                        f"database pricing not supported for provider(s): {provider_list}"
-                        + (f". Additional errors: {'; '.join(errors)}" if errors else "")
-                    ),
-                    "not_included": unsupported_items,
-                    "note": (
-                        f"Partial estimate — some items could not be priced for {provider_list}. "
-                        "See not_included for details."
-                    ),
-                }
             return {"error": "No valid line items. Errors: " + "; ".join(errors)}
 
         estimate = BomEstimate.from_items(line_items)
 
-        # Detect which services/providers appear in the BoM so we can surface
-        # relevant unpriced extras with the exact tool call to look them up.
         services_in_bom = {li.service for li in estimate.items}
         providers_in_bom = {li.provider.value for li in estimate.items}
-        # Pick a representative AWS region for suggested calls
         aws_regions = [li.region for li in estimate.items if li.provider.value == "aws"]
         sample_region = aws_regions[0] if aws_regions else "us-east-1"
 
-        not_included: list[dict[str, str]] = list(unsupported_items)
+        not_included: list[dict[str, str]] = []
         if "aws" in providers_in_bom:
             if "compute" in services_in_bom or "database" in services_in_bom:
                 not_included.append({
                     "item": "Data transfer (egress)",
                     "why": "Outbound traffic to the internet or cross-region — varies by workload",
-                    "how_to_price": f'get_service_price(provider="aws", service="data_transfer", region="{sample_region}", filters={{"transferType": "AWS Outbound"}})',
-                    "price": "unknown — use the how_to_price call above to get the real figure; do not estimate",
+                    "how_to_price": (
+                        f'get_price(spec={{"provider": "aws", "domain": "network", "service": "data_transfer", '
+                        f'"region": "{sample_region}"}})'
+                    ),
+                    "price": "unknown — use the how_to_price call above to get the real figure",
                 })
                 not_included.append({
                     "item": "Load balancer (ALB/NLB)",
                     "why": "Typically needed in front of compute clusters",
-                    "how_to_price": f'get_service_price(provider="aws", service="elb", region="{sample_region}", filters={{"productFamily": "Load Balancer"}})',
-                    "price": "unknown — use the how_to_price call above to get the real figure; do not estimate",
+                    "how_to_price": (
+                        f'get_price(spec={{"provider": "aws", "domain": "network", "service": "lb", '
+                        f'"region": "{sample_region}"}})'
+                    ),
+                    "price": "unknown — use the how_to_price call above to get the real figure",
                 })
                 not_included.append({
                     "item": "NAT Gateway",
                     "why": "Required if EC2 instances are in private subnets",
-                    "how_to_price": f'get_service_price(provider="aws", service="AmazonEC2", region="{sample_region}", filters={{"productFamily": "NAT Gateway"}})',
-                    "price": "unknown — use the how_to_price call above to get the real figure; do not estimate",
+                    "how_to_price": (
+                        f'get_price(spec={{"provider": "aws", "domain": "network", "service": "nat", '
+                        f'"region": "{sample_region}"}})'
+                    ),
+                    "price": "unknown — use the how_to_price call above to get the real figure",
                 })
             not_included.append({
                 "item": "CloudWatch monitoring",
                 "why": "Logs, metrics, alarms — scales with number of instances and log volume",
-                "how_to_price": f'get_service_price(provider="aws", service="cloudwatch", region="{sample_region}", filters={{"group": "Metric"}})',
-                "price": "unknown — use the how_to_price call above to get the real figure; do not estimate",
+                "how_to_price": (
+                    f'get_price(spec={{"provider": "aws", "domain": "observability", "service": "cloudwatch", '
+                    f'"region": "{sample_region}"}})'
+                ),
+                "price": "unknown — use the how_to_price call above to get the real figure",
             })
             if "database" in services_in_bom:
                 not_included.append({
                     "item": "RDS automated backups",
                     "why": "Free for storage equal to DB size; extra storage charged beyond that",
-                    "how_to_price": f'get_service_price(provider="aws", service="rds", region="{sample_region}", filters={{"productFamily": "Storage Snapshot"}})',
-                    "price": "unknown — use the how_to_price call above to get the real figure; do not estimate",
+                    "how_to_price": (
+                        f'search_pricing(provider="aws", query="RDS Storage Snapshot", region="{sample_region}")'
+                    ),
+                    "price": "unknown — use the how_to_price call above to get the real figure",
                 })
             if "storage" in services_in_bom:
                 not_included.append({
                     "item": "EBS snapshots",
                     "why": "Point-in-time backups stored in S3 — charged per GB-month",
-                    "how_to_price": f'get_service_price(provider="aws", service="AmazonEC2", region="{sample_region}", filters={{"productFamily": "Storage Snapshot"}})',
-                    "price": "unknown — use the how_to_price call above to get the real figure; do not estimate",
+                    "how_to_price": (
+                        f'search_pricing(provider="aws", query="EBS Storage Snapshot", region="{sample_region}")'
+                    ),
+                    "price": "unknown — use the how_to_price call above to get the real figure",
                 })
-
-        # Determine which providers had unsupported items for the note
-        unsupported_providers = {ui["provider"] for ui in unsupported_items}
-        if unsupported_providers:
-            provider_list = ", ".join(sorted(unsupported_providers))
-            note = (
-                f"Partial estimate — some items could not be priced for {provider_list}. "
-                "See not_included for details."
-            )
-        else:
-            note = None
 
         return {
             "line_items": [
@@ -224,9 +213,8 @@ def register_bom_tools(mcp: Any) -> None:
                 "annual": f"${estimate.total_annual:.2f}",
                 "currency": estimate.currency,
             },
-            "note": note,
-            "not_included": not_included if not_included else None,
-            "errors": errors if errors else None,
+            "not_included": not_included or None,
+            "errors": errors or None,
         }
 
     @mcp.tool()
@@ -237,17 +225,14 @@ def register_bom_tools(mcp: Any) -> None:
         unit_label: str = "user",
     ) -> dict[str, Any]:
         """
-        Estimate per-unit economics (e.g. cost per user, per request, per transaction)
-        given a Bill of Materials and expected monthly usage volume.
+        Estimate per-unit economics (cost per user, per request, per transaction) given
+        a Bill of Materials and expected monthly usage volume.
 
         Args:
-            items: Same format as estimate_bom — list of cloud resource items.
-                Each compute item may include os: "Linux" (default) or "Windows".
-            units_per_month: Monthly volume of the unit being measured (e.g. 10000 users)
+            items: Same format as estimate_bom — list of cloud resource PricingSpec dicts
+                   plus quantity field. See estimate_bom for full item format.
+            units_per_month: Monthly volume being measured (e.g. 10000 users)
             unit_label: What the unit represents — "user", "request", "transaction", etc.
-
-        Returns:
-            Total infrastructure cost plus cost per unit at the given volume.
         """
         providers = ctx.request_context.lifespan_context["providers"]
         line_items: list[BomLineItem] = []
@@ -256,58 +241,68 @@ def register_bom_tools(mcp: Any) -> None:
         for idx, item in enumerate(items):
             label = f"Item {idx + 1}"
             try:
-                provider_name = item.get("provider", "aws")
-                service = item.get("service", "compute")
-                resource_type = item.get("type") or item.get("storage_type") or item.get("instance_type", "")
-                region = item.get("region", "us-east-1")
                 quantity = int(item.get("quantity", 1))
                 hours_per_month = float(item.get("hours_per_month", 730.0))
-                term_str = item.get("term", "on_demand")
-                description = item.get("description") or f"{resource_type} ({region})"
                 size_gb = float(item.get("size_gb", 100.0))
-                os_type = item.get("os", "Linux")
+                description = item.get("description")
 
-                pvdr = providers.get(provider_name)
+                spec_dict = {k: v for k, v in item.items()
+                             if k not in ("quantity", "hours_per_month", "description")}
+                if spec_dict.get("domain") == "compute" and "hours_per_month" not in spec_dict:
+                    spec_dict["hours_per_month"] = hours_per_month
+
+                try:
+                    parsed = _SPEC_ADAPTER.validate_python(spec_dict)
+                except Exception as e:
+                    errors.append(f"{label}: invalid spec — {e}")
+                    continue
+
+                pvdr = providers.get(parsed.provider.value)
                 if pvdr is None:
-                    errors.append(f"{label}: provider '{provider_name}' not configured")
+                    errors.append(f"{label}: provider '{parsed.provider.value}' not configured")
                     continue
 
-                pricing_term = PricingTerm(term_str)
-
-                if service == "compute":
-                    prices = await pvdr.get_compute_price(resource_type, region, os_type, pricing_term)
-                elif service == "storage":
-                    prices = await pvdr.get_storage_price(resource_type, region, size_gb)
-                elif service == "database":
-                    if not hasattr(pvdr, "get_service_price"):
-                        errors.append(f"{label}: database pricing not supported for provider '{provider_name}'")
-                        continue
-                    db_filters = {"instanceType": resource_type, "deploymentOption": "Single-AZ"}
-                    prices = await pvdr.get_service_price("rds", region, db_filters, max_results=5)
-                    if not prices:
-                        del db_filters["deploymentOption"]
-                        prices = await pvdr.get_service_price("rds", region, db_filters, max_results=5)
-                else:
-                    errors.append(f"{label}: unsupported service '{service}'")
+                if not pvdr.supports(parsed.domain, parsed.service):
+                    errors.append(
+                        f"{label}: {parsed.provider.value} does not support "
+                        f"{parsed.domain.value}/{parsed.service}"
+                    )
                     continue
 
-                if not prices:
+                result = await pvdr.get_price(parsed)
+                if not result.public_prices:
                     errors.append(f"{label}: no pricing found")
                     continue
 
-                line_items.append(BomLineItem.from_price(description, prices[0], quantity, hours_per_month, size_gb))
+                if not description:
+                    resource_id = (
+                        getattr(parsed, "resource_type", None)
+                        or getattr(parsed, "storage_type", None)
+                        or parsed.domain.value
+                    )
+                    description = f"{resource_id} ({parsed.region})"
 
-            except (ValueError, KeyError) as e:
+                line_items.append(BomLineItem.from_price(
+                    description=description,
+                    price=result.public_prices[0],
+                    quantity=quantity,
+                    hours_per_month=hours_per_month,
+                    size_gb=size_gb,
+                ))
+
+            except NotSupportedError as e:
+                errors.append(f"{label}: {e.reason}")
+            except Exception as e:
                 errors.append(f"{label}: {e}")
 
         if not line_items:
             return {"error": "No valid items. Errors: " + "; ".join(errors)}
 
         estimate = BomEstimate.from_items(line_items)
-        cost_per_unit = estimate.total_monthly / Decimal(str(units_per_month)) if units_per_month > 0 else Decimal("0")
-
-        # Derive the region from the first successfully priced item so we can echo
-        # it back at the top level — this nudges the LLM to mention it in its answer.
+        cost_per_unit = (
+            estimate.total_monthly / Decimal(str(units_per_month))
+            if units_per_month > 0 else Decimal("0")
+        )
         sample_region = estimate.items[0].region if estimate.items else "us-east-1"
 
         return {
@@ -317,6 +312,9 @@ def register_bom_tools(mcp: Any) -> None:
             "volume": f"{units_per_month:,.0f} {unit_label}s/month",
             "cost_per_unit": f"${cost_per_unit:.4f} per {unit_label}",
             "cost_per_unit_annual": f"${cost_per_unit * 12:.4f} per {unit_label}/year",
-            "errors": errors if errors else None,
-            "important": f"These prices are for {sample_region} — always state the region in your answer as unit economics vary by region.",
+            "errors": errors or None,
+            "important": (
+                f"Prices are for {sample_region} — always state the region in your answer "
+                "as unit economics vary significantly by region."
+            ),
         }

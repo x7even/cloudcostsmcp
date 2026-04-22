@@ -29,6 +29,7 @@ Each task has a detailed plan file in `docs/plans/`:
 | T37 — GCP Cloud Armor + Monitoring pricing | — | **done** (v0.7.7) |
 | T38 — Azure reserved pricing unit fix | — | **done** (v0.7.8) |
 | T39 — CDN SKU filter + harness GCS/SQL coverage | — | **done** (v0.7.9) |
+| v0.8.0 — Tool consolidation + provider protocol | [roadmap_0_8_0.md](roadmap_0_8_0.md) | **done** — 31 tools → 15 tools, unified `get_price(spec)`, `describe_catalog`, discriminated-union `PricingSpec`; harness 123/123 (100%) |
 
 ---
 
