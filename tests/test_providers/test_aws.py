@@ -567,7 +567,13 @@ async def test_get_storage_price_gp3(aws_provider: AWSProvider):
     pricing JSON, not inside attributes. _get_products_bulk previously only
     checked attrs, causing productFamily='Storage' filter to always fail.
     """
-    with patch.object(aws_provider, "_get_products", return_value=[_GP3_PRICE_ITEM]):
+    def _gp3_side_effect(service: str, filters: list, **kwargs: object) -> list:
+        # Only return the base storage item; IOPS/throughput add-on calls return empty
+        if any(f.get("Value") == "Storage" for f in filters):
+            return [_GP3_PRICE_ITEM]
+        return []
+
+    with patch.object(aws_provider, "_get_products", side_effect=_gp3_side_effect):
         prices = await aws_provider.get_storage_price("gp3", "us-east-1")
 
     assert len(prices) == 1

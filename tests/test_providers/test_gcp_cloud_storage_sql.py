@@ -58,46 +58,35 @@ GCS_FAKE_SKUS = [
 ]
 
 # Realistic Cloud SQL SKUs for us-central1
+# GCP encodes instance size directly in the description:
+# "Cloud SQL for MySQL: Zonal - 4 vCPU + 15GB RAM in Americas"
+# db-n1-standard-4 = 4 vCPU, 15 GB RAM
+# db-n1-standard-8 = 8 vCPU, 30 GB RAM
 CLOUD_SQL_FAKE_SKUS = [
-    # MySQL Zonal vCPU — $0.0413/vCPU-hour
+    # MySQL Zonal db-n1-standard-4: 4*$0.0413 + 15*$0.007 = $0.2702/hr
     _make_cloud_sql_sku(
-        "Cloud SQL for MySQL: Zonal - Standard",
-        ["us-central1"], "0", 41_300_000,
+        "Cloud SQL for MySQL: Zonal - 4 vCPU + 15GB RAM in Americas",
+        ["us-central1"], "0", 270_200_000,
     ),
-    # MySQL Zonal RAM — $0.007/GB-hour
+    # MySQL Zonal db-n1-standard-8: 8*$0.0413 + 30*$0.007 = $0.5404/hr
     _make_cloud_sql_sku(
-        "Cloud SQL for MySQL: Zonal - Standard Memory",
-        ["us-central1"], "0", 7_000_000,
+        "Cloud SQL for MySQL: Zonal - 8 vCPU + 30GB RAM in Americas",
+        ["us-central1"], "0", 540_400_000,
     ),
-    # MySQL Regional (HA) vCPU — $0.0826/vCPU-hour
+    # MySQL Regional (HA) db-n1-standard-4: 4*$0.0826 + 15*$0.014 = $0.5404/hr
     _make_cloud_sql_sku(
-        "Cloud SQL for MySQL: Regional - Standard",
-        ["us-central1"], "0", 82_600_000,
+        "Cloud SQL for MySQL: Regional - 4 vCPU + 15GB RAM in Americas",
+        ["us-central1"], "0", 540_400_000,
     ),
-    # MySQL Regional (HA) RAM — $0.014/GB-hour
+    # PostgreSQL Zonal db-n1-standard-4: $0.2702/hr
     _make_cloud_sql_sku(
-        "Cloud SQL for MySQL: Regional - Standard Memory",
-        ["us-central1"], "0", 14_000_000,
+        "Cloud SQL for PostgreSQL: Zonal - 4 vCPU + 15GB RAM in Americas",
+        ["us-central1"], "0", 270_200_000,
     ),
-    # PostgreSQL Zonal vCPU — $0.0413/vCPU-hour
+    # PostgreSQL Regional (HA) db-n1-standard-4: $0.5404/hr
     _make_cloud_sql_sku(
-        "Cloud SQL for PostgreSQL: Zonal - Standard",
-        ["us-central1"], "0", 41_300_000,
-    ),
-    # PostgreSQL Zonal RAM — $0.007/GB-hour
-    _make_cloud_sql_sku(
-        "Cloud SQL for PostgreSQL: Zonal - Standard Memory",
-        ["us-central1"], "0", 7_000_000,
-    ),
-    # PostgreSQL Regional (HA) vCPU — $0.0826/vCPU-hour
-    _make_cloud_sql_sku(
-        "Cloud SQL for PostgreSQL: Regional - Standard",
-        ["us-central1"], "0", 82_600_000,
-    ),
-    # PostgreSQL Regional (HA) RAM — $0.014/GB-hour
-    _make_cloud_sql_sku(
-        "Cloud SQL for PostgreSQL: Regional - Standard Memory",
-        ["us-central1"], "0", 14_000_000,
+        "Cloud SQL for PostgreSQL: Regional - 4 vCPU + 15GB RAM in Americas",
+        ["us-central1"], "0", 540_400_000,
     ),
 ]
 
