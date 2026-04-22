@@ -43,6 +43,7 @@ from opencloudcosts.models import (
     StoragePricingSpec,
 )
 from opencloudcosts.providers.base import NotConfiguredError, NotSupportedError, ProviderBase
+from opencloudcosts.utils.http_retry import sync_retry
 from opencloudcosts.utils.regions import aws_region_to_display, list_aws_regions
 from opencloudcosts.utils.units import parse_aws_unit
 
@@ -316,8 +317,10 @@ class AWSProvider(ProviderBase):
         )
         logger.debug("Bulk pricing fetch: %s", url)
         try:
-            resp = httpx.get(url, timeout=60, follow_redirects=True)
-            resp.raise_for_status()
+            for attempt in sync_retry():
+                with attempt:
+                    resp = httpx.get(url, timeout=60, follow_redirects=True)
+                    resp.raise_for_status()
             data = resp.json()
         except httpx.HTTPError as e:
             logger.error("Bulk pricing HTTP error for %s/%s: %s", service_code, region_code, e)

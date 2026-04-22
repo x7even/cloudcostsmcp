@@ -35,6 +35,7 @@ from opencloudcosts.models import (
     StoragePricingSpec,
 )
 from opencloudcosts.providers.base import NotConfiguredError, NotSupportedError, ProviderBase
+from opencloudcosts.utils.http_retry import sync_retry
 from opencloudcosts.utils.regions import AZURE_REGION_DISPLAY, list_azure_regions
 
 logger = logging.getLogger(__name__)
@@ -122,8 +123,10 @@ class AzureProvider(ProviderBase):
         results: list[dict[str, Any]] = []
         while url and len(results) < max_results:
             logger.debug("Azure Retail Prices fetch: %s", url)
-            resp = httpx.get(url, timeout=30)
-            resp.raise_for_status()
+            for attempt in sync_retry():
+                with attempt:
+                    resp = httpx.get(url, timeout=30)
+                    resp.raise_for_status()
             data = resp.json()
             results.extend(data.get("Items", []))
             url = data.get("NextPageLink")
