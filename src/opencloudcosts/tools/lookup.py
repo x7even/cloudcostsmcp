@@ -117,8 +117,8 @@ def register_lookup_tools(mcp: Any) -> None:
                 "hint": "Configure provider credentials to enable this feature.",
             }
         except Exception as e:
-            logger.error("get_price error: %s", e)
-            return {"error": f"API error: {e}"}
+            logger.error("get_price error: %s", e, exc_info=True)
+            return {"error": "upstream_failure", "message": "Pricing lookup failed. Try again shortly.", "retryable": True}
 
     @mcp.tool()
     async def get_prices_batch(
@@ -324,8 +324,8 @@ def register_lookup_tools(mcp: Any) -> None:
         try:
             prices = await pvdr.search_pricing(query, region or None, max_results)
         except Exception as e:
-            logger.error("search_pricing error: %s", e)
-            return {"error": f"API error: {e}"}
+            logger.error("search_pricing error: %s", e, exc_info=True)
+            return {"error": "upstream_failure", "message": "Search request failed. Try again shortly.", "retryable": True}
 
         return {
             "provider": provider,
@@ -370,8 +370,8 @@ def register_lookup_tools(mcp: Any) -> None:
                 "hint": "Set OCC_AWS_ENABLE_COST_EXPLORER=true and configure AWS credentials.",
             }
         except Exception as e:
-            logger.error("get_discount_summary error: %s", e)
-            return {"error": f"API error: {e}"}
+            logger.error("get_discount_summary error: %s", e, exc_info=True)
+            return {"error": "upstream_failure", "message": "Discount summary lookup failed. Try again shortly.", "retryable": True}
 
     @mcp.tool()
     async def get_spot_history(
@@ -417,10 +417,10 @@ def register_lookup_tools(mcp: Any) -> None:
                 hours=hours,
             )
         except ValueError as e:
-            return {"error": str(e)}
+            return {"error": "invalid_input", "message": str(e), "retryable": False}
         except Exception as e:
-            logger.error("get_spot_history error: %s", e)
-            return {"error": f"API error: {e}"}
+            logger.error("get_spot_history error: %s", e, exc_info=True)
+            return {"error": "upstream_failure", "message": "Spot history lookup failed. Try again shortly.", "retryable": True}
 
         if not result:
             from opencloudcosts.utils.regions import region_display_name

@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from datetime import UTC
 from decimal import Decimal
 from typing import Any
 
@@ -43,6 +44,7 @@ from opencloudcosts.models import (
     StoragePricingSpec,
 )
 from opencloudcosts.providers.base import NotConfiguredError, NotSupportedError, ProviderBase
+from opencloudcosts.utils.http_retry import sync_retry
 from opencloudcosts.utils.regions import aws_region_to_display, list_aws_regions
 from opencloudcosts.utils.units import parse_aws_unit
 
@@ -316,8 +318,10 @@ class AWSProvider(ProviderBase):
         )
         logger.debug("Bulk pricing fetch: %s", url)
         try:
-            resp = httpx.get(url, timeout=60, follow_redirects=True)
-            resp.raise_for_status()
+            for attempt in sync_retry():
+                with attempt:
+                    resp = httpx.get(url, timeout=60, follow_redirects=True)
+                    resp.raise_for_status()
             data = resp.json()
         except httpx.HTTPError as e:
             logger.error("Bulk pricing HTTP error for %s/%s: %s", service_code, region_code, e)
@@ -538,10 +542,10 @@ class AWSProvider(ProviderBase):
         availability_zone: str = "",
         hours: int = 24,
     ) -> dict:
-        from datetime import datetime, timezone, timedelta
         from collections import defaultdict
+        from datetime import datetime, timedelta
 
-        start_time = datetime.now(timezone.utc) - timedelta(hours=min(hours, 720))
+        start_time = datetime.now(UTC) - timedelta(hours=min(hours, 720))
         product_desc = "Linux/UNIX" if os == "Linux" else "Windows"
 
         def _fetch():
@@ -1609,13 +1613,12 @@ class AWSProvider(ProviderBase):
         ri_list = self.get_active_reserved_instances()
         ri_summary = []
         for ri in ri_list:
-            from datetime import timezone
             end_dt = ri.get("End")
             days_remaining = None
             if end_dt:
                 from datetime import datetime
-                now = datetime.now(timezone.utc)
-                end_aware = end_dt if end_dt.tzinfo else end_dt.replace(tzinfo=timezone.utc)
+                now = datetime.now(UTC)
+                end_aware = end_dt if end_dt.tzinfo else end_dt.replace(tzinfo=UTC)
                 days_remaining = max(0, (end_aware - now).days)
             ri_summary.append({
                 "instance_type": ri.get("InstanceType", ""),

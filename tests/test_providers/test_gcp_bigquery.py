@@ -56,25 +56,31 @@ _ANALYSIS_SKU = _make_sku(
     ],
 )
 
-# Active logical storage: tier[0] is the only/real rate
+# Active logical storage: tier[0] = free-quota ($0), tier[1] = actual rate
 _ACTIVE_STORAGE_SKU = _make_sku(
     "BigQuery Active Logical Storage",
     ["us"],
-    [{"start": 0, "units": "0", "nanos": 23_000_000}],  # $0.023/GiB-mo
+    [
+        {"start": 0, "units": "0", "nanos": 0},             # $0 free-quota tier
+        {"start": 10, "units": "0", "nanos": 23_000_000},   # $0.023/GiB-mo actual rate
+    ],
 )
 
-# Long-term logical storage
+# Long-term logical storage: tier[0] = free-quota ($0), tier[1] = actual rate
 _LONGTERM_STORAGE_SKU = _make_sku(
     "BigQuery Long Term Logical Storage",
     ["us"],
-    [{"start": 0, "units": "0", "nanos": 10_000_000}],  # $0.010/GiB-mo
+    [
+        {"start": 0, "units": "0", "nanos": 0},             # $0 free-quota tier
+        {"start": 10, "units": "0", "nanos": 10_000_000},   # $0.010/GiB-mo actual rate
+    ],
 )
 
-# Streaming Insert SKU: tier[0] is the real rate ($0.01/GB)
+# Streaming Insert SKU: single tier — rate is per GiB directly
 _STREAMING_SKU = _make_sku(
     "BigQuery Streaming Insert",
     ["us"],
-    [{"start": 0, "units": "0", "nanos": 10_000_000}],  # $0.01/GB
+    [{"start": 0, "units": "0", "nanos": 10_000_000}],  # $0.010/GiB
 )
 
 FAKE_BQ_SKUS = [

@@ -3,13 +3,17 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import aiosqlite
 
 logger = logging.getLogger(__name__)
+
+# Bump this integer whenever the DB schema or serialised data format changes
+# in a way that requires old cached rows to be discarded.
+_SCHEMA_VERSION = 1
 
 _CREATE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS prices (
@@ -40,12 +44,12 @@ def _make_key(*parts: Any) -> str:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _expires(hours: float) -> str:
     from datetime import timedelta
-    return (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat()
+    return (datetime.now(UTC) + timedelta(hours=hours)).isoformat()
 
 
 class CacheManager:
@@ -89,7 +93,7 @@ class CacheManager:
             row = await cur.fetchone()
         if row is None:
             return None
-        if datetime.fromisoformat(row["expires_at"]) < datetime.now(timezone.utc):
+        if datetime.fromisoformat(row["expires_at"]) < datetime.now(UTC):
             await self.db.execute("DELETE FROM prices WHERE cache_key = ?", (key,))
             await self.db.commit()
             return None
@@ -126,7 +130,7 @@ class CacheManager:
             row = await cur.fetchone()
         if row is None:
             return None
-        if datetime.fromisoformat(row["expires_at"]) < datetime.now(timezone.utc):
+        if datetime.fromisoformat(row["expires_at"]) < datetime.now(UTC):
             await self.db.execute("DELETE FROM metadata WHERE cache_key = ?", (key,))
             await self.db.commit()
             return None
@@ -159,15 +163,47 @@ class CacheManager:
         await self.db.commit()
         return prices_deleted + meta_deleted
 
+    async def ensure_schema_version(self) -> bool:
+        """
+        Check the stored schema version and purge the cache only when it differs
+        from _SCHEMA_VERSION. Returns True if a purge was performed.
+
+        Called on startup instead of clear_all() so that cached pricing data
+        survives normal restarts (Docker, Claude Desktop, `uv run`).
+        Only bump _SCHEMA_VERSION when the DB layout or serialisation format
+        changes in a way that makes old rows incorrect.
+        """
+        _KEY = "__schema_version__"
+        stored = await self.get_metadata(_KEY)
+        if stored == _SCHEMA_VERSION:
+            await self.purge_expired()
+            return False
+
+        # Version mismatch (or first run) — wipe and write new version
+        async with self.db.execute("DELETE FROM prices") as cur:
+            prices_deleted = cur.rowcount
+        # Delete everything from metadata except the version key itself
+        async with self.db.execute(
+            "DELETE FROM metadata WHERE cache_key != ?", (_KEY,)
+        ) as cur:
+            meta_deleted = cur.rowcount
+        await self.db.commit()
+        logger.info(
+            "Schema version changed (%s → %d): purged %d price rows, %d metadata rows",
+            stored, _SCHEMA_VERSION, prices_deleted, meta_deleted,
+        )
+        await self.set_metadata(_KEY, _SCHEMA_VERSION, ttl_hours=365 * 24)
+        return True
+
     async def clear_all(self) -> dict[str, int]:
-        """Delete all cached prices and metadata — called on server startup."""
+        """Delete all cached prices and metadata."""
         async with self.db.execute("DELETE FROM prices") as cur:
             prices_deleted = cur.rowcount
         async with self.db.execute("DELETE FROM metadata") as cur:
             meta_deleted = cur.rowcount
         await self.db.commit()
         logger.info(
-            "Cache cleared on startup: %d price entries, %d metadata entries",
+            "Cache cleared: %d price entries, %d metadata entries",
             prices_deleted, meta_deleted,
         )
         return {"prices_deleted": prices_deleted, "metadata_deleted": meta_deleted}

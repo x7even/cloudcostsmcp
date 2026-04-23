@@ -1,0 +1,37 @@
+name: Feature request
+description: New service, domain, or capability
+labels: ["enhancement"]
+body:
+  - type: dropdown
+    id: type
+    attributes:
+      label: Request type
+      options:
+        - New cloud service (e.g. DynamoDB, Cloud Run, Cosmos DB)
+        - New pricing model (e.g. free-tier awareness, EDP discount)
+        - New tool or tool improvement
+        - Provider coverage (e.g. new Azure services)
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What would you like to be able to price that you can't today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: source
+    attributes:
+      label: Pricing source
+      description: Link to the official pricing page for this service (helps implementers find the right SKUs)
+
+  - type: textarea
+    id: example
+    attributes:
+      label: Example invocation
+      description: What would the ideal `get_price(spec={...})` call look like?
+      render: json

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -143,7 +143,7 @@ class PriceComparison(BaseModel):
     price_delta_pct: float | None = None   # (most_expensive - cheapest) / cheapest * 100
 
     @classmethod
-    def from_results(cls, query: str, results: list[NormalizedPrice]) -> "PriceComparison":
+    def from_results(cls, query: str, results: list[NormalizedPrice]) -> PriceComparison:
         if not results:
             return cls(query_description=query, results=[])
         sorted_results = sorted(results, key=lambda r: r.price_per_unit)
@@ -184,7 +184,7 @@ class BomLineItem(BaseModel):
         quantity: int,
         hours_per_month: float = 730.0,
         size_gb: float = 1.0,
-    ) -> "BomLineItem":
+    ) -> BomLineItem:
         if price.unit == PriceUnit.PER_HOUR:
             monthly = price.price_per_unit * Decimal(str(hours_per_month)) * quantity
         elif price.unit == PriceUnit.PER_GB_MONTH:
@@ -214,7 +214,7 @@ class BomEstimate(BaseModel):
     currency: str = "USD"
 
     @classmethod
-    def from_items(cls, items: list[BomLineItem], currency: str = "USD") -> "BomEstimate":
+    def from_items(cls, items: list[BomLineItem], currency: str = "USD") -> BomEstimate:
         total_monthly = sum(i.monthly_cost for i in items)
         return cls(
             items=items,
@@ -421,17 +421,7 @@ class ObservabilityPricingSpec(BasePricingSpec):
 
 # Discriminated union — Pydantic dispatches on the `domain` field.
 PricingSpec = Annotated[
-    Union[
-        ComputePricingSpec,
-        StoragePricingSpec,
-        DatabasePricingSpec,
-        ContainerPricingSpec,
-        AiPricingSpec,
-        ServerlessPricingSpec,
-        AnalyticsPricingSpec,
-        NetworkPricingSpec,
-        ObservabilityPricingSpec,
-    ],
+    ComputePricingSpec | StoragePricingSpec | DatabasePricingSpec | ContainerPricingSpec | AiPricingSpec | ServerlessPricingSpec | AnalyticsPricingSpec | NetworkPricingSpec | ObservabilityPricingSpec,
     Field(discriminator="domain"),
 ]
 

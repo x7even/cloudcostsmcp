@@ -12,8 +12,9 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator
+from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
@@ -32,7 +33,7 @@ async def _lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
 
     cache = CacheManager(settings.cache_dir)
     await cache.initialize()
-    await cache.clear_all()  # Always start fresh — avoids stale entries across code changes
+    await cache.ensure_schema_version()
 
     providers: dict[str, Any] = {}
 

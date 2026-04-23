@@ -295,7 +295,7 @@ async def test_azure_get_storage_price(azure_provider: AzureProvider):
     assert len(prices) == 1
     p = prices[0]
     assert p.provider == CloudProvider.AZURE
-    assert p.unit == PriceUnit.PER_GB_MONTH
+    assert p.unit == PriceUnit.PER_MONTH  # Premium SSD tiers are flat monthly fees
     assert p.price_per_unit == Decimal("0.135")
 
 

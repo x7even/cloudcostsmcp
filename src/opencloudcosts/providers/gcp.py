@@ -57,6 +57,7 @@ from opencloudcosts.utils.gcp_specs import (
     get_machine_family,
     parse_instance_type,
 )
+from opencloudcosts.utils.http_retry import async_retry
 from opencloudcosts.utils.regions import list_gcp_regions
 from opencloudcosts.utils.units import gcp_money_to_decimal
 
@@ -228,8 +229,10 @@ class GCPProvider(ProviderBase):
         url = f"/services/{service_id}/skus"
 
         while True:
-            resp = await http.get(url, params=params)
-            resp.raise_for_status()
+            async for attempt in async_retry():
+                with attempt:
+                    resp = await http.get(url, params=params)
+                    resp.raise_for_status()
             data = resp.json()
             skus.extend(data.get("skus", []))
             next_token = data.get("nextPageToken")
@@ -720,7 +723,6 @@ class GCPProvider(ProviderBase):
         m_tier_order = [preferred_m] + [m for m in all_m_tiers if m != preferred_m]
 
         raw_rate: Decimal | None = None
-        matched_desc: str = ""
 
         for m_tier in m_tier_order:
             for (desc, utype), price in index.items():
@@ -730,7 +732,6 @@ class GCPProvider(ProviderBase):
                 if tier_lower == "basic":
                     if f"redis capacity basic {m_tier}" in desc_lower:
                         raw_rate = price
-                        matched_desc = desc
                         break
                 else:  # standard (classic HA tier)
                     # "Redis Capacity Standard MX" is the classic HA tier SKU.
@@ -738,7 +739,6 @@ class GCPProvider(ProviderBase):
                     # exclude it to avoid picking Cluster node rates for classic Redis HA.
                     if f"redis capacity standard {m_tier}" in desc_lower:
                         raw_rate = price
-                        matched_desc = desc
                         break
             if raw_rate is not None:
                 break
@@ -808,8 +808,9 @@ class GCPProvider(ProviderBase):
                 continue
 
             desc = sku.get("description", "")
-            # Storage and analysis SKUs have a free-quota tier at startUsageAmount=0 ($0)
-            # followed by the actual rate. Use _sku_paid_price to skip the free tier.
+            # BigQuery Analysis, Active Storage, and Long-term Storage SKUs all have
+            # a free-quota tier at startUsageAmount=0 ($0) followed by the actual
+            # paid rate. Use _sku_paid_price to skip the free tier.
             if ("Analysis" in desc and "Streaming" not in desc) or \
                "Active Logical Storage" in desc or "Long Term Logical Storage" in desc:
                 price = self._sku_paid_price(sku)
@@ -872,8 +873,7 @@ class GCPProvider(ProviderBase):
             elif "Analysis" in desc and "Streaming" not in desc and analysis_rate == 0:
                 analysis_rate = price
             elif "Streaming Insert" in desc and streaming_rate == 0:
-                # SKU unit is MiBy — convert to per-GiB rate for consistency
-                streaming_rate = price * Decimal("1024")
+                streaming_rate = price
 
         result: dict[str, Any] = {
             "region": region,

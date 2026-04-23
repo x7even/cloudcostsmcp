@@ -122,21 +122,23 @@ def register_availability_tools(mcp: Any) -> None:
             logger.error("list_instance_types error: %s", e)
             return {"error": str(e)}
 
+        def _compact(t: Any) -> dict[str, Any]:
+            entry: dict[str, Any] = {
+                "instance_type": t.instance_type,
+                "vcpu": t.vcpu,
+                "memory_gb": t.memory_gb,
+            }
+            if t.gpu_count:
+                entry["gpu_count"] = t.gpu_count
+            if t.gpu_type:
+                entry["gpu_type"] = t.gpu_type
+            return entry
+
         return {
             "provider": provider,
             "region": region,
             "count": len(types),
-            "instance_types": [
-                {
-                    "instance_type": t.instance_type,
-                    "vcpu": t.vcpu,
-                    "memory_gb": t.memory_gb,
-                    "gpu_count": t.gpu_count,
-                    "gpu_type": t.gpu_type,
-                    "network_performance": t.network_performance,
-                }
-                for t in types
-            ],
+            "instance_types": [_compact(t) for t in types],
         }
 
     @mcp.tool()
