@@ -7,6 +7,63 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.8.4] — 2026-04-23
+
+### Added
+- `src/opencloudcosts/utils/money.py` — `_price(amount, unit)` and `_money(amount, label)`
+  helpers that return structured dicts `{amount, unit, currency, display}` instead of
+  formatted strings. Consumers can now do arithmetic on `price.amount` without parsing.
+
+### Changed
+- All string-money `f"${p.price_per_unit:.6f}/{p.unit.value}"` formatting eliminated from
+  the tool layer (`lookup.py`, `availability.py`, `bom.py`) and `NormalizedPrice.summary()`.
+  Every price field in tool responses is now a structured dict with a `display` key for
+  human readability (e.g. `"$0.192000/per_hour"`) alongside the numeric `amount`.
+- `apply_baseline_deltas` (`utils/baseline.py`) now accepts both string `"$X.XX/unit"`
+  and new dict `{amount: X.XX}` values for `price_per_unit` / `monthly_estimate`.
+- Harness `analyse.py` requires no changes: the embedded `display` field keeps existing
+  `$` regex grounding checks working on serialised tool output.
+
+---
+
+## [0.8.3] — 2026-04-23
+
+### Added
+- Trust metadata on `NormalizedPrice`: `fetched_at`, `source_url`, `cache_age_seconds`
+  fields (all optional). Populated from cache hits via `_apply_cache_trust()` on
+  `ProviderBase`; emitted in `NormalizedPrice.summary()` when set.
+- `CacheManager.get_prices_with_meta()` — returns `(data, fetched_at_datetime)` so
+  providers can compute `cache_age_seconds` at read time without breaking existing callers.
+- `INTER_REGION_EGRESS` pricing domain and `EgressPricingSpec` discriminated union variant
+  (`source_region`, `dest_region`, `data_gb`).
+- AWS inter-region egress pricing via `AWSDataTransfer` bulk pricing SKUs, filterable
+  by `fromRegionCode` / `toRegionCode`. Exposed through `get_price` with the new domain.
+- Egress entries added to `AWSProvider.describe_catalog()`.
+
+---
+
+## [0.8.2] — 2026-04-23
+
+### Added
+- Three new `ProviderBase` protocol methods with sensible defaults:
+  - `major_regions() -> list[str]` — provider's curated region shortlist for fan-out tools
+  - `default_region() -> str` — provider's primary region when none is specified
+  - `bom_advisories(services, sample_region) -> list[dict]` — provider-specific BOM
+    advisory rows (data transfer, support costs, etc.)
+- All three providers implement the new methods; AWS `bom_advisories` carries the
+  60-line advisory block previously hard-coded in `bom.py`.
+
+### Changed
+- All `if provider == "aws"` / provider-string conditionals removed from the tool layer.
+  `find_cheapest_region` and `find_available_regions` call `pvdr.major_regions()`;
+  `get_price` uses `pvdr.default_region()`; `estimate_bom` calls `pvdr.bom_advisories()`.
+- `get_spot_history` tool is now provider-agnostic: removed the hard AWS guard; catches
+  `NotSupportedError` from `pvdr.get_spot_history()` and returns a structured envelope.
+- `_AWS_MAJOR_REGIONS` / `_GCP_MAJOR_REGIONS` module-level constants removed from
+  `availability.py`; `_DEFAULT_REGIONS` dict removed from `lookup.py`.
+
+---
+
 ## [0.8.1] — 2026-04-23
 
 ### Added
@@ -89,6 +146,9 @@ Phase-based rollout:
 - **Phase 5**: GCP managed services (GKE, Memorystore, BigQuery, Vertex AI, Gemini,
   Cloud LB/CDN/NAT/Armor/Monitoring, Cloud SQL); Azure reserved pricing
 
-[Unreleased]: https://github.com/x7even/cloudcostmcp/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/x7even/cloudcostmcp/compare/v0.8.4...HEAD
+[0.8.4]: https://github.com/x7even/cloudcostmcp/compare/v0.8.3...v0.8.4
+[0.8.3]: https://github.com/x7even/cloudcostmcp/compare/v0.8.2...v0.8.3
+[0.8.2]: https://github.com/x7even/cloudcostmcp/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/x7even/cloudcostmcp/releases/tag/v0.8.1
 [0.8.0]: https://github.com/x7even/cloudcostmcp/releases/tag/v0.8.0
