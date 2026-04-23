@@ -11,6 +11,7 @@ from pydantic import TypeAdapter
 from opencloudcosts.models import PricingSpec
 from opencloudcosts.providers.base import NotConfiguredError, NotSupportedError
 from opencloudcosts.utils.money import _money, _price
+from opencloudcosts.utils.spec_infer import fill_domain, spec_error_response
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +54,9 @@ def register_lookup_tools(mcp: Any) -> None:
           NETWORK  : service ("cloud_lb"/"cloud_cdn"/"cloud_nat"/"cloud_armor"),
                      lb_type, rule_count, data_gb, gateway_count, egress_gb, policy_count
           OBSERVABILITY: service ("cloudwatch"/"cloud_monitoring"), ingestion_mib, log_gb
+          INTER_REGION_EGRESS: source_region, dest_region (empty = internet), data_gb
+                     Example: {"provider": "aws", "domain": "inter_region_egress",
+                               "source_region": "us-east-1", "dest_region": "eu-west-1"}
 
         Returns public_prices[] always. When auth exists: contracted_prices[], effective_price,
         auth_available=true.
@@ -72,16 +76,9 @@ def register_lookup_tools(mcp: Any) -> None:
             {"provider": "aws",   "domain": "database",    "service": "rds", "resource_type": "db.r5.large", "engine": "MySQL", "deployment": "single-az", "region": "us-east-1"}
         """
         try:
-            parsed = _SPEC_ADAPTER.validate_python(spec)
+            parsed = _SPEC_ADAPTER.validate_python(fill_domain(spec))
         except Exception as e:
-            return {
-                "error": "invalid_spec",
-                "reason": str(e),
-                "hint": (
-                    "Call describe_catalog(provider, domain, service) to get a valid "
-                    "example_invocation for your provider/domain/service combination."
-                ),
-            }
+            return spec_error_response(e, spec)
 
         pvdr = _provider_for(ctx, parsed.provider.value)
         if pvdr is None:
@@ -208,9 +205,9 @@ def register_lookup_tools(mcp: Any) -> None:
         """
         from opencloudcosts.utils.regions import region_display_name
         try:
-            base_spec = _SPEC_ADAPTER.validate_python(spec)
+            base_spec = _SPEC_ADAPTER.validate_python(fill_domain(spec))
         except Exception as e:
-            return {"error": "invalid_spec", "reason": str(e)}
+            return spec_error_response(e, spec)
 
         pvdr = _provider_for(ctx, base_spec.provider.value)
         if pvdr is None:
@@ -394,9 +391,9 @@ def register_lookup_tools(mcp: Any) -> None:
             availability_zone: Filter to a specific AZ, e.g. "us-east-1a". Empty = all AZs (AWS only).
         """
         try:
-            parsed = _SPEC_ADAPTER.validate_python(spec)
+            parsed = _SPEC_ADAPTER.validate_python(fill_domain(spec))
         except Exception as e:
-            return {"error": "invalid_spec", "reason": str(e)}
+            return spec_error_response(e, spec)
 
         pvdr = _provider_for(ctx, parsed.provider.value)
         if pvdr is None:

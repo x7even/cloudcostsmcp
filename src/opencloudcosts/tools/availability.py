@@ -13,6 +13,7 @@ from opencloudcosts.providers.base import NotConfiguredError
 from opencloudcosts.utils.baseline import apply_baseline_deltas
 from opencloudcosts.utils.money import _money, _price
 from opencloudcosts.utils.regions import region_display_name
+from opencloudcosts.utils.spec_infer import fill_domain, spec_error_response
 
 logger = logging.getLogger(__name__)
 
@@ -235,9 +236,9 @@ def register_availability_tools(mcp: Any) -> None:
             baseline_region: Optional region for delta comparison, e.g. "us-east-1".
         """
         try:
-            base_spec = _SPEC_ADAPTER.validate_python(spec)
+            base_spec = _SPEC_ADAPTER.validate_python(fill_domain(spec))
         except Exception as e:
-            return {"error": "invalid_spec", "reason": str(e)}
+            return spec_error_response(e, spec)
 
         pvdr = ctx.request_context.lifespan_context["providers"].get(base_spec.provider.value)
         if pvdr is None:
@@ -363,9 +364,9 @@ def register_availability_tools(mcp: Any) -> None:
             baseline_region: Optional region for delta comparison.
         """
         try:
-            base_spec = _SPEC_ADAPTER.validate_python(spec)
+            base_spec = _SPEC_ADAPTER.validate_python(fill_domain(spec))
         except Exception as e:
-            return {"error": "invalid_spec", "reason": str(e)}
+            return spec_error_response(e, spec)
 
         pvdr = ctx.request_context.lifespan_context["providers"].get(base_spec.provider.value)
         if pvdr is None:

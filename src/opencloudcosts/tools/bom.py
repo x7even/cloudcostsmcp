@@ -11,6 +11,7 @@ from pydantic import TypeAdapter
 from opencloudcosts.models import BomEstimate, BomLineItem, PricingSpec
 from opencloudcosts.providers.base import NotSupportedError
 from opencloudcosts.utils.money import _money, _price
+from opencloudcosts.utils.spec_infer import fill_domain
 
 logger = logging.getLogger(__name__)
 
@@ -74,13 +75,14 @@ def register_bom_tools(mcp: Any) -> None:
                 spec_dict = {k: v for k, v in item.items()
                              if k not in ("quantity", "hours_per_month", "description")}
                 # Fill hours_per_month into spec for compute
-                if spec_dict.get("domain") == "compute" and "hours_per_month" not in spec_dict:
-                    spec_dict["hours_per_month"] = hours_per_month
-                if spec_dict.get("domain") == "storage" and "size_gb" not in spec_dict and size_gb:
-                    spec_dict["size_gb"] = size_gb
+                enriched = fill_domain(spec_dict)
+                if enriched.get("domain") == "compute" and "hours_per_month" not in enriched:
+                    enriched = {**enriched, "hours_per_month": hours_per_month}
+                if enriched.get("domain") == "storage" and "size_gb" not in enriched and size_gb:
+                    enriched = {**enriched, "size_gb": size_gb}
 
                 try:
-                    parsed = _SPEC_ADAPTER.validate_python(spec_dict)
+                    parsed = _SPEC_ADAPTER.validate_python(enriched)
                 except Exception as e:
                     errors.append(f"{label}: invalid spec — {e}")
                     continue
@@ -198,11 +200,12 @@ def register_bom_tools(mcp: Any) -> None:
 
                 spec_dict = {k: v for k, v in item.items()
                              if k not in ("quantity", "hours_per_month", "description")}
-                if spec_dict.get("domain") == "compute" and "hours_per_month" not in spec_dict:
-                    spec_dict["hours_per_month"] = hours_per_month
+                enriched = fill_domain(spec_dict)
+                if enriched.get("domain") == "compute" and "hours_per_month" not in enriched:
+                    enriched = {**enriched, "hours_per_month": hours_per_month}
 
                 try:
-                    parsed = _SPEC_ADAPTER.validate_python(spec_dict)
+                    parsed = _SPEC_ADAPTER.validate_python(enriched)
                 except Exception as e:
                     errors.append(f"{label}: invalid spec — {e}")
                     continue
