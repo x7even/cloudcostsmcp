@@ -3,7 +3,11 @@
 All notable changes to OpenCloudCosts are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] — v0.8.1
+## [Unreleased]
+
+---
+
+## [0.8.1] — 2026-04-23
 
 ### Added
 - HTTP retry/backoff on all upstream pricing API calls (AWS, GCP, Azure) using tenacity:
@@ -16,6 +20,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - PyPI/uvx quickstart in README: `uvx opencloudcosts` and `pip install opencloudcosts`.
 - CONTRIBUTING.md, SECURITY.md, GitHub issue templates, PR template.
 - CHANGELOG.md (this file).
+- Multi-model LLM harness matrix runner (`local-test-harness/run_matrix.py`) with
+  `--parallel-models N` flag; 123/123 (100%) pass rate across gemma-4-26b-a4b,
+  qwen3.6-35b-a3b, and qwen3.5-122b-a10b@q6_k.
+
+### Changed
+- `list_instance_types` response compacted: `network_performance` dropped, GPU fields
+  (`gpu_count`, `gpu_type`) only included when non-null. Reduces token use in large regions.
 
 ### Fixed
 - Structured error envelopes at all tool boundaries: raw exception text (including potential
@@ -78,5 +89,6 @@ Phase-based rollout:
 - **Phase 5**: GCP managed services (GKE, Memorystore, BigQuery, Vertex AI, Gemini,
   Cloud LB/CDN/NAT/Armor/Monitoring, Cloud SQL); Azure reserved pricing
 
-[Unreleased]: https://github.com/x7even/cloudcostmcp/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/x7even/cloudcostmcp/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/x7even/cloudcostmcp/releases/tag/v0.8.1
 [0.8.0]: https://github.com/x7even/cloudcostmcp/releases/tag/v0.8.0
