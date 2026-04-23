@@ -1221,6 +1221,99 @@ class AWSProvider(ProviderBase):
             base = [PricingTerm.ON_DEMAND, PricingTerm.SAVINGS_PLAN]
         return base
 
+    _MAJOR_REGIONS = [
+        "us-east-1", "us-east-2", "us-west-1", "us-west-2",
+        "ca-central-1", "eu-west-1", "eu-west-2", "eu-central-1",
+        "ap-southeast-1", "ap-southeast-2", "ap-northeast-1", "ap-south-1",
+    ]
+
+    def major_regions(self) -> list[str]:
+        return self._MAJOR_REGIONS
+
+    def default_region(self) -> str:
+        return "us-east-1"
+
+    def bom_advisories(
+        self, services: set[str], sample_region: str
+    ) -> list[dict[str, str]]:
+        advisories: list[dict[str, str]] = []
+        if "compute" in services or "database" in services:
+            advisories.append({
+                "item": "Data transfer (egress)",
+                "why": "Outbound traffic to the internet or cross-region — varies by workload",
+                "how_to_price": (
+                    f'get_price(spec={{"provider": "aws", "domain": "network", "service": "data_transfer", '
+                    f'"region": "{sample_region}"}})'
+                ),
+                "price": "unknown — use the how_to_price call above to get the real figure",
+            })
+            advisories.append({
+                "item": "Load balancer (ALB/NLB)",
+                "why": "Typically needed in front of compute clusters",
+                "how_to_price": (
+                    f'get_price(spec={{"provider": "aws", "domain": "network", "service": "lb", '
+                    f'"region": "{sample_region}"}})'
+                ),
+                "price": "unknown — use the how_to_price call above to get the real figure",
+            })
+            advisories.append({
+                "item": "NAT Gateway",
+                "why": "Required if EC2 instances are in private subnets",
+                "how_to_price": (
+                    f'get_price(spec={{"provider": "aws", "domain": "network", "service": "nat", '
+                    f'"region": "{sample_region}"}})'
+                ),
+                "price": "unknown — use the how_to_price call above to get the real figure",
+            })
+        advisories.append({
+            "item": "CloudWatch monitoring",
+            "why": "Logs, metrics, alarms — scales with number of instances and log volume",
+            "how_to_price": (
+                f'get_price(spec={{"provider": "aws", "domain": "observability", "service": "cloudwatch", '
+                f'"region": "{sample_region}"}})'
+            ),
+            "price": "unknown — use the how_to_price call above to get the real figure",
+        })
+        if "database" in services:
+            advisories.append({
+                "item": "RDS automated backups",
+                "why": "Free for storage equal to DB size; extra storage charged beyond that",
+                "how_to_price": (
+                    f'search_pricing(provider="aws", query="RDS Storage Snapshot", region="{sample_region}")'
+                ),
+                "price": "unknown — use the how_to_price call above to get the real figure",
+            })
+        if "storage" in services:
+            advisories.append({
+                "item": "EBS snapshots",
+                "why": "Point-in-time backups stored in S3 — charged per GB-month",
+                "how_to_price": (
+                    f'search_pricing(provider="aws", query="EBS Storage Snapshot", region="{sample_region}")'
+                ),
+                "price": "unknown — use the how_to_price call above to get the real figure",
+            })
+        return advisories
+
+    async def get_spot_history(
+        self, spec: PricingSpec, hours: int = 24, availability_zone: str = ""
+    ) -> dict:
+        from opencloudcosts.models import ComputePricingSpec
+        if not isinstance(spec, ComputePricingSpec):
+            from opencloudcosts.providers.base import NotSupportedError
+            raise NotSupportedError(
+                provider=self.provider,
+                domain=spec.domain,
+                service=spec.service,
+                reason="get_spot_history requires domain='compute'.",
+            )
+        return await self._get_spot_history(
+            instance_type=spec.resource_type or "",
+            region=spec.region,
+            os=getattr(spec, "os", "Linux") or "Linux",
+            availability_zone=availability_zone,
+            hours=hours,
+        )
+
     async def get_price(self, spec: PricingSpec) -> PricingResult:
         """Unified dispatcher — routes spec to the appropriate internal method."""
         if not self.supports(spec.domain, spec.service):

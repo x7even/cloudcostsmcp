@@ -100,7 +100,9 @@ class ProviderBase:
             alternatives=["Use get_price with the relevant term (reserved_1yr, cud_1yr, etc.)"],
         )
 
-    async def get_spot_history(self, spec: PricingSpec, hours: int = 24) -> dict:
+    async def get_spot_history(
+        self, spec: PricingSpec, hours: int = 24, availability_zone: str = ""
+    ) -> dict:
         raise NotSupportedError(
             provider=self.provider,
             domain=spec.domain,
@@ -108,6 +110,20 @@ class ProviderBase:
             reason=f"{self.provider.value} does not support spot price history.",
             alternatives=["Use get_price with term='spot' for current spot rate."],
         )
+
+    def bom_advisories(
+        self, services: set[str], sample_region: str
+    ) -> list[dict[str, str]]:
+        """Return provider-specific BOM advisory rows for services not included in estimate_bom."""
+        return []
+
+    def major_regions(self) -> list[str]:
+        """Return the provider's curated major-region list for fan-out tools."""
+        return []
+
+    def default_region(self) -> str:
+        """Return the provider's default region when none is specified."""
+        return ""
 
     async def _applicable_commitments(self, spec: PricingSpec) -> list[EffectivePrice]:
         """Override to return account commitments applicable to this spec when auth is present."""

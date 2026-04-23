@@ -501,6 +501,18 @@ class AzureProvider(ProviderBase):
             ]
         return [PricingTerm.ON_DEMAND]
 
+    _MAJOR_REGIONS = [
+        "eastus", "eastus2", "westus", "westus2", "westus3",
+        "centralus", "northeurope", "westeurope", "uksouth",
+        "eastasia", "southeastasia", "australiaeast",
+    ]
+
+    def major_regions(self) -> list[str]:
+        return self._MAJOR_REGIONS
+
+    def default_region(self) -> str:
+        return "eastus"
+
     async def get_price(self, spec: PricingSpec) -> PricingResult:
         if not self.supports(spec.domain, spec.service):
             raise NotSupportedError(

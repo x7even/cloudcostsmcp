@@ -17,38 +17,6 @@ logger = logging.getLogger(__name__)
 
 _SPEC_ADAPTER: TypeAdapter[PricingSpec] = TypeAdapter(PricingSpec)
 
-# Default region sets for fan-out tools — avoids cold-cache timeouts.
-# Pass regions=["all"] to search every available region (slower on first run).
-_AWS_MAJOR_REGIONS = [
-    "us-east-1",       # N. Virginia
-    "us-east-2",       # Ohio
-    "us-west-1",       # N. California
-    "us-west-2",       # Oregon
-    "ca-central-1",    # Canada
-    "eu-west-1",       # Ireland
-    "eu-west-2",       # London
-    "eu-central-1",    # Frankfurt
-    "ap-southeast-1",  # Singapore
-    "ap-southeast-2",  # Sydney
-    "ap-northeast-1",  # Tokyo
-    "ap-south-1",      # Mumbai
-]
-
-_GCP_MAJOR_REGIONS = [
-    "us-central1",
-    "us-east1",
-    "us-west1",
-    "us-west2",
-    "europe-west1",
-    "europe-west2",
-    "europe-west3",
-    "europe-west4",
-    "asia-east1",
-    "asia-northeast1",
-    "asia-southeast1",
-    "australia-southeast1",
-]
-
 
 def register_availability_tools(mcp: Any) -> None:
 
@@ -279,11 +247,9 @@ def register_availability_tools(mcp: Any) -> None:
 
         if not regions or all_regions_requested:
             all_available = await pvdr.list_regions("compute")
-            if provider_str == "aws" and not all_regions_requested:
-                regions = _AWS_MAJOR_REGIONS
-                scoped = True
-            elif provider_str == "gcp" and not all_regions_requested:
-                regions = _GCP_MAJOR_REGIONS
+            major = pvdr.major_regions()
+            if major and not all_regions_requested:
+                regions = major
                 scoped = True
             else:
                 regions = all_available
@@ -409,11 +375,9 @@ def register_availability_tools(mcp: Any) -> None:
 
         if not regions or all_regions_requested:
             all_available = await pvdr.list_regions("compute")
-            if provider_str == "aws" and not all_regions_requested:
-                regions = _AWS_MAJOR_REGIONS
-                scoped = True
-            elif provider_str == "gcp" and not all_regions_requested:
-                regions = _GCP_MAJOR_REGIONS
+            major = pvdr.major_regions()
+            if major and not all_regions_requested:
+                regions = major
                 scoped = True
             else:
                 regions = all_available

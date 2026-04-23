@@ -8,7 +8,7 @@ from typing import Any
 from mcp.server.fastmcp import Context
 from pydantic import TypeAdapter
 
-from opencloudcosts.models import ComputePricingSpec, PricingSpec
+from opencloudcosts.models import PricingSpec
 from opencloudcosts.providers.base import NotConfiguredError, NotSupportedError
 
 logger = logging.getLogger(__name__)
@@ -82,16 +82,15 @@ def register_lookup_tools(mcp: Any) -> None:
                 ),
             }
 
-        if not parsed.region:
-            _DEFAULT_REGIONS = {"aws": "us-east-1", "gcp": "us-central1", "azure": "eastus"}
-            default = _DEFAULT_REGIONS.get(parsed.provider.value, "us-east-1")
-            parsed = parsed.model_copy(update={"region": default})
-            logger.info("get_price: region not specified, defaulting to %s for %s", default, parsed.provider.value)
-
         pvdr = _provider_for(ctx, parsed.provider.value)
         if pvdr is None:
             return {"error": f"Provider '{parsed.provider.value}' not configured. "
                              f"Available: {list(_providers(ctx))}"}
+
+        if not parsed.region:
+            default = pvdr.default_region() or "us-east-1"
+            parsed = parsed.model_copy(update={"region": default})
+            logger.info("get_price: region not specified, defaulting to %s for %s", default, parsed.provider.value)
 
         if not pvdr.supports(parsed.domain, parsed.service):
             return NotSupportedError(
@@ -381,41 +380,32 @@ def register_lookup_tools(mcp: Any) -> None:
         availability_zone: str = "",
     ) -> dict[str, Any]:
         """
-        Get spot price history and stability analysis for an AWS EC2 instance type.
+        Get spot price history and stability analysis for a compute instance type.
 
         Returns per-AZ spot price statistics (current, min, max, avg, sample count),
         overall volatility ratio, a stability label, and an actionable recommendation.
-        Requires AWS credentials.
+        Currently supported by AWS (requires credentials). GCP and Azure return not_supported.
 
         Args:
-            spec: PricingSpec dict with provider="aws", domain="compute", resource_type (instance type), region.
+            spec: PricingSpec dict with domain="compute", resource_type (instance type), region.
                   Example: {"provider": "aws", "domain": "compute", "resource_type": "m5.xlarge", "region": "us-east-1"}
             hours: Lookback window in hours (default 24, max 720)
-            availability_zone: Filter to a specific AZ, e.g. "us-east-1a". Empty = all AZs.
+            availability_zone: Filter to a specific AZ, e.g. "us-east-1a". Empty = all AZs (AWS only).
         """
         try:
             parsed = _SPEC_ADAPTER.validate_python(spec)
         except Exception as e:
             return {"error": "invalid_spec", "reason": str(e)}
 
-        if parsed.provider.value != "aws":
-            return {"error": "get_spot_history only supports provider='aws'."}
-
-        if not isinstance(parsed, ComputePricingSpec):
-            return {"error": "get_spot_history requires domain='compute'."}
-
-        pvdr = _provider_for(ctx, "aws")
+        pvdr = _provider_for(ctx, parsed.provider.value)
         if pvdr is None:
-            return {"error": "AWS provider not configured."}
+            return {"error": f"Provider '{parsed.provider.value}' not configured."}
 
+        from opencloudcosts.providers.base import NotSupportedError
         try:
-            result = await pvdr._get_spot_history(
-                instance_type=parsed.resource_type or "",
-                region=parsed.region,
-                os=parsed.os or "Linux",
-                availability_zone=availability_zone,
-                hours=hours,
-            )
+            result = await pvdr.get_spot_history(parsed, hours, availability_zone=availability_zone)
+        except NotSupportedError as e:
+            return e.to_response()
         except ValueError as e:
             return {"error": "invalid_input", "message": str(e), "retryable": False}
         except Exception as e:
@@ -430,12 +420,12 @@ def register_lookup_tools(mcp: Any) -> None:
                     f"No spot price history found for {parsed.resource_type} in {parsed.region}. "
                     "Check instance type spelling or try a different region."
                 ),
-                "region_name": region_display_name("aws", parsed.region),
+                "region_name": region_display_name(parsed.provider.value, parsed.region),
             }
 
         from opencloudcosts.utils.regions import region_display_name
-        result["provider"] = "aws"
-        result["region_name"] = region_display_name("aws", parsed.region)
+        result["provider"] = parsed.provider.value
+        result["region_name"] = region_display_name(parsed.provider.value, parsed.region)
         return result
 
     @mcp.tool()

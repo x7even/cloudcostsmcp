@@ -1902,6 +1902,18 @@ class GCPProvider(ProviderBase):
             return [PricingTerm.ON_DEMAND, PricingTerm.SPOT, PricingTerm.CUD_1YR, PricingTerm.CUD_3YR]
         return [PricingTerm.ON_DEMAND]
 
+    _MAJOR_REGIONS = [
+        "us-central1", "us-east1", "us-west1", "us-west2",
+        "europe-west1", "europe-west2", "europe-west3", "europe-west4",
+        "asia-east1", "asia-northeast1", "asia-southeast1", "australia-southeast1",
+    ]
+
+    def major_regions(self) -> list[str]:
+        return self._MAJOR_REGIONS
+
+    def default_region(self) -> str:
+        return "us-central1"
+
     async def get_price(self, spec: PricingSpec) -> PricingResult:
         if not self.supports(spec.domain, spec.service):
             raise NotSupportedError(

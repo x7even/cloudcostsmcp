@@ -1,4 +1,4 @@
-"""Tests for GCP major-regions default in find_cheapest_region and find_available_regions (v0.8.0)."""
+"""Tests for major-regions default in find_cheapest_region and find_available_regions (v0.8.2)."""
 from __future__ import annotations
 
 from decimal import Decimal
@@ -13,7 +13,11 @@ from opencloudcosts.models import (
     PricingResult,
     PricingTerm,
 )
-from opencloudcosts.tools.availability import _GCP_MAJOR_REGIONS, _AWS_MAJOR_REGIONS
+from opencloudcosts.providers.gcp import GCPProvider
+from opencloudcosts.providers.aws import AWSProvider
+
+_GCP_MAJOR_REGIONS = GCPProvider._MAJOR_REGIONS
+_AWS_MAJOR_REGIONS = AWSProvider._MAJOR_REGIONS
 
 
 # ---------------------------------------------------------------------------
@@ -72,7 +76,7 @@ def _register_availability():
 
 
 # ---------------------------------------------------------------------------
-# _GCP_MAJOR_REGIONS constant
+# major_regions constant values (sanity checks on provider classes)
 # ---------------------------------------------------------------------------
 
 def test_gcp_major_regions_has_twelve_entries():
@@ -98,11 +102,12 @@ def gcp_pvdr():
     pvdr = MagicMock()
     pvdr.list_regions = AsyncMock(return_value=all_gcp)
     pvdr.supports = MagicMock(return_value=True)
+    pvdr.major_regions = MagicMock(return_value=_GCP_MAJOR_REGIONS)
     return pvdr
 
 
 async def test_find_cheapest_region_gcp_defaults_to_major_regions(gcp_pvdr):
-    """GCP find_cheapest_region without regions param must query only _GCP_MAJOR_REGIONS."""
+    """GCP find_cheapest_region without regions param must query only major_regions()."""
     queried_regions: list[str] = []
 
     async def mock_get_price(spec):
@@ -158,11 +163,12 @@ async def test_find_cheapest_region_gcp_all_regions(gcp_pvdr):
 
 
 async def test_find_cheapest_region_aws_behaviour_unchanged():
-    """AWS find_cheapest_region without regions param must query _AWS_MAJOR_REGIONS."""
+    """AWS find_cheapest_region without regions param must query major_regions()."""
     all_aws = _AWS_MAJOR_REGIONS + ["ap-east-1", "me-south-1"]
     pvdr = MagicMock()
     pvdr.list_regions = AsyncMock(return_value=all_aws)
     pvdr.supports = MagicMock(return_value=True)
+    pvdr.major_regions = MagicMock(return_value=_AWS_MAJOR_REGIONS)
     queried_regions: list[str] = []
 
     async def mock_get_price(spec):
@@ -193,7 +199,7 @@ async def test_find_cheapest_region_aws_behaviour_unchanged():
 # ---------------------------------------------------------------------------
 
 async def test_find_available_regions_gcp_defaults_to_major_regions(gcp_pvdr):
-    """GCP find_available_regions without regions param must query only _GCP_MAJOR_REGIONS."""
+    """GCP find_available_regions without regions param must query only major_regions()."""
     queried_regions: list[str] = []
 
     async def mock_get_price(spec):

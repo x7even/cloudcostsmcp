@@ -133,66 +133,15 @@ def register_bom_tools(mcp: Any) -> None:
 
         services_in_bom = {li.service for li in estimate.items}
         providers_in_bom = {li.provider.value for li in estimate.items}
-        aws_regions = [li.region for li in estimate.items if li.provider.value == "aws"]
-        sample_region = aws_regions[0] if aws_regions else "us-east-1"
 
         not_included: list[dict[str, str]] = []
-        if "aws" in providers_in_bom:
-            if "compute" in services_in_bom or "database" in services_in_bom:
-                not_included.append({
-                    "item": "Data transfer (egress)",
-                    "why": "Outbound traffic to the internet or cross-region — varies by workload",
-                    "how_to_price": (
-                        f'get_price(spec={{"provider": "aws", "domain": "network", "service": "data_transfer", '
-                        f'"region": "{sample_region}"}})'
-                    ),
-                    "price": "unknown — use the how_to_price call above to get the real figure",
-                })
-                not_included.append({
-                    "item": "Load balancer (ALB/NLB)",
-                    "why": "Typically needed in front of compute clusters",
-                    "how_to_price": (
-                        f'get_price(spec={{"provider": "aws", "domain": "network", "service": "lb", '
-                        f'"region": "{sample_region}"}})'
-                    ),
-                    "price": "unknown — use the how_to_price call above to get the real figure",
-                })
-                not_included.append({
-                    "item": "NAT Gateway",
-                    "why": "Required if EC2 instances are in private subnets",
-                    "how_to_price": (
-                        f'get_price(spec={{"provider": "aws", "domain": "network", "service": "nat", '
-                        f'"region": "{sample_region}"}})'
-                    ),
-                    "price": "unknown — use the how_to_price call above to get the real figure",
-                })
-            not_included.append({
-                "item": "CloudWatch monitoring",
-                "why": "Logs, metrics, alarms — scales with number of instances and log volume",
-                "how_to_price": (
-                    f'get_price(spec={{"provider": "aws", "domain": "observability", "service": "cloudwatch", '
-                    f'"region": "{sample_region}"}})'
-                ),
-                "price": "unknown — use the how_to_price call above to get the real figure",
-            })
-            if "database" in services_in_bom:
-                not_included.append({
-                    "item": "RDS automated backups",
-                    "why": "Free for storage equal to DB size; extra storage charged beyond that",
-                    "how_to_price": (
-                        f'search_pricing(provider="aws", query="RDS Storage Snapshot", region="{sample_region}")'
-                    ),
-                    "price": "unknown — use the how_to_price call above to get the real figure",
-                })
-            if "storage" in services_in_bom:
-                not_included.append({
-                    "item": "EBS snapshots",
-                    "why": "Point-in-time backups stored in S3 — charged per GB-month",
-                    "how_to_price": (
-                        f'search_pricing(provider="aws", query="EBS Storage Snapshot", region="{sample_region}")'
-                    ),
-                    "price": "unknown — use the how_to_price call above to get the real figure",
-                })
+        for pname in providers_in_bom:
+            pvdr_advisory = providers.get(pname)
+            if pvdr_advisory is None:
+                continue
+            pvdr_regions = [li.region for li in estimate.items if li.provider.value == pname]
+            sample_region = pvdr_regions[0] if pvdr_regions else pvdr_advisory.default_region()
+            not_included.extend(pvdr_advisory.bom_advisories(services_in_bom, sample_region))
 
         return {
             "line_items": [
