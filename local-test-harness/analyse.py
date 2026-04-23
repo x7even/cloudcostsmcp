@@ -58,7 +58,10 @@ NO_ANSWER_MARKERS = ["[thinking only", "no final answer", ""]
 def load_traces(run_dir: Path) -> dict:
     traces = {}
     for f in sorted(run_dir.glob("*_trace.json")):
-        pid = f.stem.replace("_trace", "")
+        stem = f.stem.replace("_trace", "")
+        # Strip model prefix when present (e.g. "google_gemma-4-26b-a4b_AA1" → "AA1")
+        m = re.search(r'_([A-Z][A-Z0-9]*)$', stem)
+        pid = m.group(1) if m else stem
         traces[pid] = json.loads(f.read_text())
     return traces
 
