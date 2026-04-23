@@ -10,6 +10,7 @@ from pydantic import TypeAdapter
 
 from opencloudcosts.models import BomEstimate, BomLineItem, PricingSpec
 from opencloudcosts.providers.base import NotSupportedError
+from opencloudcosts.utils.money import _money, _price
 
 logger = logging.getLogger(__name__)
 
@@ -151,15 +152,15 @@ def register_bom_tools(mcp: Any) -> None:
                     "service": li.service,
                     "region": li.region,
                     "quantity": li.quantity,
-                    "unit_price": f"${li.unit_price.price_per_unit:.6f}/{li.unit_price.unit.value}",
-                    "monthly_cost": f"${li.monthly_cost:.2f}",
-                    "annual_cost": f"${li.annual_cost:.2f}",
+                    "unit_price": _price(li.unit_price.price_per_unit, li.unit_price.unit.value),
+                    "monthly_cost": _money(li.monthly_cost),
+                    "annual_cost": _money(li.annual_cost),
                 }
                 for li in estimate.items
             ],
             "totals": {
-                "monthly": f"${estimate.total_monthly:.2f}",
-                "annual": f"${estimate.total_annual:.2f}",
+                "monthly": _money(estimate.total_monthly),
+                "annual": _money(estimate.total_annual),
                 "currency": estimate.currency,
             },
             "not_included": not_included or None,
@@ -256,11 +257,11 @@ def register_bom_tools(mcp: Any) -> None:
 
         return {
             "pricing_region": sample_region,
-            "infrastructure_monthly": f"${estimate.total_monthly:.2f}",
-            "infrastructure_annual": f"${estimate.total_annual:.2f}",
+            "infrastructure_monthly": _money(estimate.total_monthly),
+            "infrastructure_annual": _money(estimate.total_annual),
             "volume": f"{units_per_month:,.0f} {unit_label}s/month",
-            "cost_per_unit": f"${cost_per_unit:.4f} per {unit_label}",
-            "cost_per_unit_annual": f"${cost_per_unit * 12:.4f} per {unit_label}/year",
+            "cost_per_unit": _money(cost_per_unit, f" per {unit_label}"),
+            "cost_per_unit_annual": _money(cost_per_unit * 12, f" per {unit_label}/year"),
             "errors": errors or None,
             "important": (
                 f"Prices are for {sample_region} — always state the region in your answer "

@@ -10,6 +10,7 @@ from pydantic import TypeAdapter
 
 from opencloudcosts.models import PricingSpec
 from opencloudcosts.providers.base import NotConfiguredError, NotSupportedError
+from opencloudcosts.utils.money import _money, _price
 
 logger = logging.getLogger(__name__)
 
@@ -169,14 +170,14 @@ def register_lookup_tools(mcp: Any) -> None:
                 p = outcome[0]
                 entry: dict[str, Any] = {
                     "instance_type": itype,
-                    "price_per_hour": f"${p.price_per_unit:.6f}",
-                    "monthly_estimate": f"${p.monthly_cost:.2f}/mo",
+                    "price_per_hour": _price(p.price_per_unit, p.unit.value),
+                    "monthly_estimate": _money(p.monthly_cost, "/mo"),
                 }
                 entry.update({k: v for k, v in p.summary().items()
                                if k in ("vcpu", "memory", "description")})
                 results.append(entry)
 
-        results.sort(key=lambda x: x["price_per_hour"])
+        results.sort(key=lambda x: x["price_per_hour"]["amount"])
 
         out: dict[str, Any] = {
             "provider": provider, "region": region, "os": os, "term": term,
@@ -252,10 +253,10 @@ def register_lookup_tools(mcp: Any) -> None:
             entry: dict[str, Any] = {
                 "region": p.region,
                 "region_name": region_display_name(provider_str, p.region),
-                "price_per_unit": f"${p.price_per_unit:.6f}/{p.unit.value}",
+                "price_per_unit": _price(p.price_per_unit, p.unit.value),
             }
             if p.unit.value in ("per_hour", "per_month"):
-                entry["monthly_estimate"] = f"${p.monthly_cost:.2f}/mo"
+                entry["monthly_estimate"] = _money(p.monthly_cost, "/mo")
             entries.append(entry)
 
         if baseline_region:
@@ -273,9 +274,9 @@ def register_lookup_tools(mcp: Any) -> None:
             "domain": base_spec.domain.value,
             "service": base_spec.service,
             "cheapest_region": cheapest.region,
-            "cheapest_price": f"${cheapest.price_per_unit:.6f}/{cheapest.unit.value}",
+            "cheapest_price": _price(cheapest.price_per_unit, cheapest.unit.value),
             "most_expensive_region": most_exp.region,
-            "most_expensive_price": f"${most_exp.price_per_unit:.6f}/{most_exp.unit.value}",
+            "most_expensive_price": _price(most_exp.price_per_unit, most_exp.unit.value),
             "price_delta_pct": (
                 round(float(
                     (most_exp.price_per_unit - cheapest.price_per_unit)

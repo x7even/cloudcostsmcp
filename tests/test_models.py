@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+import pytest
+
 from opencloudcosts.models import (
     BomEstimate,
     BomLineItem,
@@ -38,7 +40,8 @@ def test_normalized_price_summary():
     p = make_price()
     s = p.summary()
     assert s["provider"] == "aws"
-    assert "0.192" in s["price"]
+    assert s["price"]["amount"] == pytest.approx(0.192)
+    assert "0.192" in s["price"]["display"]
     assert s["instanceType"] == "m5.xlarge"
     assert s["region"] == "us-east-1"
     assert s["region_name"] == "US East (N. Virginia)"

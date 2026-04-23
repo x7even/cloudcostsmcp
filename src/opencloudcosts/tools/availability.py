@@ -11,6 +11,7 @@ from pydantic import TypeAdapter
 from opencloudcosts.models import PricingSpec
 from opencloudcosts.providers.base import NotConfiguredError
 from opencloudcosts.utils.baseline import apply_baseline_deltas
+from opencloudcosts.utils.money import _money, _price
 from opencloudcosts.utils.regions import region_display_name
 
 logger = logging.getLogger(__name__)
@@ -300,10 +301,10 @@ def register_availability_tools(mcp: Any) -> None:
             entry: dict[str, Any] = {
                 "region": p.region,
                 "region_name": region_display_name(provider_str, p.region),
-                "price_per_unit": f"${p.price_per_unit:.6f}/{p.unit.value}",
+                "price_per_unit": _price(p.price_per_unit, p.unit.value),
             }
             if p.unit.value in ("per_hour", "per_month"):
-                entry["monthly_estimate"] = f"${p.monthly_cost:.2f}/mo"
+                entry["monthly_estimate"] = _money(p.monthly_cost, "/mo")
             entries.append(entry)
 
         if baseline_region:
@@ -321,9 +322,9 @@ def register_availability_tools(mcp: Any) -> None:
             "service": base_spec.service,
             "cheapest_region": cheapest.region,
             "cheapest_region_name": region_display_name(provider_str, cheapest.region),
-            "cheapest_price": f"${cheapest.price_per_unit:.6f}/{cheapest.unit.value}",
+            "cheapest_price": _price(cheapest.price_per_unit, cheapest.unit.value),
             "most_expensive_region": most_exp.region,
-            "most_expensive_price": f"${most_exp.price_per_unit:.6f}/{most_exp.unit.value}",
+            "most_expensive_price": _price(most_exp.price_per_unit, most_exp.unit.value),
             "price_delta_pct": (
                 round(float(
                     (most_exp.price_per_unit - cheapest.price_per_unit)
@@ -417,10 +418,10 @@ def register_availability_tools(mcp: Any) -> None:
             entry: dict[str, Any] = {
                 "region": region,
                 "region_name": region_display_name(provider_str, region),
-                "price_per_unit": f"${p.price_per_unit:.6f}/{p.unit.value}",
+                "price_per_unit": _price(p.price_per_unit, p.unit.value),
             }
             if p.unit.value in ("per_hour", "per_month"):
-                entry["monthly_estimate"] = f"${p.monthly_cost:.2f}/mo"
+                entry["monthly_estimate"] = _money(p.monthly_cost, "/mo")
             entries.append(entry)
 
         if baseline_region:

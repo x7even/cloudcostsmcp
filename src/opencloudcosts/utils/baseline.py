@@ -31,12 +31,15 @@ def apply_baseline_deltas(
             f"Available: {available}"
         )
 
-    def parse_hourly(s: str) -> Decimal:
-        # Handle both "$0.544000" and "$0.544000/per_hour" formats
-        return Decimal(s.lstrip("$").split("/")[0])
+    def parse_hourly(val: Any) -> Decimal:
+        if isinstance(val, dict):
+            return Decimal(str(val["amount"]))
+        return Decimal(str(val).lstrip("$").split("/")[0])
 
-    def parse_monthly(s: str) -> Decimal:
-        return Decimal(s.lstrip("$").replace("/mo", ""))
+    def parse_monthly(val: Any) -> Decimal:
+        if isinstance(val, dict):
+            return Decimal(str(val["amount"]))
+        return Decimal(str(val).lstrip("$").replace("/mo", ""))
 
     base_h = parse_hourly(baseline[hourly_key])
     base_m = parse_monthly(baseline.get(monthly_key, "$0.00/mo"))

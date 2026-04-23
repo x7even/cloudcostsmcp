@@ -114,6 +114,7 @@ class NormalizedPrice(BaseModel):
 
     def summary(self) -> dict[str, Any]:
         """Compact dict for LLM consumption."""
+        from opencloudcosts.utils.money import _money, _price
         from opencloudcosts.utils.regions import region_display_name
         result: dict[str, Any] = {
             "provider": self.provider.value,
@@ -121,16 +122,9 @@ class NormalizedPrice(BaseModel):
             "region": self.region,
             "region_name": region_display_name(self.provider.value, self.region),
             "term": self.pricing_term.value,
-            "price": (
-                # Use 2-significant-figure scientific notation for sub-microprice SKUs
-                # (e.g. Lambda per-request at $0.0000002 would show as "$0.000000" at 6dp).
-                # Standard 6dp for everything else.
-                f"${float(self.price_per_unit):.2e} {self.unit.value}"
-                if self.price_per_unit > 0 and self.price_per_unit < Decimal("0.0000005")
-                else f"${self.price_per_unit:.6f} {self.unit.value}"
-            ),
+            "price": _price(self.price_per_unit, self.unit.value),
             "monthly_estimate": (
-                f"${self.monthly_cost:.2f}/mo"
+                _money(self.monthly_cost, "/mo")
                 if self.unit in (PriceUnit.PER_HOUR, PriceUnit.PER_MONTH)
                 else None
             ),
@@ -514,6 +508,7 @@ class PricingResult(BaseModel):
 
     def summary(self) -> dict[str, Any]:
         """Compact form for LLM consumption."""
+        from opencloudcosts.utils.money import _price
         out: dict[str, Any] = {
             "public_prices": [p.summary() for p in self.public_prices],
             "auth_available": self.auth_available,
@@ -522,11 +517,12 @@ class PricingResult(BaseModel):
         if self.contracted_prices:
             out["contracted_prices"] = [p.summary() for p in self.contracted_prices]
         if self.effective_price is not None:
+            unit = self.effective_price.base_price.unit.value
             out["effective_price"] = {
-                "price": f"${self.effective_price.effective_price_per_unit:.6f}",
+                "price": _price(self.effective_price.effective_price_per_unit, unit),
                 "discount_type": self.effective_price.discount_type,
                 "discount_pct": self.effective_price.discount_pct,
-                "savings_vs_on_demand": f"${self.effective_price.savings_vs_on_demand:.6f}",
+                "savings_vs_on_demand": _price(self.effective_price.savings_vs_on_demand, unit),
             }
         if self.breakdown:
             out["breakdown"] = self.breakdown
