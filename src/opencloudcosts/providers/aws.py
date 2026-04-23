@@ -498,11 +498,7 @@ class AWSProvider(ProviderBase):
             botocore.exceptions.NoCredentialsError,
             botocore.exceptions.PartialCredentialsError,
         ):
-            raise ValueError(
-                "Spot pricing requires AWS credentials. "
-                "Set AWS_PROFILE or AWS_ACCESS_KEY_ID. "
-                "Public spot pricing data is not available."
-            )
+            return []
 
         items = resp.get("SpotPriceHistory", [])
         if not items:

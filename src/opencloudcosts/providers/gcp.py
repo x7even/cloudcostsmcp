@@ -2595,9 +2595,9 @@ class GCPProvider(ProviderBase):
         ]
         breakdown: dict = {
             "free_tier_mib": 150,
-            "tier1_rate_per_mib": float(tier1_rate),
-            "tier2_rate_per_mib": float(_T2_RATE),
-            "tier3_rate_per_mib": float(_T3_RATE),
+            "tier1_rate_per_mib": f"${float(tier1_rate):.4f}/MiB",
+            "tier2_rate_per_mib": f"${float(_T2_RATE):.4f}/MiB",
+            "tier3_rate_per_mib": f"${float(_T3_RATE):.4f}/MiB",
         }
         if spec.ingestion_mib > 0:
             total = Decimal(str(spec.ingestion_mib))
@@ -2613,7 +2613,7 @@ class GCPProvider(ProviderBase):
                 rem -= t2
             if rem > 0:
                 cost += rem * _T3_RATE
-            breakdown["estimated_monthly_cost"] = float(cost)
+            breakdown["estimated_monthly_cost"] = f"${float(cost):.4f}/month"
         if fallback:
             breakdown["fallback"] = True
         return prices, breakdown

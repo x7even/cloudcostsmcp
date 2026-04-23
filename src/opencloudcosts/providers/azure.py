@@ -611,6 +611,7 @@ class AzureProvider(ProviderBase):
                 "Azure Blob Storage": "storage/blob",
                 "Premium SSD": "storage/managed_disks — set storage_type='premium-ssd'",
                 "Standard SSD": "storage/managed_disks — set storage_type='standard-ssd'",
+                "Azure SQL / MySQL / PostgreSQL": "NOT SUPPORTED — Azure database pricing is not yet implemented. Only compute (VMs) and storage are available.",
             },
         )
 

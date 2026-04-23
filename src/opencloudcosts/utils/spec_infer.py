@@ -47,12 +47,32 @@ _VALID_TERMS = (
 
 
 def fill_domain(spec: dict[str, Any]) -> dict[str, Any]:
-    """Return spec with 'domain' added if it can be inferred from 'service'."""
-    if "domain" not in spec:
-        service = str(spec.get("service", "")).lower()
-        domain = _SERVICE_TO_DOMAIN.get(service)
-        if domain:
-            return {**spec, "domain": domain}
+    """Return spec with 'domain' added if it can be inferred from 'service', 'storage_type', or 'resource_type'."""
+    if "domain" in spec:
+        return spec
+
+    # 1. Service-keyed lookup (highest precision)
+    service = str(spec.get("service", "")).lower()
+    if service and service in _SERVICE_TO_DOMAIN:
+        return {**spec, "domain": _SERVICE_TO_DOMAIN[service]}
+
+    # 2. storage_type present → storage
+    if spec.get("storage_type"):
+        return {**spec, "domain": "storage"}
+
+    # 3. resource_type prefix patterns
+    rt = str(spec.get("resource_type", "")).lower()
+    if rt:
+        if rt.startswith("db.") or rt.startswith("cache."):
+            return {**spec, "domain": "database"}
+        # Compute: AWS (contains dot, e.g. m5.xlarge), GCP (dash-separated families),
+        # Azure (starts with Standard_ / Basic_ / Premium_)
+        if ("." in rt or "-" in rt
+                or rt.startswith("standard_")
+                or rt.startswith("basic_")
+                or rt.startswith("premium_")):
+            return {**spec, "domain": "compute"}
+
     return spec
 
 

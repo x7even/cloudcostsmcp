@@ -198,16 +198,16 @@ async def test_get_spot_price_returns_cheapest_az(aws_provider: AWSProvider):
     assert p.region == "us-east-1"
 
 
-async def test_get_spot_price_no_credentials_raises_valueerror(aws_provider: AWSProvider):
-    """NoCredentialsError from boto3 becomes a clear ValueError."""
+async def test_get_spot_price_no_credentials_returns_empty(aws_provider: AWSProvider):
+    """NoCredentialsError from boto3 returns empty list gracefully."""
     import botocore.exceptions
 
     def raise_no_creds(*args, **kwargs):
         raise botocore.exceptions.NoCredentialsError()
 
     with patch("boto3.client", side_effect=raise_no_creds):
-        with pytest.raises(ValueError, match="requires AWS credentials"):
-            await aws_provider.get_compute_price("m5.xlarge", "us-east-1", term=PricingTerm.SPOT)
+        prices = await aws_provider.get_compute_price("m5.xlarge", "us-east-1", term=PricingTerm.SPOT)
+        assert prices == []
 
 
 async def test_get_spot_price_empty_response(aws_provider: AWSProvider):
