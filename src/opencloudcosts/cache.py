@@ -99,6 +99,27 @@ class CacheManager:
             return None
         return json.loads(row["data"])
 
+    async def get_prices_with_meta(
+        self,
+        provider: str,
+        service: str,
+        region: str,
+        key_extras: dict[str, Any],
+    ) -> tuple[list[dict[str, Any]], datetime] | None:
+        """Like get_prices but also returns the fetched_at timestamp for trust metadata."""
+        key = _make_key(provider, service, region, key_extras)
+        async with self.db.execute(
+            "SELECT data, fetched_at, expires_at FROM prices WHERE cache_key = ?", (key,)
+        ) as cur:
+            row = await cur.fetchone()
+        if row is None:
+            return None
+        if datetime.fromisoformat(row["expires_at"]) < datetime.now(UTC):
+            await self.db.execute("DELETE FROM prices WHERE cache_key = ?", (key,))
+            await self.db.commit()
+            return None
+        return json.loads(row["data"]), datetime.fromisoformat(row["fetched_at"])
+
     async def set_prices(
         self,
         provider: str,

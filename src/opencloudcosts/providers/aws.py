@@ -30,6 +30,7 @@ from opencloudcosts.models import (
     ContainerPricingSpec,
     DatabasePricingSpec,
     EffectivePrice,
+    EgressPricingSpec,
     InstanceTypeInfo,
     NetworkPricingSpec,
     NormalizedPrice,
@@ -197,6 +198,7 @@ _AWS_CAPABILITIES: dict[tuple[str, str | None], bool] = {
     (PricingDomain.OBSERVABILITY.value, "cloudwatch"): True,
     (PricingDomain.CONTAINER.value, None): True,
     (PricingDomain.CONTAINER.value, "eks"): True,
+    (PricingDomain.INTER_REGION_EGRESS.value, None): True,
 }
 
 
@@ -642,9 +644,13 @@ class AWSProvider(ProviderBase):
             return await self._get_spot_price(instance_type, region, os)
 
         cache_extras = {"instance_type": instance_type, "os": os, "term": term.value}
-        cached = await self._cache.get_prices("aws", "compute", region, cache_extras)
-        if cached is not None:
-            return [NormalizedPrice.model_validate(p) for p in cached]
+        cached_meta = await self._cache.get_prices_with_meta("aws", "compute", region, cache_extras)
+        if cached_meta is not None:
+            cached_data, fetched_at = cached_meta
+            return self._apply_cache_trust(
+                [NormalizedPrice.model_validate(p) for p in cached_data],
+                fetched_at, self._SOURCE_URL,
+            )
 
         try:
             display_name = aws_region_to_display(region)
@@ -687,9 +693,13 @@ class AWSProvider(ProviderBase):
         iops: int | None = None,
     ) -> list[NormalizedPrice]:
         cache_extras = {"storage_type": storage_type}
-        cached = await self._cache.get_prices("aws", "storage", region, cache_extras)
-        if cached is not None:
-            return [NormalizedPrice.model_validate(p) for p in cached]
+        cached_meta = await self._cache.get_prices_with_meta("aws", "storage", region, cache_extras)
+        if cached_meta is not None:
+            cached_data, fetched_at = cached_meta
+            return self._apply_cache_trust(
+                [NormalizedPrice.model_validate(p) for p in cached_data],
+                fetched_at, self._SOURCE_URL,
+            )
 
         display_name = aws_region_to_display(region)
 
@@ -1226,6 +1236,7 @@ class AWSProvider(ProviderBase):
         "ca-central-1", "eu-west-1", "eu-west-2", "eu-central-1",
         "ap-southeast-1", "ap-southeast-2", "ap-northeast-1", "ap-south-1",
     ]
+    _SOURCE_URL = "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/index.json"
 
     def major_regions(self) -> list[str]:
         return self._MAJOR_REGIONS
@@ -1359,12 +1370,53 @@ class AWSProvider(ProviderBase):
             return await self._price_observability(spec)
         if isinstance(spec, ContainerPricingSpec):
             return await self._price_container(spec)
+        if isinstance(spec, EgressPricingSpec):
+            return await self._price_egress(spec)
         raise NotSupportedError(
             provider=self.provider,
             domain=spec.domain,
             service=spec.service,
             reason=f"Unhandled domain '{spec.domain.value}'.",
         )
+
+    async def _price_egress(self, spec: EgressPricingSpec) -> list[NormalizedPrice]:
+        """Inter-region data transfer pricing from AWS Bulk Pricing (AWSDataTransfer)."""
+        src = spec.source_region or spec.region
+        dst = spec.dest_region
+
+        filters: list[dict[str, str]] = [
+            {"Field": "transferType", "Value": "AWS Inter-Region Outbound"},
+        ]
+        if src:
+            try:
+                filters.append({"Field": "fromRegionCode", "Value": src})
+            except Exception:
+                pass
+
+        raw = await self._get_products("AWSDataTransfer", filters, max_results=30)
+        prices = []
+        for item in raw:
+            attrs = item.get("product", {}).get("attributes", {})
+            to_region = attrs.get("toRegionCode", "")
+            # If caller specified dest_region, filter to exact match; otherwise accept all
+            if dst and to_region and to_region != dst:
+                continue
+            p = self._item_to_price(item, src or "us-east-1", PricingTerm.ON_DEMAND, "inter_region_egress")
+            if p:
+                p = p.model_copy(update={
+                    "source_url": self._SOURCE_URL,
+                    "attributes": {
+                        **p.attributes,
+                        "fromRegionCode": attrs.get("fromRegionCode", src),
+                        "toRegionCode": to_region,
+                        "transferType": attrs.get("transferType", ""),
+                    },
+                })
+                prices.append(p)
+            if len(prices) >= 10:
+                break
+
+        return prices
 
     async def _price_compute(self, spec: ComputePricingSpec) -> list[NormalizedPrice]:
         if spec.service == "fargate" or (spec.vcpu is not None and spec.memory_gb is not None and not spec.resource_type):
@@ -1507,9 +1559,13 @@ class AWSProvider(ProviderBase):
     async def _price_lambda(self, spec: ServerlessPricingSpec) -> list[NormalizedPrice]:
         region = spec.region or "us-east-1"
         cache_key_extras = {"service": "lambda"}
-        cached = await self._cache.get_prices("aws", "lambda", region, cache_key_extras)
-        if cached:
-            return [NormalizedPrice.model_validate(p) for p in cached]
+        cached_meta = await self._cache.get_prices_with_meta("aws", "lambda", region, cache_key_extras)
+        if cached_meta is not None:
+            cached_data, fetched_at = cached_meta
+            return self._apply_cache_trust(
+                [NormalizedPrice.model_validate(p) for p in cached_data],
+                fetched_at, self._SOURCE_URL,
+            )
 
         try:
             display_name = aws_region_to_display(region)
@@ -1624,6 +1680,7 @@ class AWSProvider(ProviderBase):
                 "network": ["lb", "cdn", "nat", "waf", "data_transfer"],
                 "observability": ["cloudwatch"],
                 "container": ["eks"],
+                "inter_region_egress": [],
             },
             supported_terms={
                 "compute": [t.value for t in self.supported_terms(PricingDomain.COMPUTE)],
@@ -1647,6 +1704,7 @@ class AWSProvider(ProviderBase):
                 "network/data_transfer": {"service": "data_transfer"},
                 "observability/cloudwatch": {"service": "cloudwatch"},
                 "container/eks": {"service": "eks"},
+                "inter_region_egress": {"source_region": "origin region e.g. 'us-east-1'", "dest_region": "destination region e.g. 'eu-west-1'; empty = internet egress"},
             },
             example_invocations={
                 "compute": {"provider": "aws", "domain": "compute", "resource_type": "m5.xlarge", "region": "us-east-1", "os": "Linux", "term": "on_demand"},
@@ -1657,6 +1715,7 @@ class AWSProvider(ProviderBase):
                 "serverless/lambda": {"provider": "aws", "domain": "serverless", "service": "lambda", "region": "us-east-1"},
                 "observability/cloudwatch": {"provider": "aws", "domain": "observability", "service": "cloudwatch", "region": "us-east-1"},
                 "container/eks": {"provider": "aws", "domain": "container", "service": "eks", "region": "us-east-1"},
+                "inter_region_egress": {"provider": "aws", "domain": "inter_region_egress", "source_region": "us-east-1", "dest_region": "eu-west-1"},
             },
             decision_matrix={
                 "ECS on Fargate": "compute/fargate — use vcpu + memory_gb params",
@@ -1676,6 +1735,7 @@ class AWSProvider(ProviderBase):
                 "CloudFront CDN": "network/cdn — AWS-ONLY; for GCP Cloud CDN use provider='gcp', service='cloud_cdn'",
                 "AWS WAF": "network/waf",
                 "Data transfer / egress": "network/data_transfer",
+                "Inter-region data transfer (region-to-region)": "inter_region_egress — use source_region + dest_region",
             },
         )
 

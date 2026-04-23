@@ -49,6 +49,7 @@ class PricingDomain(str, Enum):
     ANALYTICS = "analytics"         # BigQuery, Redshift, Athena, Synapse
     NETWORK = "network"             # LB, CDN, NAT, egress, Cloud Armor, WAF
     OBSERVABILITY = "observability" # CloudWatch, Cloud Monitoring, Azure Monitor
+    INTER_REGION_EGRESS = "inter_region_egress"  # region-to-region data transfer
 
 
 class PricingShape(str, Enum):
@@ -90,6 +91,9 @@ class NormalizedPrice(BaseModel):
     unit: PriceUnit
     currency: str = "USD"
     effective_date: datetime | None = None
+    fetched_at: datetime | None = None         # when the upstream API was called
+    source_url: str | None = None              # permalink to source pricing page/API
+    cache_age_seconds: float | None = None     # seconds since fetched_at (set on cache hit)
 
     @property
     def monthly_cost(self) -> Decimal:
@@ -111,7 +115,7 @@ class NormalizedPrice(BaseModel):
     def summary(self) -> dict[str, Any]:
         """Compact dict for LLM consumption."""
         from opencloudcosts.utils.regions import region_display_name
-        return {
+        result: dict[str, Any] = {
             "provider": self.provider.value,
             "description": self.description,
             "region": self.region,
@@ -132,6 +136,13 @@ class NormalizedPrice(BaseModel):
             ),
             **{k: v for k, v in self.attributes.items() if k in ("instanceType", "vcpu", "memory", "operatingSystem", "storage_type", "volumeType")},
         }
+        if self.cache_age_seconds is not None:
+            result["cache_age_seconds"] = round(self.cache_age_seconds)
+        if self.effective_date:
+            result["price_effective_date"] = self.effective_date.date().isoformat()
+        if self.source_url:
+            result["source_url"] = self.source_url
+        return result
 
 
 class PriceComparison(BaseModel):
@@ -419,9 +430,21 @@ class ObservabilityPricingSpec(BasePricingSpec):
         return f"{base}:{self.ingestion_mib}:{self.metrics_count}:{self.log_gb}"
 
 
+class EgressPricingSpec(BasePricingSpec):
+    """Region-to-region data transfer egress pricing."""
+    domain: Literal[PricingDomain.INTER_REGION_EGRESS] = PricingDomain.INTER_REGION_EGRESS
+    source_region: str = ""         # origin region (e.g. "us-east-1")
+    dest_region: str = ""           # destination region; empty = internet egress
+    data_gb: float = 1.0            # GB to price
+
+    def cache_key(self) -> str:
+        base = super().cache_key()
+        return f"{base}:{self.source_region}:{self.dest_region}"
+
+
 # Discriminated union — Pydantic dispatches on the `domain` field.
 PricingSpec = Annotated[
-    ComputePricingSpec | StoragePricingSpec | DatabasePricingSpec | ContainerPricingSpec | AiPricingSpec | ServerlessPricingSpec | AnalyticsPricingSpec | NetworkPricingSpec | ObservabilityPricingSpec,
+    ComputePricingSpec | StoragePricingSpec | DatabasePricingSpec | ContainerPricingSpec | AiPricingSpec | ServerlessPricingSpec | AnalyticsPricingSpec | NetworkPricingSpec | ObservabilityPricingSpec | EgressPricingSpec,
     Field(discriminator="domain"),
 ]
 
@@ -465,6 +488,7 @@ PRICING_SCHEMAS: dict[tuple[PricingDomain, str | None], type[BasePricingSpec]] =
     (PricingDomain.OBSERVABILITY, "cloudwatch"): ObservabilityPricingSpec,
     (PricingDomain.OBSERVABILITY, "cloud_monitoring"): ObservabilityPricingSpec,
     (PricingDomain.OBSERVABILITY, "azure_monitor"): ObservabilityPricingSpec,
+    (PricingDomain.INTER_REGION_EGRESS, None): EgressPricingSpec,
 }
 
 

@@ -1,6 +1,7 @@
 """Abstract provider interface — all cloud providers implement this Protocol."""
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Protocol, runtime_checkable
 
 from opencloudcosts.models import (
@@ -128,6 +129,23 @@ class ProviderBase:
     async def _applicable_commitments(self, spec: PricingSpec) -> list[EffectivePrice]:
         """Override to return account commitments applicable to this spec when auth is present."""
         return []
+
+    def _apply_cache_trust(
+        self,
+        prices: list[NormalizedPrice],
+        fetched_at: datetime,
+        source_url: str = "",
+    ) -> list[NormalizedPrice]:
+        """Stamp trust metadata onto prices returned from a cache hit."""
+        age = (datetime.now(UTC) - fetched_at).total_seconds()
+        return [
+            p.model_copy(update={
+                "fetched_at": fetched_at,
+                "cache_age_seconds": age,
+                "source_url": source_url or p.source_url,
+            })
+            for p in prices
+        ]
 
 
 # ---------------------------------------------------------------------------

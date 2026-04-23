@@ -389,9 +389,13 @@ class GCPProvider(ProviderBase):
         cache_key_extras = {
             "instance_type": instance_type, "os": os, "term": term.value
         }
-        cached = await self._cache.get_prices("gcp", "compute", region, cache_key_extras)
-        if cached:
-            return [NormalizedPrice.model_validate(p) for p in cached]
+        cached_meta = await self._cache.get_prices_with_meta("gcp", "compute", region, cache_key_extras)
+        if cached_meta is not None:
+            cached_data, fetched_at = cached_meta
+            return self._apply_cache_trust(
+                [NormalizedPrice.model_validate(p) for p in cached_data],
+                fetched_at, self._SOURCE_URL,
+            )
 
         index = await self._build_price_index(region)
 
@@ -580,9 +584,13 @@ class GCPProvider(ProviderBase):
         engine_norm = _CLOUD_SQL_ENGINE_NAMES.get(engine.lower(), engine)
 
         cache_key_extras = {"instance_type": instance_type, "engine": engine_norm, "ha": str(ha)}
-        cached = await self._cache.get_prices("gcp", "cloud_sql", region, cache_key_extras)
-        if cached:
-            return [NormalizedPrice.model_validate(p) for p in cached]
+        cached_meta = await self._cache.get_prices_with_meta("gcp", "cloud_sql", region, cache_key_extras)
+        if cached_meta is not None:
+            cached_data, fetched_at = cached_meta
+            return self._apply_cache_trust(
+                [NormalizedPrice.model_validate(p) for p in cached_data],
+                fetched_at, self._SOURCE_URL,
+            )
 
         index = await self._build_cloud_sql_price_index(region)
 
@@ -712,9 +720,13 @@ class GCPProvider(ProviderBase):
             "tier": tier_lower,
             "hours_per_month": str(hours_per_month),
         }
-        cached = await self._cache.get_prices("gcp", "memorystore", region, cache_key_extras)
-        if cached:
-            return [NormalizedPrice.model_validate(p) for p in cached]
+        cached_meta = await self._cache.get_prices_with_meta("gcp", "memorystore", region, cache_key_extras)
+        if cached_meta is not None:
+            cached_data, fetched_at = cached_meta
+            return self._apply_cache_trust(
+                [NormalizedPrice.model_validate(p) for p in cached_data],
+                fetched_at, self._SOURCE_URL,
+            )
 
         index = await self._build_memorystore_price_index(region)
 
@@ -1907,6 +1919,7 @@ class GCPProvider(ProviderBase):
         "europe-west1", "europe-west2", "europe-west3", "europe-west4",
         "asia-east1", "asia-northeast1", "asia-southeast1", "australia-southeast1",
     ]
+    _SOURCE_URL = "https://cloud.google.com/billing/v1/services"
 
     def major_regions(self) -> list[str]:
         return self._MAJOR_REGIONS

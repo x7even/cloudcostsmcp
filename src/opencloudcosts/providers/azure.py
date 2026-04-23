@@ -184,9 +184,13 @@ class AzureProvider(ProviderBase):
         term: PricingTerm = PricingTerm.ON_DEMAND,
     ) -> list[NormalizedPrice]:
         cache_extras = {"instance_type": instance_type, "os": os, "term": term.value}
-        cached = await self._cache.get_prices("azure", "compute", region, cache_extras)
-        if cached is not None:
-            return [NormalizedPrice.model_validate(p) for p in cached]
+        cached_meta = await self._cache.get_prices_with_meta("azure", "compute", region, cache_extras)
+        if cached_meta is not None:
+            cached_data, fetched_at = cached_meta
+            return self._apply_cache_trust(
+                [NormalizedPrice.model_validate(p) for p in cached_data],
+                fetched_at, self._SOURCE_URL,
+            )
 
         filters: dict[str, str] = {
             "armSkuName": instance_type,
@@ -274,9 +278,13 @@ class AzureProvider(ProviderBase):
 
         # Cache the full tier list, not size-specific slices
         cache_extras = {"storage_type": storage_type}
-        cached = await self._cache.get_prices("azure", "storage", region, cache_extras)
-        if cached is not None:
-            all_prices = [NormalizedPrice.model_validate(p) for p in cached]
+        cached_meta = await self._cache.get_prices_with_meta("azure", "storage", region, cache_extras)
+        if cached_meta is not None:
+            cached_data, fetched_at = cached_meta
+            all_prices = self._apply_cache_trust(
+                [NormalizedPrice.model_validate(p) for p in cached_data],
+                fetched_at, self._SOURCE_URL,
+            )
             return self._filter_storage_by_size(all_prices, is_premium_ssd, size_gb)
 
         filters: dict[str, str] = {
@@ -506,6 +514,7 @@ class AzureProvider(ProviderBase):
         "centralus", "northeurope", "westeurope", "uksouth",
         "eastasia", "southeastasia", "australiaeast",
     ]
+    _SOURCE_URL = "https://prices.azure.com/api/retail/prices"
 
     def major_regions(self) -> list[str]:
         return self._MAJOR_REGIONS
