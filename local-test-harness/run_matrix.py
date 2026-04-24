@@ -74,8 +74,14 @@ _CATEGORY_MAP: dict[str, str] = {
     "GN":   "GCP Networking",
     "GC":   "GCP Cloud Armor",
     "GCX":  "GCP Complex",
-    "GGCS": "GCP Cloud Storage",
-    "GSQL": "GCP Cloud SQL",
+    "GGCS":  "GCP Cloud Storage",
+    "GSQL":  "GCP Cloud SQL",
+    "AZSQL": "Azure SQL",
+    "AZCOS": "Azure Cosmos DB",
+    "AZAKS": "Azure AKS",
+    "AZFN":  "Azure Functions",
+    "AZAI":  "Azure OpenAI",
+    "EGR":   "Inter-region Egress",
 }
 
 

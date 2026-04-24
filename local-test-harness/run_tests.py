@@ -658,6 +658,140 @@ TEST_PROMPTS = {
         "I need a Cloud SQL MySQL instance in us-central1 with at least 4 vCPUs. "
         "What instance type should I use, and what is the monthly cost?"
     ),
+
+    # -----------------------------------------------------------------------
+    # Azure SQL / MySQL / PostgreSQL (AZSQL) [v0.8.8]
+    # -----------------------------------------------------------------------
+    "AZSQL1": (
+        "What does an Azure SQL Database General Purpose 4 vCores instance cost per month in eastus?"
+    ),
+    "AZSQL2": (
+        "Compare Azure SQL Database single-az vs HA (zone-redundant) pricing for "
+        "General Purpose 4 vCores in eastus. What is the monthly cost difference?"
+    ),
+    "AZSQL3": (
+        "What does an Azure Database for PostgreSQL General Purpose 8 vCores cost in westeurope? "
+        "Give me the hourly and monthly figure."
+    ),
+    "AZSQL4": (
+        "Compare on-demand vs 1-year reserved pricing for an Azure SQL Database "
+        "Business Critical 8 vCores in eastus. What is the monthly saving?"
+    ),
+    "AZSQL5": (
+        "I'm migrating from AWS RDS db.r6g.large MySQL (us-east-1) to Azure Database for MySQL "
+        "in eastus. What is the closest Azure SKU and how do the monthly costs compare?"
+    ),
+
+    # -----------------------------------------------------------------------
+    # Azure Cosmos DB (AZCOS) [v0.8.8]
+    # -----------------------------------------------------------------------
+    "AZCOS1": (
+        "What does Azure Cosmos DB provisioned throughput cost per 100 RU/s in eastus? "
+        "I need 10,000 RU/s — what is my monthly bill?"
+    ),
+    "AZCOS2": (
+        "Compare Azure Cosmos DB provisioned vs serverless pricing in eastus. "
+        "For a workload with 50M requests/month, which is cheaper?"
+    ),
+    "AZCOS3": (
+        "What is the cost of Azure Cosmos DB with multi-region writes enabled in eastus? "
+        "How does this compare to single-region pricing?"
+    ),
+    "AZCOS4": (
+        "I'm building a serverless app on Azure. Compare the cost of Azure Cosmos DB serverless "
+        "vs Azure SQL Database General Purpose 2 vCores in eastus for a low-traffic workload."
+    ),
+    "AZCOS5": (
+        "What would a Cosmos DB autoscale setup cost in eastus? Explain the pricing model."
+    ),
+
+    # -----------------------------------------------------------------------
+    # Azure Kubernetes Service (AZAKS) [v0.8.8]
+    # -----------------------------------------------------------------------
+    "AZAKS1": (
+        "What does an AKS cluster cost per month in eastus? Include the control plane fee "
+        "and estimate for 3x Standard_D4s_v3 worker nodes."
+    ),
+    "AZAKS2": (
+        "Compare AKS free tier vs Standard tier (Uptime SLA) in eastus. "
+        "What is the monthly cost difference for the control plane?"
+    ),
+    "AZAKS3": (
+        "I need a production AKS cluster in westeurope with 5x Standard_D8s_v3 nodes. "
+        "What is the total monthly estimate including the cluster management fee?"
+    ),
+
+    # -----------------------------------------------------------------------
+    # Azure Functions (AZFN) [v0.8.8]
+    # -----------------------------------------------------------------------
+    "AZFN1": (
+        "What does Azure Functions cost on the Consumption plan in eastus? "
+        "Give me the per-GB-second and per-execution rates."
+    ),
+    "AZFN2": (
+        "My Azure Function runs 10 million times a month, each execution using 512MB for 500ms. "
+        "What is the monthly cost in eastus after the free tier?"
+    ),
+    "AZFN3": (
+        "Compare AWS Lambda vs Azure Functions Consumption plan pricing for a workload with "
+        "5M executions/month, 1GB memory, 1 second average duration. Which is cheaper?"
+    ),
+    "AZFN4": (
+        "What is the Azure Functions free tier allowance, and at what scale does the "
+        "Consumption plan become cost-significant? Give numbers for eastus."
+    ),
+    "AZFN5": (
+        "I'm planning to migrate my AWS Lambda workload (us-east-1) to Azure Functions (eastus). "
+        "Lambda runs 20M invocations/month at 256MB / 200ms average. "
+        "What will I pay on Azure Functions vs AWS Lambda?"
+    ),
+
+    # -----------------------------------------------------------------------
+    # Azure OpenAI (AZAI) [v0.8.8]
+    # -----------------------------------------------------------------------
+    "AZAI1": (
+        "What does Azure OpenAI GPT-4o cost per 1K input and output tokens in eastus?"
+    ),
+    "AZAI2": (
+        "Compare Azure OpenAI GPT-4o vs GPT-3.5-Turbo pricing in eastus. "
+        "For a workload sending 1M input tokens and receiving 500K output tokens per month, "
+        "what is the cost difference?"
+    ),
+    "AZAI3": (
+        "I'm running a RAG pipeline on Azure OpenAI in eastus using text-embedding-3-small "
+        "to embed 10M tokens per month. What is the monthly embedding cost?"
+    ),
+    "AZAI4": (
+        "Compare Azure OpenAI o1 vs GPT-4o pricing in eastus. "
+        "Which is more cost-effective for a reasoning-heavy workload?"
+    ),
+    "AZAI5": (
+        "Build a monthly cost estimate for an Azure OpenAI-powered chatbot in eastus: "
+        "GPT-4o-mini, 5M input tokens and 2M output tokens per month. "
+        "What is the total monthly AI cost?"
+    ),
+
+    # -----------------------------------------------------------------------
+    # Inter-region egress / data transfer (EGR) [v0.8.3]
+    # -----------------------------------------------------------------------
+    "EGR1": (
+        "How much does AWS charge to transfer 1TB of data from us-east-1 to eu-west-1?"
+    ),
+    "EGR2": (
+        "Compare AWS inter-region data transfer costs: us-east-1 to eu-west-1 vs "
+        "us-east-1 to ap-southeast-1 for 1TB. Which is more expensive and by how much?"
+    ),
+    "EGR3": (
+        "I'm running a multi-region active-active setup on AWS: 5TB of data transferred "
+        "between us-east-1 and eu-west-1 per month. What is the monthly egress bill?"
+    ),
+    "EGR4": (
+        "What does GCP charge for inter-region egress from us-central1 to europe-west1 for 1TB?"
+    ),
+    "EGR5": (
+        "Compare AWS vs GCP inter-region data transfer costs for moving 1TB from US East "
+        "to EU regions. Which cloud is cheaper for cross-region traffic?"
+    ),
 }
 
 
