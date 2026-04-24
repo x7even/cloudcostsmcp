@@ -7,6 +7,39 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.8.8] — 2026-04-24
+
+### Added
+- **Azure SQL Database** (`database/sql`) — vCore model pricing for General Purpose,
+  Business Critical, and Hyperscale tiers; supports MySQL and PostgreSQL engines via
+  "Azure Database for MySQL/PostgreSQL" serviceName; single-az and HA (ZRS) deployment;
+  on-demand, 1-year, and 3-year reserved terms.
+- **Azure Cosmos DB** (`database/cosmos`) — provisioned throughput (per 100 RU/s),
+  serverless (per 1M RUs), and autoscale modes; multi-region write flag.
+- **AKS** (`container/aks`) — cluster management fee: Standard tier ($0.10/hr, Uptime SLA)
+  or Free tier ($0); notes worker nodes are priced separately via compute.
+- **Azure Functions** (`serverless/azure_functions`) — Consumption plan GB-second and
+  execution-count pricing with free-tier deduction (400K GB-s, 1M executions/month) and
+  optional monthly cost estimate when `gb_seconds`/`requests_millions` are provided.
+- **Azure OpenAI** (`ai/openai`) — per-1K-token input/output pricing for gpt-4o,
+  gpt-4o-mini, gpt-4, gpt-35-turbo, o1, o1-mini, and embedding models; static fallback
+  table for all major models; optional cost estimate when token volumes provided.
+- `spec_infer._SERVICE_TO_DOMAIN` extended: `sql`, `cosmos`, `aks`, `openai`,
+  `azure_functions`, `cloud_functions`, `cloud_run`, `sagemaker`, `elasticache`.
+
+### Changed
+- Azure `_AZURE_CAPABILITIES` expanded from 5 entries (compute + storage) to 13.
+- `get_price()` router extended with `_price_database`, `_price_container`,
+  `_price_serverless`, `_price_ai` dispatch methods.
+- `describe_catalog()` updated with `filter_hints` and `example_invocations` for all
+  5 new services; `decision_matrix` covers all supported Azure services.
+- Not-supported error message updated to list all 7 supported Azure services.
+
+### Fixed
+- Harness: 123/123 on gemma-4-26b-a4b (no regression from breadth expansion).
+
+---
+
 ## [0.8.5] — 2026-04-24
 
 ### Added
