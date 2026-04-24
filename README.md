@@ -17,7 +17,7 @@ Supports both **public list pricing** (no credentials needed for AWS and Azure; 
 - "List all c6g instances in eu-west-1 with >= 8 vCPUs"
 - "What's my effective hourly rate on m5.xlarge after Savings Plans?"
 
-## Tools (v0.8.0 — 15 tools)
+## Tools (v0.8.8 — 15 tools)
 
 **Pricing**
 
@@ -257,6 +257,19 @@ uv run opencloudcosts
 
 **Azure regions:** ARM region names e.g. `eastus`, `westeurope`, `southeastasia` (use `list_regions` for full list)
 
+**Azure supported services (v0.8.8):**
+
+| Domain | Service | Description |
+|--------|---------|-------------|
+| compute | vm | Virtual Machines — all families, Linux/Windows, on-demand/spot/reserved |
+| storage | managed_disks | Premium SSD, Standard SSD, Standard HDD, Ultra Disk |
+| storage | blob | Blob Storage |
+| database | sql | Azure SQL Database, Azure DB for MySQL/PostgreSQL — vCore tiers, HA, reserved |
+| database | cosmos | Cosmos DB — provisioned (per 100 RU/s), serverless, autoscale |
+| container | aks | AKS cluster management fee (free tier or $0.10/hr Standard) |
+| serverless | azure_functions | Functions Consumption plan — per GB-second + per execution |
+| ai | openai | Azure OpenAI — GPT-4o, GPT-4, GPT-3.5-Turbo, o1, embeddings |
+
 **GCP pricing terms:** `on_demand` (default), `spot` (preemptible), `cud_1yr`, `cud_3yr`
 
 ## Security
@@ -291,4 +304,9 @@ With credentials configured: actual spend, contract/negotiated pricing, reservat
 - **Phase 5** ✅ GCP networking — Cloud LB, CDN, NAT, Cloud Armor, Cloud Monitoring
 - **Phase 5** ✅ GCP Cloud SQL; Azure reserved pricing
 - **v0.8.0** ✅ Consolidated to 15-tool surface; unified `get_price(spec)` dispatcher; `describe_catalog` discovery; 123/123 (100%) harness pass rate
-- **Next**: GCP effective pricing (BigQuery billing export)
+- **v0.8.2** ✅ Provider protocol cleanup — `major_regions()`, `default_region()`, `bom_advisories()` on all providers; zero provider-string conditionals in tool layer
+- **v0.8.3** ✅ Trust metadata on `NormalizedPrice` (`fetched_at`, `source_url`, `cache_age_seconds`); inter-region egress domain + AWS data transfer pricing
+- **v0.8.4** ✅ Numeric price fields — structured `{amount, unit, currency, display}` dicts replace formatted strings at all tool boundaries
+- **v0.8.5** ✅ Service→domain inference (`fill_domain`); structured `invalid_spec` error hints; 123/123 harness (up from 84%)
+- **v0.8.8** ✅ Azure breadth: SQL Database, Cosmos DB, AKS, Azure Functions, Azure OpenAI; 151/151 harness (28 new test scenarios)
+- **Next**: GCP effective pricing (BigQuery billing export); Azure egress pricing; multi-currency support

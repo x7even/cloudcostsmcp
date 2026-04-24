@@ -1,4 +1,4 @@
-# OpenCloudCosts MCP — Tool Reference (v0.8.0)
+# OpenCloudCosts MCP — Tool Reference (v0.8.8)
 
 ## Overview
 
@@ -24,6 +24,9 @@
 - Regions: `eastus`, `eastus2`, `westeurope`, `southeastasia`, `australiaeast`, etc.
 - Public pricing — no credentials needed. Uses Azure Retail Prices API.
 - Supported storage types: `premium-ssd`, `standard-ssd`, `standard-hdd`, `ultra-ssd`, `blob`
+- **Supported services (v0.8.8):** compute/vm, storage/managed_disks, storage/blob, database/sql, database/cosmos, container/aks, serverless/azure_functions, ai/openai
+- Azure SQL `resource_type` examples: `"General Purpose 4 vCores"`, `"Business Critical 8 vCores"`, `"Hyperscale 2 vCores"`
+- Azure OpenAI models: `gpt-4o`, `gpt-4o-mini`, `gpt-4`, `gpt-35-turbo`, `o1`, `o1-mini`, `text-embedding-3-small`, `text-embedding-3-large`
 
 ---
 
