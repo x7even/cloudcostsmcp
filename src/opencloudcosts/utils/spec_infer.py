@@ -10,6 +10,9 @@ _SERVICE_TO_DOMAIN: dict[str, str] = {
     "rds": "database",
     "cloud_sql": "database",
     "memorystore": "database",
+    "sql": "database",
+    "cosmos": "database",
+    "elasticache": "database",
     # analytics
     "bigquery": "analytics",
     # network
@@ -27,12 +30,18 @@ _SERVICE_TO_DOMAIN: dict[str, str] = {
     "bedrock": "ai",
     "gemini": "ai",
     "vertex": "ai",
+    "openai": "ai",
+    "sagemaker": "ai",
     # serverless
     "lambda": "serverless",
     "functions": "serverless",
+    "azure_functions": "serverless",
+    "cloud_functions": "serverless",
+    "cloud_run": "serverless",
     # container
     "gke": "container",
     "eks": "container",
+    "aks": "container",
     # egress / data transfer
     "data_transfer": "inter_region_egress",
     "egress": "inter_region_egress",

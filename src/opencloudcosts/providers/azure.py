@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from decimal import Decimal
 from typing import Any
 
@@ -21,8 +22,11 @@ import httpx
 from opencloudcosts.cache import CacheManager
 from opencloudcosts.config import Settings
 from opencloudcosts.models import (
+    AiPricingSpec,
     CloudProvider,
     ComputePricingSpec,
+    ContainerPricingSpec,
+    DatabasePricingSpec,
     EffectivePrice,
     InstanceTypeInfo,
     NormalizedPrice,
@@ -32,6 +36,7 @@ from opencloudcosts.models import (
     PricingSpec,
     PricingTerm,
     ProviderCatalog,
+    ServerlessPricingSpec,
     StoragePricingSpec,
 )
 from opencloudcosts.providers.base import NotConfiguredError, NotSupportedError, ProviderBase
@@ -93,6 +98,48 @@ _AZURE_CAPABILITIES: dict[tuple[str, str | None], bool] = {
     (PricingDomain.STORAGE.value, None): True,
     (PricingDomain.STORAGE.value, "managed_disks"): True,
     (PricingDomain.STORAGE.value, "blob"): True,
+    (PricingDomain.DATABASE.value, None): True,
+    (PricingDomain.DATABASE.value, "sql"): True,
+    (PricingDomain.DATABASE.value, "cosmos"): True,
+    (PricingDomain.CONTAINER.value, None): True,
+    (PricingDomain.CONTAINER.value, "aks"): True,
+    (PricingDomain.SERVERLESS.value, None): True,
+    (PricingDomain.SERVERLESS.value, "azure_functions"): True,
+    (PricingDomain.AI.value, None): True,
+    (PricingDomain.AI.value, "openai"): True,
+}
+
+# Azure SQL tier keyword → API skuName prefix
+_SQL_TIER_MAP: dict[str, str] = {
+    "general purpose": "GP",
+    "gp": "GP",
+    "business critical": "BC",
+    "bc": "BC",
+    "hyperscale": "HS",
+    "hs": "HS",
+}
+
+# Static fallback rates for Azure Functions Consumption plan (per Azure published pricing)
+_FUNCTIONS_EXEC_RATE = Decimal("0.0000002")    # per execution
+_FUNCTIONS_GB_SEC_RATE = Decimal("0.000016")   # per GB-second
+
+# AKS control plane: Standard tier free, Premium (Uptime SLA) $0.10/cluster/hr
+_AKS_PREMIUM_RATE = Decimal("0.10")
+
+# Azure OpenAI model → (input $/1K tokens, output $/1K tokens) static fallback rates
+# Used only when the Retail API returns no data for the model
+_OPENAI_STATIC_RATES: dict[str, tuple[Decimal, Decimal]] = {
+    "gpt-4o": (Decimal("0.005"), Decimal("0.015")),
+    "gpt-4o-mini": (Decimal("0.00015"), Decimal("0.0006")),
+    "gpt-4": (Decimal("0.03"), Decimal("0.06")),
+    "gpt-4-32k": (Decimal("0.06"), Decimal("0.12")),
+    "gpt-35-turbo": (Decimal("0.0005"), Decimal("0.0015")),
+    "gpt-35-turbo-16k": (Decimal("0.001"), Decimal("0.002")),
+    "o1": (Decimal("0.015"), Decimal("0.06")),
+    "o1-mini": (Decimal("0.003"), Decimal("0.012")),
+    "text-embedding-ada-002": (Decimal("0.0001"), Decimal("0.0001")),
+    "text-embedding-3-small": (Decimal("0.00002"), Decimal("0.00002")),
+    "text-embedding-3-large": (Decimal("0.00013"), Decimal("0.00013")),
 }
 
 
@@ -354,6 +401,519 @@ class AzureProvider(ProviderBase):
             for p in filtered
         ]
 
+    # ------------------------------------------------------------------
+    # New services: SQL, Cosmos DB, AKS, Azure Functions, Azure OpenAI
+    # ------------------------------------------------------------------
+
+    async def get_sql_price(
+        self,
+        resource_type: str,
+        region: str,
+        engine: str = "SQL",
+        deployment: str = "single-az",
+        term: PricingTerm = PricingTerm.ON_DEMAND,
+    ) -> list[NormalizedPrice]:
+        """
+        Price Azure SQL Database (vCore model).
+
+        resource_type examples: "General Purpose 4 vCores", "Business Critical 8 vCores"
+        engine: "SQL" (default), "MySQL" → Azure Database for MySQL, "PostgreSQL" → Azure DB for PostgreSQL
+        deployment: "single-az" (LRS) | "ha" / "zone-redundant" (ZRS)
+        """
+        engine_lower = engine.lower()
+        if "mysql" in engine_lower:
+            service_name = "Azure Database for MySQL"
+            product_fragment = "MySQL"
+        elif "postgres" in engine_lower or "pg" in engine_lower:
+            service_name = "Azure Database for PostgreSQL"
+            product_fragment = "PostgreSQL"
+        else:
+            service_name = "SQL Database"
+            product_fragment = "SQL"
+
+        cache_extras = {"resource_type": resource_type, "engine": engine, "deployment": deployment, "term": term.value}
+        cached_meta = await self._cache.get_prices_with_meta("azure", "sql", region, cache_extras)
+        if cached_meta is not None:
+            cached_data, fetched_at = cached_meta
+            return self._apply_cache_trust(
+                [NormalizedPrice.model_validate(p) for p in cached_data],
+                fetched_at, self._SOURCE_URL,
+            )
+
+        price_type = "Reservation" if term in (PricingTerm.RESERVED_1YR, PricingTerm.RESERVED_3YR) else "Consumption"
+        filters: dict[str, str] = {
+            "armRegionName": region,
+            "priceType": price_type,
+            "serviceName": service_name,
+        }
+        if term == PricingTerm.RESERVED_1YR:
+            filters["reservationTerm"] = "1 Year"
+        elif term == PricingTerm.RESERVED_3YR:
+            filters["reservationTerm"] = "3 Years"
+
+        items = await asyncio.to_thread(self._fetch_prices, filters, 100)
+
+        # Detect tier keyword and vCore count from resource_type
+        rt_lower = resource_type.lower()
+        tier_prefix = None
+        for kw, prefix in _SQL_TIER_MAP.items():
+            if kw in rt_lower:
+                tier_prefix = prefix
+                break
+
+        # Extract vCore count (first integer in resource_type)
+        vcores_match = re.search(r"\d+", resource_type)
+        vcores_str = vcores_match.group() if vcores_match else None
+
+        ha = deployment.lower() in ("ha", "zone-redundant", "multi-az", "regional")
+
+        prices: list[NormalizedPrice] = []
+        for item in items:
+            sku_name = item.get("skuName", "")
+            product_name = item.get("productName", "")
+
+            # Skip items not matching requested tier
+            if tier_prefix and not sku_name.startswith(tier_prefix):
+                continue
+            # Skip items not matching vCore count
+            if vcores_str and vcores_str not in sku_name:
+                continue
+            # Redundancy filter: ZRS = HA, LRS = single-az
+            if ha and "ZRS" in sku_name:
+                pass  # prefer ZRS for HA
+            elif ha and "ZRS" not in sku_name and "LRS" in sku_name:
+                continue  # skip LRS when HA requested
+            elif not ha and "ZRS" in sku_name:
+                continue  # skip ZRS when single-az requested
+
+            unit = PriceUnit.PER_HOUR
+            # Reserved items from API are total cost — divide to hourly
+            price_obj = self._item_to_price(item, region, term, "sql")
+            if price_obj is None:
+                continue
+            if term == PricingTerm.RESERVED_1YR:
+                price_obj = price_obj.model_copy(update={"price_per_unit": price_obj.price_per_unit / Decimal("8760")})
+            elif term == PricingTerm.RESERVED_3YR:
+                price_obj = price_obj.model_copy(update={"price_per_unit": price_obj.price_per_unit / Decimal("26280")})
+            price_obj = price_obj.model_copy(update={"unit": unit})
+            prices.append(price_obj)
+
+        prices.sort(key=lambda p: p.price_per_unit)
+        await self._cache.set_prices(
+            "azure", "sql", region, cache_extras,
+            [p.model_dump(mode="json") for p in prices],
+            ttl_hours=self._settings.cache_ttl_hours,
+        )
+        return prices
+
+    async def get_cosmos_price(
+        self,
+        region: str,
+        deployment: str = "provisioned",
+        multi_region: bool = False,
+    ) -> list[NormalizedPrice]:
+        """
+        Price Azure Cosmos DB.
+
+        deployment: "provisioned" (per 100 RU/s/hr) | "serverless" (per 1M RUs) | "autoscale"
+        multi_region: True adds geo-replication write price.
+        """
+        cache_extras = {"deployment": deployment, "multi_region": str(multi_region)}
+        cached_meta = await self._cache.get_prices_with_meta("azure", "cosmos", region, cache_extras)
+        if cached_meta is not None:
+            cached_data, fetched_at = cached_meta
+            return self._apply_cache_trust(
+                [NormalizedPrice.model_validate(p) for p in cached_data],
+                fetched_at, self._SOURCE_URL,
+            )
+
+        filters: dict[str, str] = {
+            "armRegionName": region,
+            "priceType": "Consumption",
+            "serviceName": "Azure Cosmos DB",
+        }
+        items = await asyncio.to_thread(self._fetch_prices, filters, 50)
+
+        target_meter: str
+        if deployment == "serverless":
+            target_meter = "serverless"
+        elif deployment == "autoscale":
+            target_meter = "autoscale"
+        else:
+            # provisioned: single-region write
+            target_meter = "100 ru/s" if not multi_region else "write"
+
+        prices: list[NormalizedPrice] = []
+        for item in items:
+            meter = item.get("meterName", "").lower()
+            product = item.get("productName", "").lower()
+
+            if deployment == "serverless":
+                if "serverless" not in meter and "serverless" not in product:
+                    continue
+                unit = PriceUnit.PER_UNIT
+            elif deployment == "autoscale":
+                if "autoscale" not in meter and "autoscale" not in product:
+                    continue
+                unit = PriceUnit.PER_UNIT
+            else:
+                # provisioned throughput
+                if "100 ru/s" not in meter and "throughput" not in product:
+                    continue
+                # multi-region: include write replica items; single: exclude multi-write meters
+                if multi_region and "single" in meter:
+                    continue
+                if not multi_region and ("multi" in meter or "write region" in meter):
+                    continue
+                unit = PriceUnit.PER_UNIT
+
+            p = self._item_to_price(item, region, PricingTerm.ON_DEMAND, "cosmos")
+            if p:
+                prices.append(p.model_copy(update={"unit": unit}))
+
+        prices.sort(key=lambda p: p.price_per_unit)
+        await self._cache.set_prices(
+            "azure", "cosmos", region, cache_extras,
+            [p.model_dump(mode="json") for p in prices],
+            ttl_hours=self._settings.cache_ttl_hours,
+        )
+        return prices
+
+    async def get_aks_price(
+        self,
+        region: str,
+        mode: str = "standard",
+    ) -> list[NormalizedPrice]:
+        """
+        Price AKS cluster management fee.
+
+        mode: "free" (no SLA, free control plane) | "standard" (SLA, $0.10/cluster/hr)
+        Worker node costs are separate — pass node instance type to get_compute_price.
+        """
+        cache_extras = {"mode": mode}
+        cached_meta = await self._cache.get_prices_with_meta("azure", "aks", region, cache_extras)
+        if cached_meta is not None:
+            cached_data, fetched_at = cached_meta
+            return self._apply_cache_trust(
+                [NormalizedPrice.model_validate(p) for p in cached_data],
+                fetched_at, self._SOURCE_URL,
+            )
+
+        prices: list[NormalizedPrice] = []
+
+        if mode == "free":
+            # Free tier — zero control-plane cost; return informational $0 price
+            prices = [NormalizedPrice(
+                provider=CloudProvider.AZURE,
+                service="aks",
+                sku_id="aks-free-tier",
+                product_family="Containers",
+                description="AKS Free tier — control plane included (no uptime SLA)",
+                region=region,
+                pricing_term=PricingTerm.ON_DEMAND,
+                price_per_unit=Decimal("0"),
+                unit=PriceUnit.PER_HOUR,
+                attributes={
+                    "note": "Worker node VMs billed separately via compute pricing",
+                    "sla": "No uptime SLA",
+                },
+            )]
+        else:
+            # Try the Retail API first
+            filters: dict[str, str] = {
+                "armRegionName": region,
+                "priceType": "Consumption",
+                "serviceName": "Azure Kubernetes Service",
+            }
+            items = await asyncio.to_thread(self._fetch_prices, filters, 20)
+
+            for item in items:
+                meter = item.get("meterName", "").lower()
+                if "uptime sla" not in meter and "standard" not in meter:
+                    continue
+                p = self._item_to_price(item, region, PricingTerm.ON_DEMAND, "aks")
+                if p:
+                    prices.append(p.model_copy(update={
+                        "description": "AKS Standard tier — cluster management fee (Uptime SLA)",
+                        "attributes": {
+                            **p.attributes,
+                            "note": "Worker node VMs billed separately via compute pricing",
+                        },
+                    }))
+
+            if not prices:
+                # Static fallback: $0.10/cluster/hr (published rate)
+                prices = [NormalizedPrice(
+                    provider=CloudProvider.AZURE,
+                    service="aks",
+                    sku_id="aks-standard-tier",
+                    product_family="Containers",
+                    description="AKS Standard tier — cluster management fee (Uptime SLA)",
+                    region=region,
+                    pricing_term=PricingTerm.ON_DEMAND,
+                    price_per_unit=_AKS_PREMIUM_RATE,
+                    unit=PriceUnit.PER_HOUR,
+                    attributes={
+                        "note": "Worker node VMs billed separately via compute pricing",
+                        "source": "static_fallback",
+                    },
+                )]
+
+        await self._cache.set_prices(
+            "azure", "aks", region, cache_extras,
+            [p.model_dump(mode="json") for p in prices],
+            ttl_hours=self._settings.cache_ttl_hours,
+        )
+        return prices
+
+    async def get_functions_price(
+        self,
+        region: str,
+        gb_seconds: float | None = None,
+        requests_millions: float | None = None,
+    ) -> list[NormalizedPrice]:
+        """
+        Price Azure Functions Consumption plan.
+
+        Returns per-GB-second and per-execution prices from the Retail API,
+        with static fallback. Free tier: 400K GB-s and 1M executions/month.
+        """
+        cache_extras: dict[str, str] = {}
+        cached_meta = await self._cache.get_prices_with_meta("azure", "azure_functions", region, cache_extras)
+        if cached_meta is not None:
+            cached_data, fetched_at = cached_meta
+            prices = self._apply_cache_trust(
+                [NormalizedPrice.model_validate(p) for p in cached_data],
+                fetched_at, self._SOURCE_URL,
+            )
+        else:
+            filters: dict[str, str] = {
+                "armRegionName": region,
+                "priceType": "Consumption",
+                "serviceName": "Azure Functions",
+            }
+            items = await asyncio.to_thread(self._fetch_prices, filters, 20)
+
+            prices = []
+            for item in items:
+                meter = item.get("meterName", "").lower()
+                uom = item.get("unitOfMeasure", "").lower()
+                p = self._item_to_price(item, region, PricingTerm.ON_DEMAND, "azure_functions")
+                if p is None:
+                    continue
+                if "execution" in meter or "invocation" in meter:
+                    p = p.model_copy(update={"unit": PriceUnit.PER_REQUEST})
+                elif "gb" in uom and "second" in uom:
+                    p = p.model_copy(update={"unit": PriceUnit.PER_GB_SECOND})
+                else:
+                    continue
+                prices.append(p)
+
+            if not prices:
+                # Static fallback from Azure published Consumption plan rates
+                prices = [
+                    NormalizedPrice(
+                        provider=CloudProvider.AZURE,
+                        service="azure_functions",
+                        sku_id="functions-gb-second",
+                        product_family="Serverless",
+                        description="Azure Functions — compute duration (Consumption plan)",
+                        region=region,
+                        pricing_term=PricingTerm.ON_DEMAND,
+                        price_per_unit=_FUNCTIONS_GB_SEC_RATE,
+                        unit=PriceUnit.PER_GB_SECOND,
+                        attributes={"free_tier": "400,000 GB-s/month", "source": "static_fallback"},
+                    ),
+                    NormalizedPrice(
+                        provider=CloudProvider.AZURE,
+                        service="azure_functions",
+                        sku_id="functions-executions",
+                        product_family="Serverless",
+                        description="Azure Functions — execution count (Consumption plan)",
+                        region=region,
+                        pricing_term=PricingTerm.ON_DEMAND,
+                        price_per_unit=_FUNCTIONS_EXEC_RATE,
+                        unit=PriceUnit.PER_REQUEST,
+                        attributes={"free_tier": "1M executions/month", "source": "static_fallback"},
+                    ),
+                ]
+
+            await self._cache.set_prices(
+                "azure", "azure_functions", region, cache_extras,
+                [p.model_dump(mode="json") for p in prices],
+                ttl_hours=self._settings.cache_ttl_hours,
+            )
+
+        # If volume provided, add a cost estimate price entry
+        if gb_seconds or requests_millions:
+            gb_sec_price = next((p for p in prices if p.unit == PriceUnit.PER_GB_SECOND), None)
+            req_price = next((p for p in prices if p.unit == PriceUnit.PER_REQUEST), None)
+            total = Decimal("0")
+            breakdown: list[str] = []
+            if gb_sec_price and gb_seconds:
+                billable = max(0.0, gb_seconds - 400_000)
+                cost = gb_sec_price.price_per_unit * Decimal(str(billable))
+                total += cost
+                breakdown.append(
+                    f"{billable:,.0f} GB-s × ${float(gb_sec_price.price_per_unit):.6f} = ${float(cost):.4f}"
+                )
+            if req_price and requests_millions:
+                req_count = requests_millions * 1_000_000
+                billable_req = max(0.0, req_count - 1_000_000)
+                cost = req_price.price_per_unit * Decimal(str(billable_req))
+                total += cost
+                breakdown.append(
+                    f"{billable_req:,.0f} executions × ${float(req_price.price_per_unit):.8f} = ${float(cost):.4f}"
+                )
+            if breakdown:
+                prices.append(NormalizedPrice(
+                    provider=CloudProvider.AZURE,
+                    service="azure_functions",
+                    sku_id="functions-estimate",
+                    product_family="Serverless",
+                    description="Azure Functions — estimated monthly cost",
+                    region=region,
+                    pricing_term=PricingTerm.ON_DEMAND,
+                    price_per_unit=total,
+                    unit=PriceUnit.PER_UNIT,
+                    attributes={
+                        "breakdown": "; ".join(breakdown),
+                        "note": "After free tier deduction (400K GB-s, 1M executions/month)",
+                    },
+                ))
+
+        return prices
+
+    async def get_openai_price(
+        self,
+        model: str,
+        region: str,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+    ) -> list[NormalizedPrice]:
+        """
+        Price Azure OpenAI model inference.
+
+        Returns per-1K-token input and output prices.
+        Falls back to static rates when the Retail API has no data.
+        """
+        model_lower = model.lower()
+        cache_extras = {"model": model_lower}
+        cached_meta = await self._cache.get_prices_with_meta("azure", "openai", region, cache_extras)
+        if cached_meta is not None:
+            cached_data, fetched_at = cached_meta
+            prices = self._apply_cache_trust(
+                [NormalizedPrice.model_validate(p) for p in cached_data],
+                fetched_at, self._SOURCE_URL,
+            )
+        else:
+            filters: dict[str, str] = {
+                "armRegionName": region,
+                "priceType": "Consumption",
+                "serviceName": "Azure OpenAI",
+            }
+            items = await asyncio.to_thread(self._fetch_prices, filters, 100)
+
+            prices = []
+            for item in items:
+                meter = item.get("meterName", "").lower()
+                product = item.get("productName", "").lower()
+                if model_lower.replace("-", " ") not in product and model_lower.replace("-", " ") not in meter:
+                    continue
+                p = self._item_to_price(item, region, PricingTerm.ON_DEMAND, "openai")
+                if p:
+                    prices.append(p.model_copy(update={"unit": PriceUnit.PER_UNIT}))
+
+            if not prices:
+                # Static fallback using known published rates
+                in_rate, out_rate = None, None
+                for key, (ir, or_) in _OPENAI_STATIC_RATES.items():
+                    if key in model_lower:
+                        in_rate, out_rate = ir, or_
+                        break
+                if in_rate is not None:
+                    prices = [
+                        NormalizedPrice(
+                            provider=CloudProvider.AZURE,
+                            service="openai",
+                            sku_id=f"openai-{model_lower}-input",
+                            product_family="AI + Machine Learning",
+                            description=f"Azure OpenAI {model} — input tokens",
+                            region=region,
+                            pricing_term=PricingTerm.ON_DEMAND,
+                            price_per_unit=in_rate,
+                            unit=PriceUnit.PER_UNIT,
+                            attributes={
+                                "model": model,
+                                "token_type": "input",
+                                "unit_label": "per 1K tokens",
+                                "source": "static_fallback",
+                            },
+                        ),
+                        NormalizedPrice(
+                            provider=CloudProvider.AZURE,
+                            service="openai",
+                            sku_id=f"openai-{model_lower}-output",
+                            product_family="AI + Machine Learning",
+                            description=f"Azure OpenAI {model} — output tokens",
+                            region=region,
+                            pricing_term=PricingTerm.ON_DEMAND,
+                            price_per_unit=out_rate,
+                            unit=PriceUnit.PER_UNIT,
+                            attributes={
+                                "model": model,
+                                "token_type": "output",
+                                "unit_label": "per 1K tokens",
+                                "source": "static_fallback",
+                            },
+                        ),
+                    ]
+
+            await self._cache.set_prices(
+                "azure", "openai", region, cache_extras,
+                [p.model_dump(mode="json") for p in prices],
+                ttl_hours=self._settings.cache_ttl_hours,
+            )
+
+        # Cost estimate if token volumes provided
+        if prices and (input_tokens or output_tokens):
+            in_price = next((p for p in prices if p.attributes.get("token_type") == "input"
+                             or "input" in p.description.lower()), None)
+            out_price = next((p for p in prices if p.attributes.get("token_type") == "output"
+                              or "output" in p.description.lower()), None)
+            total = Decimal("0")
+            breakdown: list[str] = []
+            if in_price and input_tokens:
+                cost = in_price.price_per_unit * Decimal(str(input_tokens)) / Decimal("1000")
+                total += cost
+                breakdown.append(
+                    f"{input_tokens:,} input tokens × ${float(in_price.price_per_unit):.5f}/1K = ${float(cost):.4f}"
+                )
+            if out_price and output_tokens:
+                cost = out_price.price_per_unit * Decimal(str(output_tokens)) / Decimal("1000")
+                total += cost
+                breakdown.append(
+                    f"{output_tokens:,} output tokens × ${float(out_price.price_per_unit):.5f}/1K = ${float(cost):.4f}"
+                )
+            if breakdown:
+                prices.append(NormalizedPrice(
+                    provider=CloudProvider.AZURE,
+                    service="openai",
+                    sku_id=f"openai-{model_lower}-estimate",
+                    product_family="AI + Machine Learning",
+                    description=f"Azure OpenAI {model} — estimated cost",
+                    region=region,
+                    pricing_term=PricingTerm.ON_DEMAND,
+                    price_per_unit=total,
+                    unit=PriceUnit.PER_UNIT,
+                    attributes={
+                        "breakdown": "; ".join(breakdown),
+                        "model": model,
+                    },
+                ))
+
+        return prices
+
     async def list_regions(self, service: str = "compute") -> list[str]:
         return list_azure_regions()
 
@@ -528,12 +1088,13 @@ class AzureProvider(ProviderBase):
                 provider=self.provider,
                 domain=spec.domain,
                 service=spec.service,
-                reason=f"Azure does not support {spec.domain.value}/{spec.service}. "
-                       "Azure currently covers compute (VMs) and storage (managed disks, blob).",
-                alternatives=[
-                    "Use describe_catalog(provider='azure') to see supported services.",
-                    "For Azure AI services, Azure OpenAI is not yet implemented.",
-                ],
+                reason=(
+                    f"Azure does not support {spec.domain.value}/{spec.service}. "
+                    "Azure supports: compute (vm), storage (managed_disks, blob), "
+                    "database (sql, cosmos), container (aks), serverless (azure_functions), "
+                    "ai (openai)."
+                ),
+                alternatives=["Use describe_catalog(provider='azure') to see supported services."],
                 example_invocation={
                     "provider": "azure", "domain": "compute",
                     "resource_type": "Standard_D4s_v3", "region": "eastus",
@@ -543,6 +1104,14 @@ class AzureProvider(ProviderBase):
             public_prices = await self._price_compute(spec)
         elif isinstance(spec, StoragePricingSpec):
             public_prices = await self._price_storage(spec)
+        elif isinstance(spec, DatabasePricingSpec):
+            public_prices = await self._price_database(spec)
+        elif isinstance(spec, ContainerPricingSpec):
+            public_prices = await self._price_container(spec)
+        elif isinstance(spec, ServerlessPricingSpec):
+            public_prices = await self._price_serverless(spec)
+        elif isinstance(spec, AiPricingSpec):
+            public_prices = await self._price_ai(spec)
         else:
             raise NotSupportedError(
                 provider=self.provider,
@@ -565,18 +1134,65 @@ class AzureProvider(ProviderBase):
         storage_type = spec.storage_type or "premium-ssd"
         return await self.get_storage_price(storage_type, spec.region, spec.size_gb)
 
+    async def _price_database(self, spec: DatabasePricingSpec) -> list[NormalizedPrice]:
+        svc = (spec.service or "sql").lower()
+        if svc == "cosmos":
+            multi = spec.deployment.lower() in ("multi-az", "ha", "regional", "multi-region")
+            return await self.get_cosmos_price(spec.region, deployment="provisioned", multi_region=multi)
+        # Default: Azure SQL / MySQL / PostgreSQL
+        return await self.get_sql_price(
+            resource_type=spec.resource_type or "General Purpose 4 vCores",
+            region=spec.region,
+            engine=spec.engine,
+            deployment=spec.deployment,
+            term=spec.term,
+        )
+
+    async def _price_container(self, spec: ContainerPricingSpec) -> list[NormalizedPrice]:
+        mode = spec.mode or "standard"
+        return await self.get_aks_price(spec.region, mode=mode)
+
+    async def _price_serverless(self, spec: ServerlessPricingSpec) -> list[NormalizedPrice]:
+        return await self.get_functions_price(
+            spec.region,
+            gb_seconds=spec.gb_seconds,
+            requests_millions=spec.requests_millions,
+        )
+
+    async def _price_ai(self, spec: AiPricingSpec) -> list[NormalizedPrice]:
+        model = spec.model or "gpt-4o"
+        return await self.get_openai_price(
+            model=model,
+            region=spec.region,
+            input_tokens=spec.input_tokens,
+            output_tokens=spec.output_tokens,
+        )
+
     async def describe_catalog(self) -> ProviderCatalog:
         return ProviderCatalog(
             provider=CloudProvider.AZURE,
-            domains=[PricingDomain.COMPUTE, PricingDomain.STORAGE],
+            domains=[
+                PricingDomain.COMPUTE, PricingDomain.STORAGE,
+                PricingDomain.DATABASE, PricingDomain.CONTAINER,
+                PricingDomain.SERVERLESS, PricingDomain.AI,
+            ],
             services={
                 "compute": ["vm"],
                 "storage": ["managed_disks", "blob"],
+                "database": ["sql", "cosmos"],
+                "container": ["aks"],
+                "serverless": ["azure_functions"],
+                "ai": ["openai"],
             },
             supported_terms={
                 "compute/vm": ["on_demand", "spot", "reserved_1yr", "reserved_3yr"],
                 "storage/managed_disks": ["on_demand"],
                 "storage/blob": ["on_demand"],
+                "database/sql": ["on_demand", "reserved_1yr", "reserved_3yr"],
+                "database/cosmos": ["on_demand"],
+                "container/aks": ["on_demand"],
+                "serverless/azure_functions": ["on_demand"],
+                "ai/openai": ["on_demand"],
             },
             filter_hints={
                 "compute/vm": {
@@ -592,6 +1208,30 @@ class AzureProvider(ProviderBase):
                     "storage_type": "blob",
                     "size_gb": "Storage volume for monthly estimate",
                 },
+                "database/sql": {
+                    "resource_type": "'General Purpose 4 vCores' | 'Business Critical 8 vCores' | 'Hyperscale 2 vCores'",
+                    "engine": "'SQL' (default) | 'MySQL' | 'PostgreSQL'",
+                    "deployment": "single-az (default) | ha",
+                    "term": "on_demand | reserved_1yr | reserved_3yr",
+                },
+                "database/cosmos": {
+                    "deployment": "'provisioned' (per 100 RU/s) | 'serverless' (per 1M RUs) | 'autoscale'",
+                    "note": "Multi-region: set deployment='ha' to include geo-replication write pricing",
+                },
+                "container/aks": {
+                    "mode": "'standard' ($0.10/hr, Uptime SLA) | 'free' (no SLA, control plane free)",
+                    "note": "Worker nodes billed separately — add VM compute line items for nodes",
+                },
+                "serverless/azure_functions": {
+                    "gb_seconds": "Execution duration × memory in GB (e.g. 500000 for 500K GB-s/month)",
+                    "requests_millions": "Execution count in millions (e.g. 5 for 5M invocations/month)",
+                    "note": "Free tier: 400K GB-s and 1M executions/month; Consumption plan only",
+                },
+                "ai/openai": {
+                    "model": "gpt-4o | gpt-4o-mini | gpt-4 | gpt-35-turbo | o1 | o1-mini | text-embedding-3-small",
+                    "input_tokens": "Input token count for cost estimate",
+                    "output_tokens": "Output token count for cost estimate",
+                },
             },
             example_invocations={
                 "compute/vm": {
@@ -603,6 +1243,28 @@ class AzureProvider(ProviderBase):
                     "provider": "azure", "domain": "storage",
                     "storage_type": "premium-ssd", "region": "eastus", "size_gb": 128,
                 },
+                "database/sql": {
+                    "provider": "azure", "domain": "database", "service": "sql",
+                    "resource_type": "General Purpose 4 vCores", "engine": "SQL",
+                    "deployment": "single-az", "region": "eastus",
+                },
+                "database/cosmos": {
+                    "provider": "azure", "domain": "database", "service": "cosmos",
+                    "deployment": "provisioned", "region": "eastus",
+                },
+                "container/aks": {
+                    "provider": "azure", "domain": "container", "service": "aks",
+                    "mode": "standard", "region": "eastus",
+                },
+                "serverless/azure_functions": {
+                    "provider": "azure", "domain": "serverless", "service": "azure_functions",
+                    "gb_seconds": 500000, "requests_millions": 5, "region": "eastus",
+                },
+                "ai/openai": {
+                    "provider": "azure", "domain": "ai", "service": "openai",
+                    "model": "gpt-4o", "input_tokens": 1000000, "output_tokens": 500000,
+                    "region": "eastus",
+                },
             },
             decision_matrix={
                 "Azure VMs": "compute/vm",
@@ -611,7 +1273,13 @@ class AzureProvider(ProviderBase):
                 "Azure Blob Storage": "storage/blob",
                 "Premium SSD": "storage/managed_disks — set storage_type='premium-ssd'",
                 "Standard SSD": "storage/managed_disks — set storage_type='standard-ssd'",
-                "Azure SQL / MySQL / PostgreSQL": "NOT SUPPORTED — Azure database pricing is not yet implemented. Only compute (VMs) and storage are available.",
+                "Azure SQL Database": "database/sql — set engine='SQL'",
+                "Azure Database for MySQL": "database/sql — set engine='MySQL'",
+                "Azure Database for PostgreSQL": "database/sql — set engine='PostgreSQL'",
+                "Azure Cosmos DB": "database/cosmos",
+                "AKS / Azure Kubernetes Service": "container/aks",
+                "Azure Functions": "serverless/azure_functions",
+                "Azure OpenAI": "ai/openai — set model='gpt-4o' or other model",
             },
         )
 
