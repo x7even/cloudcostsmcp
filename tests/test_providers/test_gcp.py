@@ -259,9 +259,10 @@ async def test_check_availability(gcp_provider: GCPProvider):
         assert not await gcp_provider.check_availability("compute", "n2-standard-4", "mars-west1")
 
 
-async def test_effective_price_not_implemented(gcp_provider: GCPProvider):
-    with pytest.raises(NotConfiguredError, match="BigQuery"):
-        await gcp_provider.get_effective_price("compute", "n2-standard-4", "us-central1")
+async def test_effective_price_requires_billing_account_id(gcp_provider: GCPProvider):
+    # No OCC_GCP_BILLING_ACCOUNT_ID configured — returns empty, does not raise
+    result = await gcp_provider.get_effective_price("compute", "n2-standard-4", "us-central1")
+    assert result == []
 
 
 # ---------------------------------------------------------------------------
@@ -414,6 +415,82 @@ async def test_get_compute_price_a2_windows_not_supported(gcp_provider: GCPProvi
             "a2-highgpu-1g", "us-central1", os="Windows"
         )
     assert prices == [], "A2 + Windows should return empty list (no Windows support)"
+
+
+# ---------------------------------------------------------------------------
+# Contract / effective pricing (v1beta Billing API)
+# ---------------------------------------------------------------------------
+
+async def test_effective_price_parses_contract_response(tmp_path: Path):
+    """_fetch_contract_price returns (Decimal, reason) when API returns a discount."""
+    settings = Settings(gcp_api_key="AIzaFAKE", gcp_billing_account_id="012345-ABCDEF")
+    from opencloudcosts.cache import CacheManager
+    cache = CacheManager(tmp_path / "test.db")
+    await cache.initialize()
+    provider = GCPProvider(settings, cache)
+
+    contract_resp = {
+        "rate": {
+            "tiers": [{
+                "listPrice": {"units": "7", "nanos": 523600000},
+                "contractPrice": {"units": "4", "nanos": 514160000},
+            }],
+            "unitInfo": {"unit": "h"},
+        },
+        "priceReason": {"type": "floating-discount"},
+    }
+
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = contract_resp
+    mock_resp.raise_for_status = MagicMock()
+
+    fake_creds = MagicMock()
+    fake_creds.token = "ya29.fake"
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=mock_resp)
+    mock_client.aclose = AsyncMock()
+
+    with (
+        patch("opencloudcosts.providers.gcp.GCPProvider._get_billing_http",
+              new_callable=AsyncMock, return_value=mock_client),
+    ):
+        result = await provider._fetch_contract_price("services/6F81-5844-456A/skus/ABCD-1234")
+
+    assert result is not None
+    price, reason = result
+    assert reason == "floating-discount"
+    # contract price: 4 + 514160000/1e9 = 4.51416
+    assert abs(float(price) - 4.51416) < 0.0001
+
+
+async def test_effective_price_403_falls_back_gracefully(tmp_path: Path):
+    """403 from billing API returns None (no crash) and public prices still work."""
+    settings = Settings(gcp_api_key="AIzaFAKE", gcp_billing_account_id="012345-ABCDEF")
+    from opencloudcosts.cache import CacheManager
+    cache = CacheManager(tmp_path / "test.db")
+    await cache.initialize()
+    provider = GCPProvider(settings, cache)
+
+    import httpx as _httpx
+    mock_403 = MagicMock(spec=_httpx.Response)
+    mock_403.status_code = 403
+    error_403 = _httpx.HTTPStatusError("403", request=MagicMock(), response=mock_403)
+
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status.side_effect = error_403
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=mock_resp)
+    mock_client.aclose = AsyncMock()
+
+    with (
+        patch("opencloudcosts.providers.gcp.GCPProvider._get_billing_http",
+              new_callable=AsyncMock, return_value=mock_client),
+    ):
+        result = await provider._fetch_contract_price("services/6F81-5844-456A/skus/ABCD-1234")
+
+    assert result is None
 
 
 def test_a2_in_supported_families():

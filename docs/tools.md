@@ -18,6 +18,7 @@
 - Regions: `us-central1`, `us-east1`, `europe-west1`, `asia-southeast1`, etc.
 - Requires `OCC_GCP_API_KEY` or Application Default Credentials (`gcloud auth application-default login`).
 - CUD terms: `cud_1yr`, `cud_3yr`
+- **Contract / effective pricing (v0.8.9):** Set `OCC_GCP_BILLING_ACCOUNT_ID=<id>` + ADC to retrieve negotiated rates via Cloud Billing Pricing API v1beta. When configured, `get_price` responses include an `effective_price` field with your discounted hourly rate and the `priceReason` type (`floating-discount`, `fixed-price`, etc.). Requires `billing.billingAccountPrice.get` IAM permission. API keys are NOT accepted by this endpoint.
 
 ### Azure
 - Instance types use ARM SKU names: `Standard_D4s_v3`, `Standard_E8s_v3`, `Standard_NC6s_v3` (GPU), etc.

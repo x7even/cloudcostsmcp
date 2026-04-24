@@ -64,6 +64,7 @@ from opencloudcosts.utils.units import gcp_money_to_decimal
 logger = logging.getLogger(__name__)
 
 _CATALOG_BASE = "https://cloudbilling.googleapis.com/v1"
+_BILLING_V1BETA_BASE = "https://cloudbilling.googleapis.com/v1beta"
 _COMPUTE_SERVICE_ID = "6F81-5844-456A"   # Compute Engine
 _GCS_SERVICE_ID = "95FF-2EF5-5EA1"       # Cloud Storage
 _CLOUD_SQL_SERVICE_ID = "9662-B51E-5089" # Cloud SQL
@@ -344,6 +345,129 @@ class GCPProvider(ProviderBase):
             if usage_type == utype and desc_substring.lower() in desc.lower():
                 return price
         return None
+
+    # ------------------------------------------------------------------
+    # Contract / effective pricing (Cloud Billing Pricing API v1beta)
+    # ------------------------------------------------------------------
+
+    async def _get_billing_http(self) -> httpx.AsyncClient:
+        """Return an httpx client authenticated for the v1beta billing account API.
+
+        API keys are NOT accepted by billing-account-scoped endpoints — ADC Bearer
+        token is required. Raises NotConfiguredError when only an API key is configured.
+        """
+        if self._api_key and not self._settings.gcp_billing_account_id:
+            raise NotConfiguredError(
+                "GCP contract pricing requires OAuth credentials (ADC), not just an API key.\n"
+                "Run: gcloud auth application-default login\n"
+                "Then set: OCC_GCP_BILLING_ACCOUNT_ID=<your-billing-account-id>"
+            )
+        # Build a dedicated client with Bearer auth only (no ?key= param).
+        try:
+            import google.auth
+            import google.auth.transport.requests
+            creds, _ = google.auth.default(
+                scopes=["https://www.googleapis.com/auth/cloud-billing.readonly"]
+            )
+            request = google.auth.transport.requests.Request()
+            creds.refresh(request)
+            return httpx.AsyncClient(
+                base_url=_BILLING_V1BETA_BASE,
+                timeout=30.0,
+                headers={"Authorization": f"Bearer {creds.token}"},
+            )
+        except ImportError:
+            raise NotConfiguredError(
+                "GCP contract pricing requires google-auth.\n"
+                "Install it: pip install google-auth\n"
+                "Then: gcloud auth application-default login"
+            )
+
+    @staticmethod
+    def _find_sku_name(
+        skus: list[dict],
+        desc_substring: str,
+        usage_type: str,
+    ) -> str | None:
+        """Return the SKU resource name whose description matches desc_substring."""
+        desc_sub_lower = desc_substring.lower()
+        for sku in skus:
+            if usage_type != sku.get("category", {}).get("usageType", ""):
+                continue
+            if desc_sub_lower in sku.get("description", "").lower():
+                return sku.get("name")
+        return None
+
+    async def _fetch_contract_price(self, sku_name: str) -> tuple[Decimal, str] | None:
+        """Fetch contract price for a SKU from the v1beta billing account API.
+
+        Returns (contract_price_per_unit, price_reason_type) or None when no
+        contract discount exists or the call fails.
+        """
+        acct = self._settings.gcp_billing_account_id
+        if not acct:
+            return None
+
+        # sku_name = "services/.../skus/XXXX-YYYY" — extract the bare SKU ID
+        sku_id = sku_name.split("/")[-1] if "/" in sku_name else sku_name
+        cache_key = f"gcp:contract_price:{acct}:{sku_id}"
+        cached = await self._cache.get_metadata(cache_key)
+        if cached is not None:
+            if cached.get("none"):
+                return None
+            return Decimal(cached["price"]), cached["reason"]
+
+        billing_http = await self._get_billing_http()
+        url = f"/billingAccounts/{acct}/skus/{sku_id}/price"
+        try:
+            async for attempt in async_retry():
+                with attempt:
+                    resp = await billing_http.get(url)
+                    resp.raise_for_status()
+            data = resp.json()
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 403:
+                logger.warning(
+                    "GCP: 403 fetching contract price for SKU %s — "
+                    "check billing.billingAccountPrice.get IAM permission", sku_id
+                )
+            else:
+                logger.warning("GCP: error fetching contract price for SKU %s: %s", sku_id, exc)
+            await self._cache.set_metadata(cache_key, {"none": True},
+                                           ttl_hours=self._settings.effective_price_ttl_hours)
+            return None
+        finally:
+            await billing_http.aclose()
+
+        rate = data.get("rate", {})
+        tiers = rate.get("tiers", [])
+        if not tiers:
+            return None
+
+        tier0 = tiers[0]
+        cp = tier0.get("contractPrice")
+        lp = tier0.get("listPrice")
+        if cp is None or lp is None:
+            return None
+
+        contract_dec = gcp_money_to_decimal(
+            str(cp.get("units", "0")), cp.get("nanos", 0)
+        )
+        list_dec = gcp_money_to_decimal(
+            str(lp.get("units", "0")), lp.get("nanos", 0)
+        )
+        # If contract == list price, no actual discount
+        if contract_dec >= list_dec:
+            await self._cache.set_metadata(cache_key, {"none": True},
+                                           ttl_hours=self._settings.effective_price_ttl_hours)
+            return None
+
+        reason = data.get("priceReason", {}).get("type", "contract")
+        await self._cache.set_metadata(
+            cache_key, {"price": str(contract_dec), "reason": reason},
+            ttl_hours=self._settings.effective_price_ttl_hours,
+        )
+        return contract_dec, reason
 
     # ------------------------------------------------------------------
     # Public API
@@ -1892,11 +2016,67 @@ class GCPProvider(ProviderBase):
         instance_type: str,
         region: str,
     ) -> list[EffectivePrice]:
-        raise NotConfiguredError(
-            "GCP effective pricing via BigQuery billing export is not yet implemented "
-            "(planned for Phase 4). Use get_compute_price with term='cud_1yr' or "
-            "'cud_3yr' to see committed-use discount rates."
-        )
+        """Fetch contract pricing from Cloud Billing Pricing API v1beta.
+
+        Returns an empty list when billing account is not configured, when no
+        contract discount exists, or when the API call fails. Never raises.
+        """
+        if not self._settings.gcp_billing_account_id:
+            return []
+        if service != "compute":
+            return []
+
+        specs = parse_instance_type(instance_type)
+        family = get_machine_family(instance_type)
+        family_skus = GCP_FAMILY_SKU.get(family)
+        if specs is None or family_skus is None:
+            return []
+
+        vcpus, memory_gb = specs
+        _, cpu_key, ram_key = _TERM_USAGE_TYPE[PricingTerm.ON_DEMAND]
+        cpu_desc = family_skus.get(cpu_key, "")
+        ram_desc = family_skus.get(ram_key, "")
+        if not cpu_desc or not ram_desc:
+            return []
+
+        try:
+            skus = await self._fetch_skus(_COMPUTE_SERVICE_ID)
+            cpu_sku_name = self._find_sku_name(skus, cpu_desc, "OnDemand")
+            ram_sku_name = self._find_sku_name(skus, ram_desc, "OnDemand")
+            if not cpu_sku_name or not ram_sku_name:
+                return []
+
+            cpu_result = await self._fetch_contract_price(cpu_sku_name)
+            ram_result = await self._fetch_contract_price(ram_sku_name)
+            if cpu_result is None or ram_result is None:
+                return []
+
+            cpu_contract, price_reason = cpu_result
+            ram_contract, _ = ram_result
+
+            base_prices = await self.get_compute_price(instance_type, region)
+            if not base_prices:
+                return []
+
+            effective_per_unit = (
+                Decimal(str(vcpus)) * cpu_contract
+                + Decimal(str(memory_gb)) * ram_contract
+            )
+            base = base_prices[0]
+            discount_pct = (
+                float((base.price_per_unit - effective_per_unit) / base.price_per_unit * 100)
+                if base.price_per_unit > 0 else 0.0
+            )
+            return [EffectivePrice(
+                base_price=base,
+                effective_price_per_unit=effective_per_unit,
+                discount_type=f"GCP contract ({price_reason})",
+                discount_pct=round(discount_pct, 2),
+                source="billing_account_pricing_api",
+            )]
+        except Exception as exc:
+            logger.warning("GCP: effective pricing lookup failed: %s", exc)
+            return []
 
     # ------------------------------------------------------------------
     # v0.8.0 capability surface — supports / get_price / describe_catalog
@@ -1941,11 +2121,22 @@ class GCPProvider(ProviderBase):
                 },
             )
         public_prices, breakdown = await self._dispatch_public(spec)
+
+        effective_price: EffectivePrice | None = None
+        auth_available = bool(self._settings.gcp_billing_account_id)
+        if auth_available and isinstance(spec, ComputePricingSpec) and spec.resource_type:
+            commitments = await self.get_effective_price(
+                "compute", spec.resource_type, spec.region
+            )
+            if commitments:
+                effective_price = commitments[0]
+
         return PricingResult(
             public_prices=public_prices,
             breakdown=breakdown,
-            auth_available=False,
-            source="catalog",
+            auth_available=auth_available,
+            effective_price=effective_price,
+            source="catalog+billing_api" if effective_price else "catalog",
         )
 
     async def _dispatch_public(

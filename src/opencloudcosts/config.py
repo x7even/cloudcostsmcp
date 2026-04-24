@@ -34,6 +34,8 @@ class Settings(BaseSettings):
     gcp_project_id: str | None = None
     gcp_billing_dataset: str | None = None
     gcp_api_key: str | None = None
+    # GCP effective pricing — requires ADC + billing.billingAccountPrice.get IAM
+    gcp_billing_account_id: str | None = None
 
     # HTTP transport (used with --transport http)
     http_port: int = Field(default=8080, description="HTTP server port (used with --transport http)")

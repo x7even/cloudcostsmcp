@@ -7,6 +7,34 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.8.9] — 2026-04-24
+
+### Added
+- **GCP effective / contract pricing** via Cloud Billing Pricing API v1beta.
+  When `OCC_GCP_BILLING_ACCOUNT_ID` is set and ADC credentials are available,
+  `get_price` for GCP compute now returns an `effective_price` block containing
+  the negotiated contract rate, discount percentage, and `priceReason` type
+  (e.g. `floating-discount`, `fixed-price`). Requires
+  `billing.billingAccountPrice.get` IAM permission on the billing account.
+- `OCC_GCP_BILLING_ACCOUNT_ID` config variable — the bare billing account ID
+  (e.g. `012345-567890-ABCDEF`). Absent → effective pricing skipped, public
+  prices returned unchanged (no regression for unauthenticated users).
+- New internal helpers: `_get_billing_http`, `_find_sku_name`,
+  `_fetch_contract_price` — contract prices cached at `effective_price_ttl_hours`
+  (default 1 h); 403 responses are logged and fall back to public prices gracefully.
+
+### Fixed
+- `get_effective_price` for GCP no longer raises `NotConfiguredError` when called
+  without a billing account — it returns `[]` silently.
+
+### Notes
+- API key auth is rejected for v1beta billing-account endpoints (GCP limitation);
+  ADC Bearer token (via `gcloud auth application-default login`) is required.
+- Storage and database contract pricing deferred to v0.8.10+.
+- Harness: 151/151 (no change — effective pricing is opt-in).
+
+---
+
 ## [0.8.8] — 2026-04-24
 
 ### Added

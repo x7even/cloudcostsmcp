@@ -210,9 +210,10 @@ All settings via environment variables (prefix `OCC_`) or `.env` file:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `OCC_CACHE_TTL_HOURS` | 24 | Public price cache TTL |
-| `OCC_AWS_ENABLE_COST_EXPLORER` | false | Enable effective pricing (costs $0.01/call) |
+| `OCC_AWS_ENABLE_COST_EXPLORER` | false | Enable AWS effective pricing (costs $0.01/call) |
 | `OCC_DEFAULT_REGIONS` | us-east-1,us-west-2 | Default regions |
 | `AWS_PROFILE` | (default chain) | AWS credentials profile |
+| `OCC_GCP_BILLING_ACCOUNT_ID` | (none) | GCP billing account ID for contract/effective pricing |
 
 ## Caching
 
@@ -241,6 +242,20 @@ gcloud auth application-default login
 ```
 
 **GCP instance type format:** `{family}-{series}-{vcpus}` e.g. `n2-standard-4`, `e2-highmem-8`, `c2-standard-16`
+
+### GCP Contract / Effective Pricing
+
+If you have a negotiated pricing contract with Google Cloud, you can retrieve your actual discounted rates (EDP, custom pricing) via the Cloud Billing Pricing API v1beta. This requires:
+
+1. ADC credentials: `gcloud auth application-default login`
+2. `billing.billingAccountPrice.get` IAM permission on your billing account
+3. Your billing account ID:
+
+```bash
+export OCC_GCP_BILLING_ACCOUNT_ID=012345-567890-ABCDEF
+```
+
+With this configured, `get_price` responses for GCP compute will include an `effective_price` block showing your contract rate and discount percentage. Without it, public list prices are returned unchanged.
 
 ## Azure Setup
 
@@ -309,4 +324,5 @@ With credentials configured: actual spend, contract/negotiated pricing, reservat
 - **v0.8.4** ✅ Numeric price fields — structured `{amount, unit, currency, display}` dicts replace formatted strings at all tool boundaries
 - **v0.8.5** ✅ Service→domain inference (`fill_domain`); structured `invalid_spec` error hints; 123/123 harness (up from 84%)
 - **v0.8.8** ✅ Azure breadth: SQL Database, Cosmos DB, AKS, Azure Functions, Azure OpenAI; 151/151 harness (28 new test scenarios)
-- **Next**: GCP effective pricing (BigQuery billing export); Azure egress pricing; multi-currency support
+- **v0.8.9** ✅ GCP effective/contract pricing via Cloud Billing Pricing API v1beta (`OCC_GCP_BILLING_ACCOUNT_ID`); GCP now at parity with AWS effective pricing
+- **Next**: Azure egress pricing; GCP storage/database contract pricing; multi-currency support
