@@ -7,6 +7,41 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.8.5] — 2026-04-24
+
+### Added
+- `src/opencloudcosts/utils/spec_infer.py` — `fill_domain(spec)` infers the required
+  `domain` field from `service`, `storage_type`, and `resource_type` before
+  discriminated-union validation, eliminating the most common `invalid_spec` failure class.
+  Covers: service-keyed lookup (rds→database, bigquery→analytics, gke→container, etc.),
+  `storage_type` present → storage, `db.`/`cache.` resource_type prefix → database,
+  dotted/dashed/Standard_/Basic_/Premium_ instance names → compute.
+- `spec_error_response(err, spec)` in `spec_infer.py` — structured `invalid_spec` error
+  dict with targeted hints: lists valid `domain` values when discriminator tag is missing,
+  lists valid `PricingTerm` strings when a bad term is supplied.
+- `get_price` docstring extended with `INTER_REGION_EGRESS` example invocation.
+- Azure `describe_catalog` decision_matrix now includes an explicit "NOT SUPPORTED" note
+  for database domain, stopping models from looping on futile database queries.
+
+### Changed
+- `fill_domain` applied in all tool entry points (`get_price`, `compare_prices`,
+  `get_spot_history`, `find_cheapest_region`, `find_available_regions`, `estimate_bom`,
+  `estimate_unit_economics`) before `validate_python`.
+- AWS spot pricing: `NoCredentialsError` / `PartialCredentialsError` now returns an empty
+  `public_prices` list instead of raising, so the tool layer reports "no pricing found"
+  rather than an `upstream_failure`.
+- GCP Cloud Monitoring breakdown rates (`tier1_rate_per_mib`, `tier2_rate_per_mib`,
+  `tier3_rate_per_mib`, `estimated_monthly_cost`) now formatted as `"$X.XXXX/MiB"` strings
+  so the grounding regex in `analyse.py` can extract them from tool output.
+
+### Fixed
+- Harness: 123/123 (100%) on gemma-4-26b-a4b, up from 104/123 (84.6%) in v0.8.4.
+  Eliminated: invalid_spec from domain omission on BOM/service specs, false hallucination
+  flags on Cloud Monitoring tier rates, Azure database 12-round futile search, AWS spot
+  upstream_failure.
+
+---
+
 ## [0.8.4] — 2026-04-23
 
 ### Added
