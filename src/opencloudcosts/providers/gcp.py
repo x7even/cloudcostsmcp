@@ -2066,6 +2066,116 @@ class GCPProvider(ProviderBase):
             logger.warning("GCP: effective pricing lookup failed: %s", exc)
             return []
 
+    @staticmethod
+    def _make_effective_price(
+        base: NormalizedPrice,
+        contract_price: Decimal,
+        price_reason: str,
+    ) -> EffectivePrice:
+        """Build an EffectivePrice from a base NormalizedPrice and a contract rate."""
+        discount_pct = (
+            float((base.price_per_unit - contract_price) / base.price_per_unit * 100)
+            if base.price_per_unit > 0 else 0.0
+        )
+        return EffectivePrice(
+            base_price=base,
+            effective_price_per_unit=contract_price,
+            discount_type=f"GCP contract ({price_reason})",
+            discount_pct=round(discount_pct, 2),
+            source="billing_account_pricing_api",
+        )
+
+    async def _effective_price_storage(
+        self, spec: StoragePricingSpec
+    ) -> list[EffectivePrice]:
+        """Contract pricing for GCS and Persistent Disk storage."""
+        if not self._settings.gcp_billing_account_id:
+            return []
+        storage_type = (spec.storage_type or "standard").lower()
+        try:
+            base_prices = await self._price_storage(spec)
+            if not base_prices:
+                return []
+
+            if storage_type in _GCS_STORAGE_CLASSES:
+                desc_substring = _GCS_STORAGE_CLASSES[storage_type]
+                skus = await self._fetch_skus(_GCS_SERVICE_ID)
+            else:
+                sku_patterns = GCP_STORAGE_SKU.get(storage_type)
+                if not sku_patterns:
+                    return []
+                desc_substring = sku_patterns["desc"]
+                skus = await self._fetch_skus(_COMPUTE_SERVICE_ID)
+
+            sku_name = self._find_sku_name(skus, desc_substring, "OnDemand")
+            if not sku_name:
+                return []
+
+            result = await self._fetch_contract_price(sku_name)
+            if result is None:
+                return []
+
+            contract_price, price_reason = result
+            return [self._make_effective_price(base_prices[0], contract_price, price_reason)]
+        except Exception as exc:
+            logger.warning("GCP: effective storage pricing failed: %s", exc)
+            return []
+
+    async def _effective_price_database(
+        self, spec: DatabasePricingSpec
+    ) -> list[EffectivePrice]:
+        """Contract pricing for Cloud SQL and Memorystore."""
+        if not self._settings.gcp_billing_account_id:
+            return []
+        svc = (spec.service or "").lower()
+        try:
+            base_prices = await self._price_database(spec)
+            if not base_prices:
+                return []
+
+            if svc == "memorystore":
+                capacity_gb = spec.capacity_gb or spec.storage_gb or 1.0
+                tier = spec.deployment if spec.deployment in ("basic", "standard") else "standard"
+                if capacity_gb < 4:
+                    m_tier = "m2"
+                elif capacity_gb < 12:
+                    m_tier = "m3"
+                elif capacity_gb < 100:
+                    m_tier = "m4"
+                else:
+                    m_tier = "m5"
+                desc_substring = f"Redis Capacity {tier.capitalize()} {m_tier.upper()}"
+                skus = await self._fetch_skus(_MEMORYSTORE_SERVICE_ID)
+            else:
+                # Cloud SQL
+                instance_type = spec.resource_type or "db-n1-standard-4"
+                sql_specs = CLOUD_SQL_INSTANCE_SPECS.get(instance_type.lower())
+                if not sql_specs:
+                    return []
+                vcpus, memory_gb = sql_specs
+                engine = spec.engine or "MySQL"
+                engine_norm = _CLOUD_SQL_ENGINE_NAMES.get(engine.lower(), engine)
+                ha = spec.deployment.lower() in ("ha", "regional", "multi-az")
+                zone_type = "Regional" if ha else "Zonal"
+                vcpu_str = str(int(vcpus)) if vcpus == int(vcpus) else str(vcpus)
+                ram_str = str(int(memory_gb)) if memory_gb == int(memory_gb) else str(memory_gb)
+                desc_substring = f"Cloud SQL for {engine_norm}: {zone_type} - {vcpu_str} vCPU + {ram_str}GB RAM"
+                skus = await self._fetch_skus(_CLOUD_SQL_SERVICE_ID)
+
+            sku_name = self._find_sku_name(skus, desc_substring, "OnDemand")
+            if not sku_name:
+                return []
+
+            result = await self._fetch_contract_price(sku_name)
+            if result is None:
+                return []
+
+            contract_price, price_reason = result
+            return [self._make_effective_price(base_prices[0], contract_price, price_reason)]
+        except Exception as exc:
+            logger.warning("GCP: effective database pricing failed: %s", exc)
+            return []
+
     # ------------------------------------------------------------------
     # v0.8.0 capability surface — supports / get_price / describe_catalog
     # ------------------------------------------------------------------
@@ -2112,12 +2222,21 @@ class GCPProvider(ProviderBase):
 
         effective_price: EffectivePrice | None = None
         auth_available = bool(self._settings.gcp_billing_account_id)
-        if auth_available and isinstance(spec, ComputePricingSpec) and spec.resource_type:
-            commitments = await self.get_effective_price(
-                "compute", spec.resource_type, spec.region
-            )
-            if commitments:
-                effective_price = commitments[0]
+        if auth_available:
+            if isinstance(spec, ComputePricingSpec) and spec.resource_type:
+                commitments = await self.get_effective_price(
+                    "compute", spec.resource_type, spec.region
+                )
+                if commitments:
+                    effective_price = commitments[0]
+            elif isinstance(spec, StoragePricingSpec):
+                commitments = await self._effective_price_storage(spec)
+                if commitments:
+                    effective_price = commitments[0]
+            elif isinstance(spec, DatabasePricingSpec):
+                commitments = await self._effective_price_database(spec)
+                if commitments:
+                    effective_price = commitments[0]
 
         return PricingResult(
             public_prices=public_prices,
