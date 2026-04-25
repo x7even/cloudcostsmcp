@@ -330,3 +330,4 @@ With credentials configured: actual spend, contract/negotiated pricing, reservat
 - **v0.8.11** ✅ GCP storage and database contract pricing — GCS, Persistent Disk, Cloud SQL (all engines/sizes/HA), Memorystore; `effective_price` on `StoragePricingSpec` and `DatabasePricingSpec` when billing account configured
 - **v0.8.12** ✅ Azure egress pricing (`inter_region_egress` domain) — internet and inter-region outbound transfer, Zone 1 rates from Retail Prices API, 5 GB/month free tier, monthly estimate in response
 - **v0.8.13** ✅ GCP network contract pricing — Cloud LB, CDN, NAT, Cloud Armor; `effective_price` on `NetworkPricingSpec` when billing account configured
+- **v0.8.14** ✅ GCP internet and inter-region egress (`inter_region_egress` domain) — continent-based rates from SKU catalog with static fallbacks; cross-cloud egress comparison now works across AWS, GCP, and Azure

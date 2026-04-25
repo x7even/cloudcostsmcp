@@ -930,3 +930,85 @@ async def test_effective_price_network_armor_contract(tmp_path: Path):
     assert len(result) == 1
     ep = result[0]
     assert abs(ep.discount_pct - 25.0) < 0.1
+
+
+# ---------------------------------------------------------------------------
+# GCP internet egress / inter-region egress (v0.8.14)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_egress_internet_americas(gcp_provider: GCPProvider):
+    """Internet egress from an Americas region returns the Americas base rate."""
+    from opencloudcosts.models import EgressPricingSpec, PricingDomain
+
+    spec = EgressPricingSpec(
+        provider="gcp", domain=PricingDomain.INTER_REGION_EGRESS,
+        source_region="us-central1", dest_region="", data_gb=100.0,
+    )
+
+    # Simulate SKU catalog returning an internet-egress SKU for Americas
+    fake_sku = {
+        "name": "services/6F81-5844-456A/skus/EGRESS-AMERICAS",
+        "description": "Network Internet Egress from Americas to Worldwide Destinations",
+        "category": {"usageType": "OnDemand"},
+        "serviceRegions": ["global"],
+        "pricingInfo": [{"pricingExpression": {"tieredRates": [
+            {"startUsageAmount": 0, "unitPrice": {"units": "0", "nanos": 80000000}},
+        ]}}],
+    }
+
+    with patch.object(gcp_provider, "_fetch_skus", AsyncMock(return_value=[fake_sku])):
+        prices = await gcp_provider.get_egress_price("us-central1", "", 100.0)
+
+    assert len(prices) == 1
+    p = prices[0]
+    assert float(p.price_per_unit) == pytest.approx(0.08, rel=1e-3)
+    assert p.attributes.get("egress_type") == "internet"
+    assert p.attributes.get("continent") == "americas"
+
+
+@pytest.mark.asyncio
+async def test_egress_intra_same_continent(gcp_provider: GCPProvider):
+    """Inter-region egress within the same continent uses the $0.01/GB rate."""
+    prices = await gcp_provider.get_egress_price("us-central1", "us-east1", 500.0)
+    assert len(prices) == 1
+    p = prices[0]
+    assert float(p.price_per_unit) == pytest.approx(0.01, rel=1e-3)
+    assert p.attributes.get("egress_type") == "inter-region"
+    assert "monthly_estimate" in p.attributes
+
+
+@pytest.mark.asyncio
+async def test_egress_cross_continent(gcp_provider: GCPProvider):
+    """Inter-region egress across continents uses the $0.08/GB rate."""
+    prices = await gcp_provider.get_egress_price("us-central1", "europe-west1", 100.0)
+    assert len(prices) == 1
+    p = prices[0]
+    assert float(p.price_per_unit) == pytest.approx(0.08, rel=1e-3)
+    assert "cross" in p.attributes.get("note", "").lower()
+
+
+@pytest.mark.asyncio
+async def test_egress_apac_fallback(gcp_provider: GCPProvider):
+    """Internet egress from APAC falls back to $0.12/GB when SKU not matched."""
+    with patch.object(gcp_provider, "_fetch_skus", AsyncMock(return_value=[])):
+        prices = await gcp_provider.get_egress_price("asia-east1", "", 1.0)
+    assert len(prices) == 1
+    assert float(prices[0].price_per_unit) == pytest.approx(0.12, rel=1e-3)
+    assert prices[0].attributes.get("continent") == "apac"
+
+
+@pytest.mark.asyncio
+async def test_egress_via_get_price(gcp_provider: GCPProvider):
+    """get_price dispatches EgressPricingSpec correctly."""
+    from opencloudcosts.models import EgressPricingSpec, PricingDomain
+
+    spec = EgressPricingSpec(
+        provider="gcp", domain=PricingDomain.INTER_REGION_EGRESS,
+        source_region="europe-west1", data_gb=50.0,
+    )
+    with patch.object(gcp_provider, "_fetch_skus", AsyncMock(return_value=[])):
+        result = await gcp_provider.get_price(spec)
+
+    assert len(result.public_prices) == 1
+    assert result.public_prices[0].attributes.get("continent") == "emea"
