@@ -7,6 +7,34 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.8.10] — 2026-04-25
+
+### Added
+- **`GcpAuthProvider`** — multi-source OAuth resolver for GCP contract pricing.
+  Replaces the hardcoded `gcloud`-ADC-only path with a proper priority chain:
+  `OCC_GCP_SERVICE_ACCOUNT_JSON_B64` → `OCC_GCP_SERVICE_ACCOUNT_JSON` →
+  `OCC_GCP_EXTERNAL_ACCOUNT_JSON_B64` / `OCC_GCP_EXTERNAL_ACCOUNT_JSON` (Workload
+  Identity Federation) → `GOOGLE_APPLICATION_CREDENTIALS` / GCP metadata server /
+  local ADC → `OCC_GCP_ACCESS_TOKEN` (debug escape hatch, warns loudly).
+- `google-auth[requests]>=2.38` added as optional `[gcp]` extra —
+  `pip install opencloudcosts[gcp]`. Public pricing users are unaffected.
+
+### Fixed
+- `creds.refresh()` now runs via `asyncio.to_thread()` — was blocking the event loop.
+- `asyncio.Lock` guards concurrent credential refresh to prevent race condition.
+- `_get_http` (catalog client) rebuilds per-call for Bearer auth — token no longer
+  goes stale in long-running containers. API-key path unchanged.
+- 401/403 responses from the billing API are no longer cached — auth and IAM errors
+  must not block credential rotation.
+- ADC `NotConfiguredError` no longer includes filesystem paths from `google.auth`
+  exceptions, preventing path disclosure in MCP tool responses.
+- Billing account ID removed from catch-all HTTP error log.
+- `priceReason.type` capped at 64 chars before caching/returning.
+- `_decode_json_b64`: narrow `except` clause; 64 KiB size guard.
+- Three unused variable assignments removed from `azure.py` (ruff F841).
+
+---
+
 ## [0.8.9] — 2026-04-24
 
 ### Added
