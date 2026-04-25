@@ -398,3 +398,155 @@ def test_normalize_region_azure():
     assert normalize_region("azure", "eastus") == "eastus"
     assert normalize_region("azure", "East US") == "eastus"
     assert normalize_region("azure", "West Europe") == "westeurope"
+
+
+# ---------------------------------------------------------------------------
+# v0.8.12 — Azure egress pricing tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_egress_internet_uses_api_rate(azure_provider: AzureProvider):
+    """get_egress_price returns the Zone 1 base-tier rate (max of all Zone 1 rows)."""
+    # API returns two tier rows — base ($0.087) and volume discount ($0.083)
+    bw_items = [
+        {
+            "retailPrice": 0.083,
+            "serviceName": "Bandwidth",
+            "meterName": "Data Transfer Out Zone 1",
+            "skuName": "Data Transfer Out Zone 1",
+            "armRegionName": "global",
+            "meterId": "bw-zone1-vol",
+            "serviceFamily": "Networking",
+            "productName": "Bandwidth",
+            "unitOfMeasure": "1 GB",
+        },
+        {
+            "retailPrice": 0.087,
+            "serviceName": "Bandwidth",
+            "meterName": "Data Transfer Out Zone 1",
+            "skuName": "Data Transfer Out Zone 1",
+            "armRegionName": "global",
+            "meterId": "bw-zone1-base",
+            "serviceFamily": "Networking",
+            "productName": "Bandwidth",
+            "unitOfMeasure": "1 GB",
+        },
+    ]
+    api_resp = {"Items": bw_items, "NextPageLink": None}
+    with patch("httpx.get", return_value=_make_mock_response(api_resp)):
+        results = await azure_provider.get_egress_price("eastus", data_gb=100.0)
+
+    assert len(results) == 1
+    r = results[0]
+    # Base tier (highest price) must be selected
+    assert r.price_per_unit == Decimal("0.087")
+    assert r.unit == PriceUnit.PER_GB_MONTH
+    assert r.attributes["egress_type"] == "internet"
+    assert r.attributes["zone"] == "zone1"
+    assert "monthly_estimate" in r.attributes
+    # 100 GB - 5 GB free = 95 GB chargeable
+    expected_monthly = Decimal("0.087") * Decimal("95")
+    assert f"${float(expected_monthly):.4f}" in r.attributes["monthly_estimate"]
+
+
+@pytest.mark.asyncio
+async def test_egress_inter_region_sets_dest(azure_provider: AzureProvider):
+    """When dest_region is set, egress_type is 'inter-region' and dest_region appears in attrs."""
+    bw_items = [
+        {
+            "retailPrice": 0.087,
+            "serviceName": "Bandwidth",
+            "meterName": "Data Transfer Out Zone 1",
+            "skuName": "Data Transfer Out Zone 1",
+            "armRegionName": "global",
+            "meterId": "bw-zone1",
+            "serviceFamily": "Networking",
+            "productName": "Bandwidth",
+            "unitOfMeasure": "1 GB",
+        }
+    ]
+    api_resp = {"Items": bw_items, "NextPageLink": None}
+    with patch("httpx.get", return_value=_make_mock_response(api_resp)):
+        results = await azure_provider.get_egress_price("eastus", "westeurope", data_gb=1000.0)
+
+    assert len(results) == 1
+    r = results[0]
+    assert r.attributes["egress_type"] == "inter-region"
+    assert r.attributes["dest_region"] == "westeurope"
+    assert "eastus" in r.description
+    assert "westeurope" in r.description
+
+
+@pytest.mark.asyncio
+async def test_egress_fallback_rate_when_api_returns_no_zone1(azure_provider: AzureProvider):
+    """Falls back to $0.087/GB static rate when API has no Zone 1 bandwidth items."""
+    api_resp = {"Items": [], "NextPageLink": None}
+    with patch("httpx.get", return_value=_make_mock_response(api_resp)):
+        results = await azure_provider.get_egress_price("eastus", data_gb=10.0)
+
+    assert len(results) == 1
+    assert results[0].price_per_unit == Decimal("0.087")
+
+
+@pytest.mark.asyncio
+async def test_egress_free_tier_5gb(azure_provider: AzureProvider):
+    """For data_gb <= 5, monthly estimate is $0 (all within free tier)."""
+    api_resp = {"Items": [], "NextPageLink": None}
+    with patch("httpx.get", return_value=_make_mock_response(api_resp)):
+        results = await azure_provider.get_egress_price("eastus", data_gb=3.0)
+
+    assert len(results) == 1
+    assert "$0.0000" in results[0].attributes.get("monthly_estimate", "")
+
+
+@pytest.mark.asyncio
+async def test_egress_zone2_uses_zone2_rate(azure_provider: AzureProvider):
+    """Asia Pacific regions use Zone 2 rate, not Zone 1."""
+    # API returns Zone 2 items with $0.16 base rate
+    bw_items = [
+        {
+            "retailPrice": 0.16,
+            "serviceName": "Bandwidth",
+            "meterName": "Data Transfer Out Zone 2",
+            "skuName": "Data Transfer Out Zone 2",
+            "armRegionName": "global",
+            "meterId": "bw-zone2-base",
+            "serviceFamily": "Networking",
+            "productName": "Bandwidth",
+            "unitOfMeasure": "1 GB",
+        },
+    ]
+    api_resp = {"Items": bw_items, "NextPageLink": None}
+    with patch("httpx.get", return_value=_make_mock_response(api_resp)):
+        results = await azure_provider.get_egress_price("eastasia", data_gb=100.0)
+
+    assert len(results) == 1
+    r = results[0]
+    assert r.attributes["zone"] == "zone2"
+    assert r.price_per_unit == Decimal("0.16")
+
+
+@pytest.mark.asyncio
+async def test_egress_supports_capability(azure_provider: AzureProvider):
+    """AzureProvider.supports returns True for inter_region_egress domain."""
+    from opencloudcosts.models import PricingDomain
+    assert azure_provider.supports(PricingDomain.INTER_REGION_EGRESS)
+
+
+@pytest.mark.asyncio
+async def test_egress_get_price_dispatch(azure_provider: AzureProvider):
+    """get_price with EgressPricingSpec returns a PricingResult with egress prices."""
+    from opencloudcosts.models import EgressPricingSpec, PricingDomain
+    spec = EgressPricingSpec(
+        provider="azure",
+        domain=PricingDomain.INTER_REGION_EGRESS,
+        source_region="eastus",
+        dest_region="westeurope",
+        data_gb=500.0,
+    )
+    api_resp = {"Items": [], "NextPageLink": None}
+    with patch("httpx.get", return_value=_make_mock_response(api_resp)):
+        result = await azure_provider.get_price(spec)
+
+    assert len(result.public_prices) == 1
+    assert result.public_prices[0].service == "inter_region_egress"

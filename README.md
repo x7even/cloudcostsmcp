@@ -272,7 +272,7 @@ uv run opencloudcosts
 
 **Azure regions:** ARM region names e.g. `eastus`, `westeurope`, `southeastasia` (use `list_regions` for full list)
 
-**Azure supported services (v0.8.8):**
+**Azure supported services (v0.8.12):**
 
 | Domain | Service | Description |
 |--------|---------|-------------|
@@ -284,6 +284,7 @@ uv run opencloudcosts
 | container | aks | AKS cluster management fee (free tier or $0.10/hr Standard) |
 | serverless | azure_functions | Functions Consumption plan — per GB-second + per execution |
 | ai | openai | Azure OpenAI — GPT-4o, GPT-4, GPT-3.5-Turbo, o1, embeddings |
+| inter_region_egress | — | Outbound data transfer — internet and inter-region, Zone 1 rates, 5 GB/month free |
 
 **GCP pricing terms:** `on_demand` (default), `spot` (preemptible), `cud_1yr`, `cud_3yr`
 
@@ -327,4 +328,4 @@ With credentials configured: actual spend, contract/negotiated pricing, reservat
 - **v0.8.9** ✅ GCP effective/contract pricing via Cloud Billing Pricing API v1beta (`OCC_GCP_BILLING_ACCOUNT_ID`); GCP now at parity with AWS effective pricing
 - **v0.8.10** ✅ `GcpAuthProvider` — multi-source OAuth (SA JSON B64, WIF, ADC, metadata server, raw token); `google-auth[requests]` optional `[gcp]` extra; event-loop-safe refresh; no gcloud required in containers
 - **v0.8.11** ✅ GCP storage and database contract pricing — GCS, Persistent Disk, Cloud SQL (all engines/sizes/HA), Memorystore; `effective_price` on `StoragePricingSpec` and `DatabasePricingSpec` when billing account configured
-- **Next**: Azure egress pricing (v0.8.12)
+- **v0.8.12** ✅ Azure egress pricing (`inter_region_egress` domain) — internet and inter-region outbound transfer, Zone 1 rates from Retail Prices API, 5 GB/month free tier, monthly estimate in response

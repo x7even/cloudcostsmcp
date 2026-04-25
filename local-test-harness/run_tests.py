@@ -815,6 +815,19 @@ TEST_PROMPTS = {
         "What does a Memorystore Redis standard-tier 8GB instance cost per hour "
         "in us-central1?"
     ),
+    # --- Azure Egress Pricing (v0.8.12) ---
+    "AZEGR1": (
+        "What does Azure charge for outbound internet data transfer from eastus? "
+        "Give me the per-GB rate and the monthly cost for 1TB."
+    ),
+    "AZEGR2": (
+        "I need to transfer 500GB of data from Azure East US to West Europe each month. "
+        "What will that cost?"
+    ),
+    "AZEGR3": (
+        "Compare AWS, GCP, and Azure internet egress costs for 1TB from US East regions. "
+        "Which cloud charges the least for outbound data?"
+    ),
 }
 
 

@@ -7,6 +7,30 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.8.12] — 2026-04-25
+
+### Added
+- **Azure egress pricing** (`inter_region_egress` domain) via the Azure Retail Prices API
+  (`serviceName eq 'Bandwidth'`). Covers internet egress and inter-region transfers.
+  First 5 GB/month free (Zone 1: Americas + Europe); rate fetched live from the API with
+  a $0.087/GB static fallback.
+- `get_egress_price(source_region, dest_region, data_gb)` on `AzureProvider` — returns
+  a `NormalizedPrice` with `monthly_estimate` in attributes when `data_gb` is provided.
+- `_price_egress` dispatch method; `INTER_REGION_EGRESS` added to `_AZURE_CAPABILITIES`.
+- `describe_catalog()` updated with `filter_hints`, `example_invocations`, and
+  `decision_matrix` entries for the new domain.
+- 6 new unit tests: API rate fetch, inter-region dest attribute, fallback rate, free-tier
+  threshold, supports() capability check, get_price() dispatch.
+- 3 new harness scenarios: `AZEGR1–3` (internet egress rate, inter-region cost, AWS/GCP/Azure
+  egress comparison).
+
+### Notes
+- Azure bandwidth is billed per zone, not per region pair. Zone 1 covers Americas and Europe.
+- The egress rate is cached for `OCC_CACHE_TTL_HOURS` (default 24h).
+- Harness: 163/163 (3 new scenarios added).
+
+---
+
 ## [0.8.11] — 2026-04-25
 
 ### Added
