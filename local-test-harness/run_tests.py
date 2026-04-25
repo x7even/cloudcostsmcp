@@ -841,6 +841,18 @@ TEST_PROMPTS = {
         "Compare AWS, GCP, and Azure internet egress costs for 1TB from US East regions. "
         "Which cloud charges the least for outbound data?"
     ),
+    # v0.8.14 — GCP inter-region egress
+    "GCPEGR1": (
+        "What is the GCP internet egress cost for transferring 500 GB/month from us-central1?"
+    ),
+    "GCPEGR2": (
+        "How much does it cost to transfer 1 TB/month between a GCP region in the US (us-central1) "
+        "and one in Europe (europe-west1)? Compare with internet egress from the same source."
+    ),
+    "GCPEGR3": (
+        "Compare internet egress costs for 1 TB/month from AWS (us-east-1), "
+        "GCP (us-central1), and Azure (eastus). Which is cheapest?"
+    ),
 }
 
 

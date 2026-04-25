@@ -21,6 +21,7 @@ Windows pricing (T31):
 from __future__ import annotations
 
 import logging
+import math
 from decimal import Decimal
 from typing import Any
 
@@ -36,6 +37,7 @@ from opencloudcosts.models import (
     ContainerPricingSpec,
     DatabasePricingSpec,
     EffectivePrice,
+    EgressPricingSpec,
     InstanceTypeInfo,
     NetworkPricingSpec,
     NormalizedPrice,
@@ -74,6 +76,33 @@ _VERTEX_SERVICE_ID = "C7E2-9256-1C43"       # Vertex AI
 _BIGQUERY_SERVICE_ID = "24E6-581D-38E5"     # BigQuery
 _CLOUD_ARMOR_SERVICE_ID = "E3D3-8838-A232"  # Cloud Armor (best-effort)
 _CLOUD_MONITORING_SERVICE_ID = "58CD-E7C3-72CA"  # Cloud Monitoring (best-effort)
+
+# Egress: region-prefix → continent for billing purposes
+_GCP_EGRESS_CONTINENT: dict[str, str] = {
+    "us-": "americas",
+    "northamerica-": "americas",
+    "southamerica-": "americas",
+    "nam-": "americas",
+    "europe-": "emea",
+    "me-": "emea",
+    "africa-": "emea",
+    "eu-": "emea",
+    "asia-": "apac",
+    "australia-": "apac",
+}
+
+# Internet egress fallback rates ($/GB, base tier) by source continent
+_GCP_INTERNET_EGRESS_RATE: dict[str, Decimal] = {
+    "americas": Decimal("0.08"),
+    "emea": Decimal("0.085"),
+    "apac": Decimal("0.12"),
+}
+
+# Intra-GCP inter-region rates ($/GB): same continent vs cross-continent
+_GCP_INTRA_EGRESS_RATE: dict[str, Decimal] = {
+    "same": Decimal("0.01"),
+    "cross": Decimal("0.08"),
+}
 
 # GCS storage class -> description substring in SKU catalog
 _GCS_STORAGE_CLASSES: dict[str, str] = {
@@ -128,6 +157,7 @@ _GCP_CAPABILITIES: dict[tuple[str, str | None], bool] = {
     (PricingDomain.NETWORK.value, "cloud_armor"): True,
     (PricingDomain.OBSERVABILITY.value, None): True,
     (PricingDomain.OBSERVABILITY.value, "cloud_monitoring"): True,
+    (PricingDomain.INTER_REGION_EGRESS.value, None): True,
 }
 
 
@@ -2366,6 +2396,8 @@ class GCPProvider(ProviderBase):
             return await self._price_network(spec)
         if isinstance(spec, ObservabilityPricingSpec):
             return await self._price_observability(spec)
+        if isinstance(spec, EgressPricingSpec):
+            return await self._price_egress(spec)
         raise NotSupportedError(
             provider=self.provider,
             domain=spec.domain,
@@ -2946,6 +2978,125 @@ class GCPProvider(ProviderBase):
             breakdown["fallback"] = True
         return prices, breakdown
 
+    @staticmethod
+    def _gcp_egress_continent(region: str) -> str:
+        r = region.lower()
+        for prefix, continent in _GCP_EGRESS_CONTINENT.items():
+            if r.startswith(prefix):
+                assert continent in {"americas", "emea", "apac"}
+                return continent
+        return "americas"
+
+    async def _fetch_internet_egress_rate(self, continent: str) -> Decimal:
+        cache_key = f"gcp:egress:internet:{continent}:rate"
+        cached = await self._cache.get_metadata(cache_key)
+        if cached is not None:
+            try:
+                return Decimal(cached["rate"])
+            except Exception:
+                pass
+
+        rate: Decimal | None = None
+        try:
+            skus = await self._fetch_skus(_COMPUTE_SERVICE_ID)
+            continent_label = continent.lower()
+            for sku in skus:
+                desc = sku.get("description", "").lower()
+                if "internet egress" not in desc:
+                    continue
+                if f"from {continent_label}" not in desc:
+                    continue
+                # Skip China/Australia/Oceania rows — those are separate destination SKUs
+                if any(x in desc for x in ("china", "australia", "oceania")):
+                    continue
+                p = self._sku_price(sku)
+                if p > 0:
+                    rate = p
+                    break
+        except Exception as exc:
+            logger.warning("GCP: internet egress rate fetch failed: %s", exc)
+
+        if rate is None:
+            rate = _GCP_INTERNET_EGRESS_RATE.get(continent, Decimal("0.08"))
+        await self._cache.set_metadata(
+            cache_key, {"rate": str(rate)},
+            ttl_hours=self._settings.cache_ttl_hours,
+        )
+        return rate
+
+    async def get_egress_price(
+        self,
+        source_region: str,
+        dest_region: str = "",
+        data_gb: float = 1.0,
+    ) -> list[NormalizedPrice]:
+        """GCP outbound data transfer pricing.
+
+        For internet egress (dest_region empty), returns the source-continent
+        base rate (first 1 TB/month). For intra-GCP inter-region traffic,
+        returns $0.01/GB (same continent) or $0.08/GB (cross-continent).
+        """
+        src_continent = self._gcp_egress_continent(source_region)
+
+        if not dest_region:
+            rate = await self._fetch_internet_egress_rate(src_continent)
+            egress_type = "internet"
+            desc = f"GCP internet egress from {source_region} ({src_continent.upper()})"
+            note = (
+                f"Base rate for {src_continent.upper()} internet egress (0–1 TB/month). "
+                "China and Australia destinations are billed at higher rates."
+            )
+            sku_suffix = f"internet:{src_continent}"
+        else:
+            dst_continent = self._gcp_egress_continent(dest_region)
+            same = src_continent == dst_continent
+            rate = _GCP_INTRA_EGRESS_RATE["same" if same else "cross"]
+            egress_type = "inter-region"
+            desc = f"GCP inter-region egress from {source_region} to {dest_region}"
+            note = (
+                f"GCP VPC inter-region egress: {src_continent.upper()} → {dst_continent.upper()}. "
+                + ("Same-continent rate ($0.01/GB)." if same else "Cross-continent rate ($0.08/GB).")
+            )
+            sku_suffix = f"intraregion:{src_continent}:{dst_continent}"
+
+        safe_gb = data_gb if math.isfinite(data_gb) else 0.0
+        data_dec = Decimal(str(max(0.0, safe_gb)))
+        monthly = data_dec * rate
+
+        attrs: dict[str, str] = {
+            "source_region": source_region,
+            "egress_type": egress_type,
+            "continent": src_continent,
+            "note": note,
+        }
+        if dest_region:
+            attrs["dest_region"] = dest_region
+        if data_gb > 0:
+            attrs["monthly_estimate"] = (
+                f"${float(monthly):.4f} for {data_gb:.1f} GB"
+            )
+
+        return [NormalizedPrice(
+            provider=CloudProvider.GCP,
+            service="inter_region_egress",
+            sku_id=f"gcp:egress:{source_region}:{sku_suffix}",
+            product_family="Networking",
+            description=desc,
+            region=source_region,
+            attributes=attrs,
+            pricing_term=PricingTerm.ON_DEMAND,
+            price_per_unit=rate,
+            unit=PriceUnit.PER_GB_MONTH,
+        )]
+
+    async def _price_egress(
+        self, spec: EgressPricingSpec
+    ) -> tuple[list[NormalizedPrice], dict]:
+        src = spec.source_region or spec.region or "us-central1"
+        prices = await self.get_egress_price(src, spec.dest_region, spec.data_gb)
+        breakdown: dict = dict(prices[0].attributes or {}) if prices else {}
+        return prices, breakdown
+
     async def _price_observability(
         self, spec: ObservabilityPricingSpec
     ) -> tuple[list[NormalizedPrice], dict]:
@@ -3024,6 +3175,7 @@ class GCPProvider(ProviderBase):
                 PricingDomain.COMPUTE, PricingDomain.STORAGE, PricingDomain.DATABASE,
                 PricingDomain.CONTAINER, PricingDomain.AI, PricingDomain.ANALYTICS,
                 PricingDomain.NETWORK, PricingDomain.OBSERVABILITY,
+                PricingDomain.INTER_REGION_EGRESS,
             ],
             services={
                 "compute": ["compute_engine"],
@@ -3034,6 +3186,7 @@ class GCPProvider(ProviderBase):
                 "analytics": ["bigquery"],
                 "network": ["cloud_lb", "cloud_cdn", "cloud_nat", "cloud_armor"],
                 "observability": ["cloud_monitoring"],
+                "inter_region_egress": [],
             },
             supported_terms={
                 "compute/compute_engine": ["on_demand", "spot", "cud_1yr", "cud_3yr"],
@@ -3050,6 +3203,7 @@ class GCPProvider(ProviderBase):
                 "network/cloud_nat": ["on_demand"],
                 "network/cloud_armor": ["on_demand"],
                 "observability/cloud_monitoring": ["on_demand"],
+                "inter_region_egress": ["on_demand"],
             },
             filter_hints={
                 "compute/compute_engine": {
@@ -3123,6 +3277,11 @@ class GCPProvider(ProviderBase):
                     "ingestion_mib": "MiB of custom/external metrics ingested per month (150 MiB free tier)",
                     "service": "cloud_monitoring",
                 },
+                "inter_region_egress": {
+                    "source_region": "GCP source region e.g. 'us-central1', 'europe-west1'",
+                    "dest_region": "GCP destination region (omit for internet egress)",
+                    "data_gb": "GB to transfer per month",
+                },
             },
             example_invocations={
                 "compute/compute_engine": {
@@ -3177,6 +3336,10 @@ class GCPProvider(ProviderBase):
                     "provider": "gcp", "domain": "observability", "service": "cloud_monitoring",
                     "ingestion_mib": 1000.0, "region": "us-central1",
                 },
+                "inter_region_egress": {
+                    "provider": "gcp", "domain": "inter_region_egress",
+                    "source_region": "us-central1", "data_gb": 1000.0,
+                },
             },
             decision_matrix={
                 "Cloud Storage": "storage/gcs",
@@ -3197,6 +3360,9 @@ class GCPProvider(ProviderBase):
                 "Cloud NAT": "network/cloud_nat",
                 "Cloud Armor": "network/cloud_armor",
                 "Cloud Monitoring": "observability/cloud_monitoring",
+                "GCP Egress": "inter_region_egress — set source_region and data_gb",
+                "GCP Data Transfer": "inter_region_egress — set source_region, dest_region (optional), data_gb",
+                "GCP Internet Egress": "inter_region_egress — set source_region, data_gb (no dest_region)",
             },
         )
 

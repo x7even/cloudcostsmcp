@@ -7,6 +7,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.8.14] — 2026-04-25
+
+### Added
+- **GCP inter-region egress** — `get_price` now handles `EgressPricingSpec` for GCP.
+  - Internet egress (no `dest_region`): source-continent base rate from Compute Engine
+    SKU catalog with fallback to documented list prices (Americas $0.08/GB, EMEA $0.085/GB,
+    APAC $0.12/GB).
+  - Intra-GCP inter-region (both regions set): $0.01/GB (same continent) or $0.08/GB
+    (cross-continent) based on source/destination region prefix mapping.
+  - `_gcp_egress_continent` static method maps any GCP region to `americas` / `emea` / `apac`.
+  - `_fetch_internet_egress_rate` live-fetches the SKU-catalog rate and caches it; skips
+    China/Australia destination rows to return the general worldwide base rate.
+- **Cross-cloud egress comparison** — `compare_prices` now works across AWS, GCP, and Azure
+  for the `inter_region_egress` domain (all three providers support it).
+- 5 new unit tests: Americas internet egress, same-continent intra, cross-continent,
+  APAC fallback, `get_price` dispatch.
+- 3 new harness scenarios: `GCPEGR1–3` (GCP internet egress, GCP cross-region, cross-cloud
+  egress comparison).
+
+### Notes
+- GCP internet egress China/Australia destinations are higher-priced separate SKUs; this
+  implementation returns the worldwide base rate. China/Australia support is deferred.
+- Harness: 169/169 (3 new scenarios).
+
+---
+
 ## [0.8.13] — 2026-04-25
 
 ### Added
