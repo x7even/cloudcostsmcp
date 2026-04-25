@@ -815,6 +815,19 @@ TEST_PROMPTS = {
         "What does a Memorystore Redis standard-tier 8GB instance cost per hour "
         "in us-central1?"
     ),
+    # --- GCP Network Pricing (v0.8.13) ---
+    "GCPNET1": (
+        "What does a GCP External HTTP(S) Load Balancer cost per month for 3 forwarding "
+        "rules processing 500GB of data in us-central1?"
+    ),
+    "GCPNET2": (
+        "What are the Cloud CDN egress and cache fill rates in us-central1? "
+        "Estimate the monthly cost for 10TB egress and 2TB cache fill."
+    ),
+    "GCPNET3": (
+        "What does a Cloud NAT gateway cost in us-central1 per month? "
+        "Include the data processing charge for 1TB."
+    ),
     # --- Azure Egress Pricing (v0.8.12) ---
     "AZEGR1": (
         "What does Azure charge for outbound internet data transfer from eastus? "

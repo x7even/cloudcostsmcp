@@ -749,3 +749,184 @@ async def test_effective_price_database_no_billing_account(gcp_provider: GCPProv
     )
     result = await gcp_provider._effective_price_database(spec)
     assert result == []
+
+
+# ---------------------------------------------------------------------------
+# v0.8.13 — GCP network contract pricing tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_effective_price_network_no_billing_account(gcp_provider: GCPProvider):
+    """_effective_price_network returns [] when billing account not configured."""
+    from opencloudcosts.models import NetworkPricingSpec, PricingDomain
+    spec = NetworkPricingSpec(
+        provider="gcp", domain=PricingDomain.NETWORK, service="cloud_lb",
+        region="us-central1",
+    )
+    result = await gcp_provider._effective_price_network(spec)
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_effective_price_network_lb_contract(tmp_path: Path):
+    """Cloud LB rule contract pricing returns a discounted EffectivePrice."""
+    settings = Settings(gcp_api_key="AIzaFAKE", gcp_billing_account_id="012345-ABCDEF")
+    cache = CacheManager(tmp_path / "test.db")
+    await cache.initialize()
+    provider = GCPProvider(settings, cache)
+
+    from opencloudcosts.models import (
+        NetworkPricingSpec, PricingDomain, NormalizedPrice, PriceUnit,
+    )
+    base_rule = NormalizedPrice(
+        provider="gcp", service="network", sku_id="gcp:cloud_lb:https:us-central1:rule",
+        product_family="Cloud Load Balancing",
+        description="Cloud LB (https) forwarding rule per hour",
+        region="us-central1", attributes={}, pricing_term=PricingTerm.ON_DEMAND,
+        price_per_unit=Decimal("0.008"), unit=PriceUnit.PER_HOUR,
+    )
+    base_data = NormalizedPrice(
+        provider="gcp", service="network", sku_id="gcp:cloud_lb:https:us-central1:data",
+        product_family="Cloud Load Balancing",
+        description="Cloud LB data processed per GB",
+        region="us-central1", attributes={}, pricing_term=PricingTerm.ON_DEMAND,
+        price_per_unit=Decimal("0.008"), unit=PriceUnit.PER_GB,
+    )
+    spec = NetworkPricingSpec(
+        provider="gcp", domain=PricingDomain.NETWORK, service="cloud_lb",
+        lb_type="https", region="us-central1",
+    )
+
+    fake_sku = {
+        "name": "services/6F81-5844-456A/skus/LB-HTTPS-RULE",
+        "description": "External HTTP(S) Load Balancing Rule in Americas",
+        "category": {"usageType": "OnDemand"},
+        "serviceRegions": ["us-central1"],
+    }
+    # 20% discount on rule rate
+    contract_body = _contract_resp("0", 8000000, "0", 6400000, "floating-discount")
+
+    with (
+        patch.object(provider, "_price_network", AsyncMock(return_value=([base_rule, base_data], {}))),
+        patch.object(provider, "_fetch_skus", AsyncMock(return_value=[fake_sku])),
+        patch("opencloudcosts.providers.gcp.GCPProvider._get_billing_http",
+              new_callable=AsyncMock, return_value=_make_billing_client(contract_body)),
+    ):
+        result = await provider._effective_price_network(spec)
+
+    assert len(result) == 1
+    ep = result[0]
+    assert "rule" in ep.base_price.description.lower()
+    assert abs(ep.discount_pct - 20.0) < 0.1
+    assert ep.source == "billing_account_pricing_api"
+
+
+@pytest.mark.asyncio
+async def test_effective_price_network_cdn_contract(tmp_path: Path):
+    """Cloud CDN egress contract pricing returns discounted EffectivePrice entries."""
+    settings = Settings(gcp_api_key="AIzaFAKE", gcp_billing_account_id="012345-ABCDEF")
+    cache = CacheManager(tmp_path / "test.db")
+    await cache.initialize()
+    provider = GCPProvider(settings, cache)
+
+    from opencloudcosts.models import (
+        NetworkPricingSpec, PricingDomain, NormalizedPrice, PriceUnit,
+    )
+    base_egress = NormalizedPrice(
+        provider="gcp", service="network", sku_id="gcp:cloud_cdn:us-central1:egress",
+        product_family="Cloud CDN", description="Cloud CDN cache egress per GB",
+        region="us-central1", attributes={}, pricing_term=PricingTerm.ON_DEMAND,
+        price_per_unit=Decimal("0.02"), unit=PriceUnit.PER_GB,
+    )
+    base_fill = NormalizedPrice(
+        provider="gcp", service="network", sku_id="gcp:cloud_cdn:us-central1:cache_fill",
+        product_family="Cloud CDN", description="Cloud CDN cache fill per GB",
+        region="us-central1", attributes={}, pricing_term=PricingTerm.ON_DEMAND,
+        price_per_unit=Decimal("0.01"), unit=PriceUnit.PER_GB,
+    )
+    spec = NetworkPricingSpec(
+        provider="gcp", domain=PricingDomain.NETWORK, service="cloud_cdn",
+        region="us-central1",
+    )
+
+    sku_egress = {
+        "name": "services/6F81-5844-456A/skus/CDN-EGRESS",
+        "description": "Network CDN Cache Egress Americas",
+        "category": {"usageType": "OnDemand"},
+        "serviceRegions": ["us-central1"],
+    }
+    sku_fill = {
+        "name": "services/6F81-5844-456A/skus/CDN-FILL",
+        "description": "Network CDN Cache Fill from Americas to us-central1",
+        "category": {"usageType": "OnDemand"},
+        "serviceRegions": ["us-central1"],
+    }
+    # 25% discount on both
+    contract_egress = _contract_resp("0", 20000000, "0", 15000000, "floating-discount")
+    contract_fill = _contract_resp("0", 10000000, "0", 7500000, "floating-discount")
+
+    call_count = 0
+    async def fake_fetch_contract(sku_name: str):
+        nonlocal call_count
+        call_count += 1
+        if "CDN-EGRESS" in sku_name:
+            return Decimal("0.015"), "floating-discount"
+        if "CDN-FILL" in sku_name:
+            return Decimal("0.0075"), "floating-discount"
+        return None
+
+    with (
+        patch.object(provider, "_price_network",
+                     AsyncMock(return_value=([base_egress, base_fill], {}))),
+        patch.object(provider, "_fetch_skus", AsyncMock(return_value=[sku_egress, sku_fill])),
+        patch.object(provider, "_fetch_contract_price", fake_fetch_contract),
+    ):
+        result = await provider._effective_price_network(spec)
+
+    assert len(result) == 2
+    assert all(ep.discount_pct > 0 for ep in result)
+    assert all(ep.source == "billing_account_pricing_api" for ep in result)
+
+
+@pytest.mark.asyncio
+async def test_effective_price_network_armor_contract(tmp_path: Path):
+    """Cloud Armor policy contract pricing returns a discounted EffectivePrice."""
+    settings = Settings(gcp_api_key="AIzaFAKE", gcp_billing_account_id="012345-ABCDEF")
+    cache = CacheManager(tmp_path / "test.db")
+    await cache.initialize()
+    provider = GCPProvider(settings, cache)
+
+    from opencloudcosts.models import (
+        NetworkPricingSpec, PricingDomain, NormalizedPrice, PriceUnit,
+    )
+    base_policy = NormalizedPrice(
+        provider="gcp", service="network", sku_id="gcp:cloud_armor:policy",
+        product_family="Cloud Armor", description="Cloud Armor security policy per month",
+        region="us-central1", attributes={}, pricing_term=PricingTerm.ON_DEMAND,
+        price_per_unit=Decimal("0.75"), unit=PriceUnit.PER_MONTH,
+    )
+    spec = NetworkPricingSpec(
+        provider="gcp", domain=PricingDomain.NETWORK, service="cloud_armor",
+        region="us-central1",
+    )
+
+    fake_sku = {
+        "name": "services/E3D3-8838-A232/skus/ARMOR-POLICY",
+        "description": "Cloud Armor Security Policy",
+        "category": {"usageType": "OnDemand"},
+        "serviceRegions": ["global"],
+    }
+    contract_body = _contract_resp("0", 750000000, "0", 562500000, "floating-discount")
+
+    with (
+        patch.object(provider, "_price_network",
+                     AsyncMock(return_value=([base_policy], {}))),
+        patch.object(provider, "_fetch_skus", AsyncMock(return_value=[fake_sku])),
+        patch("opencloudcosts.providers.gcp.GCPProvider._get_billing_http",
+              new_callable=AsyncMock, return_value=_make_billing_client(contract_body)),
+    ):
+        result = await provider._effective_price_network(spec)
+
+    assert len(result) == 1
+    ep = result[0]
+    assert abs(ep.discount_pct - 25.0) < 0.1
