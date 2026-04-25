@@ -326,4 +326,5 @@ With credentials configured: actual spend, contract/negotiated pricing, reservat
 - **v0.8.8** ✅ Azure breadth: SQL Database, Cosmos DB, AKS, Azure Functions, Azure OpenAI; 151/151 harness (28 new test scenarios)
 - **v0.8.9** ✅ GCP effective/contract pricing via Cloud Billing Pricing API v1beta (`OCC_GCP_BILLING_ACCOUNT_ID`); GCP now at parity with AWS effective pricing
 - **v0.8.10** ✅ `GcpAuthProvider` — multi-source OAuth (SA JSON B64, WIF, ADC, metadata server, raw token); `google-auth[requests]` optional `[gcp]` extra; event-loop-safe refresh; no gcloud required in containers
-- **Next**: GCP storage/database contract pricing (v0.8.11); Azure egress pricing (v0.8.12)
+- **v0.8.11** ✅ GCP storage and database contract pricing — GCS, Persistent Disk, Cloud SQL (all engines/sizes/HA), Memorystore; `effective_price` on `StoragePricingSpec` and `DatabasePricingSpec` when billing account configured
+- **Next**: Azure egress pricing (v0.8.12)

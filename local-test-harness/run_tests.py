@@ -792,6 +792,29 @@ TEST_PROMPTS = {
         "Compare AWS vs GCP inter-region data transfer costs for moving 1TB from US East "
         "to EU regions. Which cloud is cheaper for cross-region traffic?"
     ),
+    # --- GCP Storage / Database Contract Pricing (v0.8.11) ---
+    "GCPSTO1": (
+        "What is the on-demand price for GCS Standard storage in us-central1 per GB-month?"
+    ),
+    "GCPSTO2": (
+        "Compare GCS Nearline vs Coldline vs Archive storage prices in us-central1. "
+        "Which is cheapest for long-term archival?"
+    ),
+    "GCPSTO3": (
+        "What does GCP pd-ssd Persistent Disk cost per GB-month in us-central1?"
+    ),
+    "GCPDB1": (
+        "What is the hourly cost for a Cloud SQL db-n1-standard-4 MySQL instance "
+        "in us-central1 (zonal, no HA)?"
+    ),
+    "GCPDB2": (
+        "Compare Cloud SQL db-n1-standard-4 MySQL: zonal vs regional (HA) pricing "
+        "in us-central1. What is the monthly cost difference?"
+    ),
+    "GCPDB3": (
+        "What does a Memorystore Redis standard-tier 8GB instance cost per hour "
+        "in us-central1?"
+    ),
 }
 
 

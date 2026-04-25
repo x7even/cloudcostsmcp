@@ -514,3 +514,238 @@ def test_a2_instance_specs_present():
         assert GCP_INSTANCE_SPECS[itype] == (vcpus, mem), (
             f"{itype}: expected ({vcpus}, {mem}), got {GCP_INSTANCE_SPECS[itype]}"
         )
+
+
+# ---------------------------------------------------------------------------
+# v0.8.11 — GCP storage/database contract pricing tests
+# ---------------------------------------------------------------------------
+
+def _contract_resp(list_units: str, list_nanos: int,
+                   contract_units: str, contract_nanos: int,
+                   reason: str = "floating-discount") -> dict:
+    """Build a minimal v1beta price response with a discount."""
+    return {
+        "rate": {
+            "tiers": [{
+                "listPrice": {"units": list_units, "nanos": list_nanos},
+                "contractPrice": {"units": contract_units, "nanos": contract_nanos},
+            }],
+            "unitInfo": {"unit": "gibibyte month"},
+        },
+        "priceReason": {"type": reason},
+    }
+
+
+def _make_billing_client(resp_body: dict) -> AsyncMock:
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = resp_body
+    mock_resp.raise_for_status = MagicMock()
+    client = AsyncMock()
+    client.get = AsyncMock(return_value=mock_resp)
+    client.aclose = AsyncMock()
+    return client
+
+
+@pytest.mark.asyncio
+async def test_effective_price_storage_no_billing_account(gcp_provider: GCPProvider):
+    """_effective_price_storage returns [] when billing account not configured."""
+    from opencloudcosts.models import StoragePricingSpec, PricingDomain
+    spec = StoragePricingSpec(
+        provider="gcp", domain=PricingDomain.STORAGE,
+        storage_type="standard", region="us-central1",
+    )
+    result = await gcp_provider._effective_price_storage(spec)
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_effective_price_gcs_contract(tmp_path: Path):
+    """GCS storage contract pricing returns a discounted EffectivePrice."""
+    settings = Settings(gcp_api_key="AIzaFAKE", gcp_billing_account_id="012345-ABCDEF")
+    cache = CacheManager(tmp_path / "test.db")
+    await cache.initialize()
+    provider = GCPProvider(settings, cache)
+
+    from opencloudcosts.models import (
+        StoragePricingSpec, PricingDomain, NormalizedPrice, PriceUnit,
+    )
+    base = NormalizedPrice(
+        provider="gcp", service="storage", sku_id="gcp:gcs:standard:us-central1",
+        product_family="Cloud Storage", description="GCS standard storage in us-central1",
+        region="us-central1", attributes={}, pricing_term=PricingTerm.ON_DEMAND,
+        price_per_unit=Decimal("0.020"), unit=PriceUnit.PER_GB_MONTH,
+    )
+
+    spec = StoragePricingSpec(
+        provider="gcp", domain=PricingDomain.STORAGE,
+        storage_type="standard", region="us-central1",
+    )
+
+    contract_body = _contract_resp("0", 16000000, "0", 12000000, "floating-discount")
+
+    fake_sku = {
+        "name": "services/95FF-2EF5-5EA1/skus/GCS-STD-001",
+        "description": "Standard Storage US",
+        "category": {"usageType": "OnDemand"},
+        "serviceRegions": ["us-central1"],
+    }
+
+    with (
+        patch.object(provider, "_price_storage", AsyncMock(return_value=[base])),
+        patch.object(provider, "_fetch_skus", AsyncMock(return_value=[fake_sku])),
+        patch("opencloudcosts.providers.gcp.GCPProvider._get_billing_http",
+              new_callable=AsyncMock, return_value=_make_billing_client(contract_body)),
+    ):
+        result = await provider._effective_price_storage(spec)
+
+    assert len(result) == 1
+    ep = result[0]
+    assert "floating-discount" in ep.discount_type
+    assert ep.discount_pct > 0
+    assert ep.effective_price_per_unit < base.price_per_unit
+    assert ep.source == "billing_account_pricing_api"
+
+
+@pytest.mark.asyncio
+async def test_effective_price_gcs_no_discount(tmp_path: Path):
+    """When contract_price == list_price, _effective_price_storage returns []."""
+    settings = Settings(gcp_api_key="AIzaFAKE", gcp_billing_account_id="012345-ABCDEF")
+    cache = CacheManager(tmp_path / "test.db")
+    await cache.initialize()
+    provider = GCPProvider(settings, cache)
+
+    from opencloudcosts.models import (
+        StoragePricingSpec, PricingDomain, NormalizedPrice, PriceUnit,
+    )
+    base = NormalizedPrice(
+        provider="gcp", service="storage", sku_id="gcp:gcs:standard:us-central1",
+        product_family="Cloud Storage", description="GCS standard",
+        region="us-central1", attributes={}, pricing_term=PricingTerm.ON_DEMAND,
+        price_per_unit=Decimal("0.020"), unit=PriceUnit.PER_GB_MONTH,
+    )
+    spec = StoragePricingSpec(
+        provider="gcp", domain=PricingDomain.STORAGE,
+        storage_type="standard", region="us-central1",
+    )
+    # list == contract → no discount → _fetch_contract_price returns None
+    no_discount_body = _contract_resp("0", 20000000, "0", 20000000)
+
+    fake_sku = {
+        "name": "services/95FF-2EF5-5EA1/skus/GCS-STD-001",
+        "description": "Standard Storage US",
+        "category": {"usageType": "OnDemand"},
+    }
+    with (
+        patch.object(provider, "_price_storage", AsyncMock(return_value=[base])),
+        patch.object(provider, "_fetch_skus", AsyncMock(return_value=[fake_sku])),
+        patch("opencloudcosts.providers.gcp.GCPProvider._get_billing_http",
+              new_callable=AsyncMock, return_value=_make_billing_client(no_discount_body)),
+    ):
+        result = await provider._effective_price_storage(spec)
+
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_effective_price_cloud_sql_contract(tmp_path: Path):
+    """Cloud SQL contract pricing returns a discounted EffectivePrice."""
+    settings = Settings(gcp_api_key="AIzaFAKE", gcp_billing_account_id="012345-ABCDEF")
+    cache = CacheManager(tmp_path / "test.db")
+    await cache.initialize()
+    provider = GCPProvider(settings, cache)
+
+    from opencloudcosts.models import (
+        DatabasePricingSpec, PricingDomain, NormalizedPrice, PriceUnit,
+    )
+    base = NormalizedPrice(
+        provider="gcp", service="database", sku_id="gcp:cloud_sql:MySQL:db-n1-standard-4:us-central1:zonal",
+        product_family="Cloud SQL", description="Cloud SQL MySQL db-n1-standard-4 (Zonal)",
+        region="us-central1", attributes={}, pricing_term=PricingTerm.ON_DEMAND,
+        price_per_unit=Decimal("0.36"), unit=PriceUnit.PER_HOUR,
+    )
+    spec = DatabasePricingSpec(
+        provider="gcp", domain=PricingDomain.DATABASE, service="cloud_sql",
+        resource_type="db-n1-standard-4", region="us-central1",
+        engine="MySQL", deployment="zonal",
+    )
+    # Bundled Cloud SQL SKU description
+    fake_sku = {
+        "name": "services/9662-B51E-5089/skus/SQL-MYSQL-4CPU",
+        "description": "Cloud SQL for MySQL: Zonal - 4 vCPU + 15GB RAM in Americas",
+        "category": {"usageType": "OnDemand"},
+        "serviceRegions": ["us-central1"],
+    }
+    # 25% discount: 0.36 → 0.27
+    contract_body = _contract_resp("0", 360000000, "0", 270000000, "fixed-price")
+
+    with (
+        patch.object(provider, "_price_database", AsyncMock(return_value=[base])),
+        patch.object(provider, "_fetch_skus", AsyncMock(return_value=[fake_sku])),
+        patch("opencloudcosts.providers.gcp.GCPProvider._get_billing_http",
+              new_callable=AsyncMock, return_value=_make_billing_client(contract_body)),
+    ):
+        result = await provider._effective_price_database(spec)
+
+    assert len(result) == 1
+    ep = result[0]
+    assert "fixed-price" in ep.discount_type
+    assert abs(ep.discount_pct - 25.0) < 0.1
+    assert ep.source == "billing_account_pricing_api"
+
+
+@pytest.mark.asyncio
+async def test_effective_price_memorystore_contract(tmp_path: Path):
+    """Memorystore contract pricing returns a discounted EffectivePrice."""
+    settings = Settings(gcp_api_key="AIzaFAKE", gcp_billing_account_id="012345-ABCDEF")
+    cache = CacheManager(tmp_path / "test.db")
+    await cache.initialize()
+    provider = GCPProvider(settings, cache)
+
+    from opencloudcosts.models import (
+        DatabasePricingSpec, PricingDomain, NormalizedPrice, PriceUnit,
+    )
+    # 8GB standard → M4 tier → hourly = 8 * 0.049/h
+    hourly = Decimal("0.049") * Decimal("8")
+    base = NormalizedPrice(
+        provider="gcp", service="database", sku_id="gcp:memorystore:standard:8:us-central1",
+        product_family="Memorystore for Redis", description="Memorystore Redis Standard 8GB",
+        region="us-central1", attributes={}, pricing_term=PricingTerm.ON_DEMAND,
+        price_per_unit=hourly, unit=PriceUnit.PER_HOUR,
+    )
+    spec = DatabasePricingSpec(
+        provider="gcp", domain=PricingDomain.DATABASE, service="memorystore",
+        capacity_gb=8.0, region="us-central1", deployment="standard",
+    )
+    # 8GB → M3 tier (4 ≤ 8 < 12)
+    fake_sku = {
+        "name": "services/5AF5-2C11-D467/skus/REDIS-STD-M3",
+        "description": "Redis Capacity Standard M3 in Americas",
+        "category": {"usageType": "OnDemand"},
+        "serviceRegions": ["us-central1"],
+    }
+    contract_body = _contract_resp("0", 49000000, "0", 39200000, "floating-discount")
+
+    with (
+        patch.object(provider, "_price_database", AsyncMock(return_value=[base])),
+        patch.object(provider, "_fetch_skus", AsyncMock(return_value=[fake_sku])),
+        patch("opencloudcosts.providers.gcp.GCPProvider._get_billing_http",
+              new_callable=AsyncMock, return_value=_make_billing_client(contract_body)),
+    ):
+        result = await provider._effective_price_database(spec)
+
+    assert len(result) == 1
+    ep = result[0]
+    assert ep.discount_pct > 0
+    assert ep.effective_price_per_unit < base.price_per_unit
+
+
+@pytest.mark.asyncio
+async def test_effective_price_database_no_billing_account(gcp_provider: GCPProvider):
+    """_effective_price_database returns [] when billing account not configured."""
+    from opencloudcosts.models import DatabasePricingSpec, PricingDomain
+    spec = DatabasePricingSpec(
+        provider="gcp", domain=PricingDomain.DATABASE, service="cloud_sql",
+        resource_type="db-n1-standard-4", region="us-central1",
+    )
+    result = await gcp_provider._effective_price_database(spec)
+    assert result == []

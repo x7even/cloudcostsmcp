@@ -7,6 +7,33 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.8.11] — 2026-04-25
+
+### Added
+- **GCP storage contract pricing** — `get_price` for `StoragePricingSpec` now enriches
+  responses with an `effective_price` block when `OCC_GCP_BILLING_ACCOUNT_ID` is set.
+  Covers GCS storage classes (Standard, Nearline, Coldline, Archive) and Persistent Disk
+  types (pd-ssd, pd-standard, pd-balanced, pd-extreme).
+- **GCP database contract pricing** — `get_price` for `DatabasePricingSpec` also supports
+  effective pricing. Covers Cloud SQL (MySQL, PostgreSQL, SQL Server — all instance sizes,
+  zonal and regional HA) and Memorystore for Redis (Basic/Standard, M2–M5 tiers).
+- New internal methods: `_effective_price_storage`, `_effective_price_database`,
+  `_make_effective_price` — consistent with the compute path introduced in v0.8.9.
+- 6 new harness scenarios (`GCPSTO1–3`, `GCPDB1–3`) covering GCS, PD, Cloud SQL, and
+  Memorystore public pricing paths (effective pricing is opt-in, harness uses public).
+- 6 new unit tests covering the new methods: no-billing-account guard, GCS contract
+  discount, no-discount (list == contract), Cloud SQL contract, Memorystore contract,
+  and database no-billing-account guard.
+
+### Notes
+- `get_effective_price("storage", ...)` / `get_effective_price("database", ...)` routes
+  through `_effective_price_storage` / `_effective_price_database` respectively.
+- Contract pricing is best-effort: SKU lookup miss or API 401/403 falls back to public
+  prices gracefully (no raise, no error surfaced to the LLM).
+- Harness: 157/157 (6 new scenarios, all public-path — effective pricing opt-in).
+
+---
+
 ## [0.8.10] — 2026-04-25
 
 ### Added
