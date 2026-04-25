@@ -14,7 +14,9 @@ If not installed, only the raw-token path works.
 """
 from __future__ import annotations
 
+import asyncio
 import base64
+import binascii
 import json
 import logging
 from datetime import datetime, timezone
@@ -25,6 +27,7 @@ from opencloudcosts.providers.base import NotConfiguredError
 logger = logging.getLogger(__name__)
 
 _BILLING_READONLY_SCOPE = "https://www.googleapis.com/auth/cloud-billing.readonly"
+_MAX_JSON_BYTES = 65_536  # 64 KiB — guard against absurdly large env var values
 
 _RAW_TOKEN_WARNING = (
     "OCC_GCP_ACCESS_TOKEN is set. Raw Bearer tokens expire after ~1 hour and are "
@@ -45,6 +48,13 @@ class GcpAuthProvider:
         self._settings = settings
         self._credentials: object | None = None  # google-auth Credentials object
         self._warned_raw_token = False
+        self._refresh_lock: asyncio.Lock | None = None
+
+    def _get_lock(self) -> asyncio.Lock:
+        # Lazily create the lock inside the running event loop.
+        if self._refresh_lock is None:
+            self._refresh_lock = asyncio.Lock()
+        return self._refresh_lock
 
     # ------------------------------------------------------------------
     # Public interface
@@ -54,18 +64,6 @@ class GcpAuthProvider:
         """Return {'Authorization': 'Bearer <token>'} ready to attach to a request."""
         token = await self._resolve_token()
         return {"Authorization": f"Bearer {token}"}
-
-    def is_configured(self) -> bool:
-        """True when any credential source is present."""
-        s = self._settings
-        return bool(
-            s.gcp_access_token
-            or s.gcp_service_account_json_b64
-            or s.gcp_service_account_json
-            or s.gcp_external_account_json_b64
-            or s.gcp_external_account_json
-            or True  # ADC / metadata server are always attempted as final fallback
-        )
 
     # ------------------------------------------------------------------
     # Internal resolution
@@ -98,22 +96,24 @@ class GcpAuthProvider:
 
     async def _get_or_refresh_credentials(self) -> object:
         """Return a valid (refreshed-if-needed) google-auth Credentials object."""
-        import google.auth.transport.requests
-
         if self._credentials is None:
             self._credentials = self._build_credentials()
 
         creds = self._credentials
-        if not getattr(creds, "valid", True):  # type: ignore[attr-defined]
-            request = google.auth.transport.requests.Request()
-            creds.refresh(request)  # type: ignore[union-attr]
+        if not getattr(creds, "valid", False):
+            async with self._get_lock():
+                # Re-check under the lock — another coroutine may have refreshed already.
+                if not getattr(creds, "valid", False):
+                    import google.auth.transport.requests
+                    request = google.auth.transport.requests.Request()
+                    # creds.refresh() is a blocking network call; run off the event loop.
+                    await asyncio.to_thread(creds.refresh, request)  # type: ignore[union-attr]
 
         return creds
 
     def _build_credentials(self) -> object:
-        """Construct a google-auth Credentials from the first matching source."""
+        """Construct google-auth Credentials from the first matching source."""
         import google.auth
-        import google.oauth2.credentials
         import google.oauth2.service_account
 
         s = self._settings
@@ -156,7 +156,7 @@ class GcpAuthProvider:
                 "  4. GOOGLE_APPLICATION_CREDENTIALS  — path to a key or ADC config file\n"
                 "  5. GCP metadata server             — Cloud Run, GKE, GCE attached SA\n"
                 "  6. OCC_GCP_ACCESS_TOKEN            — raw token (debug only, ~1 h)\n\n"
-                f"Underlying error: {exc}"
+                "Run 'gcloud auth application-default login' or set one of the env vars above."
             ) from exc
 
     @staticmethod
@@ -171,8 +171,10 @@ class GcpAuthProvider:
                     "Provide a fresh token or switch to a service-account credential."
                 )
         except ValueError:
+            # Unparseable timestamp: log and continue rather than hard-failing.
             logger.warning(
-                "OCC_GCP_ACCESS_TOKEN_EXPIRES_AT value %r is not a valid ISO-8601 datetime — ignoring.",
+                "OCC_GCP_ACCESS_TOKEN_EXPIRES_AT %r is not a valid ISO-8601 datetime "
+                "— expiry check skipped. Verify the value format.",
                 expires_at,
             )
 
@@ -182,35 +184,42 @@ class GcpAuthProvider:
 # ------------------------------------------------------------------
 
 def _decode_json_b64(value: str, var_name: str) -> dict:
-    try:
-        decoded = base64.b64decode(value.strip())
-        return json.loads(decoded)
-    except Exception as exc:
+    stripped = value.strip()
+    if len(stripped) > _MAX_JSON_BYTES:
         raise NotConfiguredError(
-            f"{var_name} is not valid base64-encoded JSON: {exc}"
+            f"{var_name} exceeds maximum allowed size ({_MAX_JSON_BYTES} bytes). "
+            "Verify the value is a base64-encoded service-account key."
+        )
+    try:
+        decoded = base64.b64decode(stripped)
+        return json.loads(decoded)
+    except (ValueError, binascii.Error, json.JSONDecodeError) as exc:
+        raise NotConfiguredError(
+            f"{var_name} is not valid base64-encoded JSON. Check the encoding."
         ) from exc
 
 
 def _parse_json(value: str, var_name: str) -> dict:
+    if len(value) > _MAX_JSON_BYTES:
+        raise NotConfiguredError(
+            f"{var_name} exceeds maximum allowed size ({_MAX_JSON_BYTES} bytes)."
+        )
     try:
         return json.loads(value)
     except json.JSONDecodeError as exc:
         raise NotConfiguredError(
-            f"{var_name} is not valid JSON: {exc}"
+            f"{var_name} is not valid JSON. Check the value."
         ) from exc
 
 
 def _external_account_creds(info: dict) -> object:
-    try:
-        import google.auth.external_account
-        return google.auth.external_account.Credentials.from_info(  # type: ignore[attr-defined]
-            info, scopes=[_BILLING_READONLY_SCOPE]
-        )
-    except (AttributeError, ImportError):
-        # Older google-auth versions use a different import path
-        from google.oauth2 import credentials as _creds  # noqa: F401
-        import google.auth
-        creds, _ = google.auth.load_credentials_from_dict(
-            info, scopes=[_BILLING_READONLY_SCOPE]
-        )
-        return creds
+    """Build credentials for Workload Identity Federation external account configs.
+
+    Uses google.auth.load_credentials_from_dict which dispatches to the correct
+    concrete subclass based on the 'type' field in the config JSON.
+    """
+    import google.auth
+    creds, _ = google.auth.load_credentials_from_dict(
+        info, scopes=[_BILLING_READONLY_SCOPE]
+    )
+    return creds
