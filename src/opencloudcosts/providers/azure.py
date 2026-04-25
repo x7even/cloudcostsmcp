@@ -423,13 +423,10 @@ class AzureProvider(ProviderBase):
         engine_lower = engine.lower()
         if "mysql" in engine_lower:
             service_name = "Azure Database for MySQL"
-            product_fragment = "MySQL"
         elif "postgres" in engine_lower or "pg" in engine_lower:
             service_name = "Azure Database for PostgreSQL"
-            product_fragment = "PostgreSQL"
         else:
             service_name = "SQL Database"
-            product_fragment = "SQL"
 
         cache_extras = {"resource_type": resource_type, "engine": engine, "deployment": deployment, "term": term.value}
         cached_meta = await self._cache.get_prices_with_meta("azure", "sql", region, cache_extras)
@@ -470,7 +467,6 @@ class AzureProvider(ProviderBase):
         prices: list[NormalizedPrice] = []
         for item in items:
             sku_name = item.get("skuName", "")
-            product_name = item.get("productName", "")
 
             # Skip items not matching requested tier
             if tier_prefix and not sku_name.startswith(tier_prefix):
@@ -533,15 +529,6 @@ class AzureProvider(ProviderBase):
             "serviceName": "Azure Cosmos DB",
         }
         items = await asyncio.to_thread(self._fetch_prices, filters, 50)
-
-        target_meter: str
-        if deployment == "serverless":
-            target_meter = "serverless"
-        elif deployment == "autoscale":
-            target_meter = "autoscale"
-        else:
-            # provisioned: single-region write
-            target_meter = "100 ru/s" if not multi_region else "write"
 
         prices: list[NormalizedPrice] = []
         for item in items:

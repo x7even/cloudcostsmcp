@@ -19,7 +19,7 @@ import base64
 import binascii
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from opencloudcosts.config import Settings
 from opencloudcosts.providers.base import NotConfiguredError
@@ -165,7 +165,7 @@ class GcpAuthProvider:
             return
         try:
             expiry = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
-            if datetime.now(timezone.utc) >= expiry:
+            if datetime.now(UTC) >= expiry:
                 raise NotConfiguredError(
                     f"OCC_GCP_ACCESS_TOKEN expired at {expires_at}. "
                     "Provide a fresh token or switch to a service-account credential."
