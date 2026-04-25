@@ -7,6 +7,30 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.8.13] — 2026-04-25
+
+### Added
+- **GCP network contract pricing** — `get_price` for `NetworkPricingSpec` now enriches
+  responses with `effective_price` when `OCC_GCP_BILLING_ACCOUNT_ID` is set.
+  Covers all four GCP network services:
+  - **Cloud LB** (HTTPS, TCP, SSL, Network, Internal): contract rate on the forwarding-rule component
+  - **Cloud CDN**: contract rates on both cache-egress and cache-fill components (up to 2 `EffectivePrice` entries)
+  - **Cloud NAT**: contract rates on gateway-uptime and data-processing components
+  - **Cloud Armor**: contract rates on security-policy and request-evaluation components
+- New method: `_effective_price_network(spec: NetworkPricingSpec)` following the same
+  `_find_sku_name` + `_fetch_contract_price` + `_make_effective_price` pattern as v0.8.11.
+- 4 new unit tests: no-billing-account guard, LB rule discount, CDN two-component discount,
+  Cloud Armor policy discount.
+- 3 new harness scenarios: `GCPNET1–3` (LB, CDN, NAT public pricing paths).
+
+### Notes
+- Cloud LB contract pricing covers the rule component only; the data-processed rate uses
+  the public list price (it is volume-tiered and less likely to be contracted separately).
+- CDN and NAT return up to 2 `EffectivePrice` entries (one per pricing component).
+- Harness: 166/166 (3 new scenarios, all public-path — effective pricing is opt-in).
+
+---
+
 ## [0.8.12] — 2026-04-25
 
 ### Added

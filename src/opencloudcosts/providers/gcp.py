@@ -2176,6 +2176,103 @@ class GCPProvider(ProviderBase):
             logger.warning("GCP: effective database pricing failed: %s", exc)
             return []
 
+    async def _effective_price_network(
+        self, spec: NetworkPricingSpec
+    ) -> list[EffectivePrice]:
+        """Contract pricing for Cloud LB, CDN, NAT, and Cloud Armor.
+
+        Returns contract-priced EffectivePrice entries for each component of the
+        network service where a discounted SKU is found. Falls back gracefully
+        (returns []) on any error or missing SKU.
+        """
+        if not self._settings.gcp_billing_account_id:
+            return []
+        svc = (spec.service or "cloud_lb").lower()
+        try:
+            public_prices, _ = await self._price_network(spec)
+            if not public_prices:
+                return []
+
+            results: list[EffectivePrice] = []
+
+            if svc == "cloud_armor":
+                skus = await self._fetch_skus(_CLOUD_ARMOR_SERVICE_ID)
+                for base in public_prices:
+                    if "policy" in base.description.lower():
+                        sku_name = self._find_sku_name(skus, "Cloud Armor Security Policy", "OnDemand")
+                    elif "request" in base.description.lower():
+                        sku_name = self._find_sku_name(skus, "Request", "OnDemand")
+                    else:
+                        continue
+                    if not sku_name:
+                        continue
+                    cr = await self._fetch_contract_price(sku_name)
+                    if cr:
+                        contract, reason = cr
+                        results.append(self._make_effective_price(base, contract, reason))
+
+            elif svc == "cloud_cdn":
+                skus = await self._fetch_skus(_COMPUTE_SERVICE_ID)
+                for base in public_prices:
+                    desc_low = base.description.lower()
+                    if "egress" in desc_low:
+                        sku_name = self._find_sku_name(skus, "CDN Cache Egress", "OnDemand")
+                    elif "fill" in desc_low:
+                        sku_name = self._find_sku_name(skus, "CDN Cache Fill", "OnDemand")
+                    else:
+                        continue
+                    if not sku_name:
+                        continue
+                    cr = await self._fetch_contract_price(sku_name)
+                    if cr:
+                        contract, reason = cr
+                        results.append(self._make_effective_price(base, contract, reason))
+
+            elif svc == "cloud_nat":
+                skus = await self._fetch_skus(_COMPUTE_SERVICE_ID)
+                for base in public_prices:
+                    desc_low = base.description.lower()
+                    if "gateway" in desc_low:
+                        sku_name = self._find_sku_name(skus, "Cloud NAT Gateway", "OnDemand")
+                    elif "data" in desc_low:
+                        sku_name = self._find_sku_name(skus, "Cloud NAT Data", "OnDemand")
+                    else:
+                        continue
+                    if not sku_name:
+                        continue
+                    cr = await self._fetch_contract_price(sku_name)
+                    if cr:
+                        contract, reason = cr
+                        results.append(self._make_effective_price(base, contract, reason))
+
+            else:
+                # cloud_lb — rule component only (data processed rate varies by volume)
+                lb_type = (spec.lb_type or "https").lower()
+                if lb_type in ("https", "http"):
+                    desc_substring = "External HTTP(S) Load Balancing Rule"
+                elif lb_type == "tcp":
+                    desc_substring = "TCP Proxy Load Balancing Rule"
+                elif lb_type == "ssl":
+                    desc_substring = "SSL Proxy Load Balancing Rule"
+                else:
+                    desc_substring = "Network Load Balancing Forwarding Rule"
+                skus = await self._fetch_skus(_COMPUTE_SERVICE_ID)
+                rule_sku = self._find_sku_name(skus, desc_substring, "OnDemand")
+                if rule_sku:
+                    cr = await self._fetch_contract_price(rule_sku)
+                    if cr:
+                        contract, reason = cr
+                        base = next(
+                            (p for p in public_prices if "rule" in p.description.lower()), None
+                        )
+                        if base:
+                            results.append(self._make_effective_price(base, contract, reason))
+
+            return results
+        except Exception as exc:
+            logger.warning("GCP: effective network pricing failed: %s", exc)
+            return []
+
     # ------------------------------------------------------------------
     # v0.8.0 capability surface — supports / get_price / describe_catalog
     # ------------------------------------------------------------------
@@ -2235,6 +2332,10 @@ class GCPProvider(ProviderBase):
                     effective_price = commitments[0]
             elif isinstance(spec, DatabasePricingSpec):
                 commitments = await self._effective_price_database(spec)
+                if commitments:
+                    effective_price = commitments[0]
+            elif isinstance(spec, NetworkPricingSpec):
+                commitments = await self._effective_price_network(spec)
                 if commitments:
                     effective_price = commitments[0]
 
