@@ -21,6 +21,7 @@ Windows pricing (T31):
 from __future__ import annotations
 
 import logging
+import math
 from decimal import Decimal
 from typing import Any
 
@@ -2982,6 +2983,7 @@ class GCPProvider(ProviderBase):
         r = region.lower()
         for prefix, continent in _GCP_EGRESS_CONTINENT.items():
             if r.startswith(prefix):
+                assert continent in {"americas", "emea", "apac"}
                 return continent
         return "americas"
 
@@ -3057,7 +3059,8 @@ class GCPProvider(ProviderBase):
             )
             sku_suffix = f"intraregion:{src_continent}:{dst_continent}"
 
-        data_dec = Decimal(str(max(0.0, data_gb)))
+        safe_gb = data_gb if math.isfinite(data_gb) else 0.0
+        data_dec = Decimal(str(max(0.0, safe_gb)))
         monthly = data_dec * rate
 
         attrs: dict[str, str] = {
