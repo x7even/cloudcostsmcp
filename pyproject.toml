@@ -35,6 +35,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+gcp = [
+    "google-auth[requests]>=2.38",
+]
 dev = [
     "pytest>=9.0",
     "pytest-asyncio>=0.23",

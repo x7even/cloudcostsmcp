@@ -34,8 +34,21 @@ class Settings(BaseSettings):
     gcp_project_id: str | None = None
     gcp_billing_dataset: str | None = None
     gcp_api_key: str | None = None
-    # GCP effective pricing — requires ADC + billing.billingAccountPrice.get IAM
+
+    # GCP effective / contract pricing
+    # Billing account ID is always required for the v1beta price endpoint.
     gcp_billing_account_id: str | None = None
+    # Auth credential sources (resolved in priority order — see GcpAuthProvider):
+    # 1. Raw Bearer token — debug/escape hatch only; expires ~1 h, no auto-refresh.
+    gcp_access_token: str | None = None
+    gcp_access_token_expires_at: str | None = None   # ISO-8601, e.g. 2026-04-25T07:00:00Z
+    # 2. Service account key JSON — base64-encoded (B64) or raw string.
+    gcp_service_account_json_b64: str | None = None  # preferred for Docker/K8s secrets
+    gcp_service_account_json: str | None = None
+    # 3. Workload Identity Federation external account config.
+    gcp_external_account_json_b64: str | None = None
+    gcp_external_account_json: str | None = None
+    # 4. GOOGLE_APPLICATION_CREDENTIALS / ADC / GCP metadata server — handled by google-auth.
 
     # HTTP transport (used with --transport http)
     http_port: int = Field(default=8080, description="HTTP server port (used with --transport http)")

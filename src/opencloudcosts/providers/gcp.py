@@ -173,39 +173,36 @@ class GCPProvider(ProviderBase):
             )
         self._api_key = api_key
         self._http: httpx.AsyncClient | None = None
+        from opencloudcosts.providers.gcp_auth import GcpAuthProvider
+        self._auth = GcpAuthProvider(settings)
 
     async def _get_http(self) -> httpx.AsyncClient:
-        if self._http is None or self._http.is_closed:
-            headers: dict[str, str] = {}
-            if not self._api_key:
-                # Try ADC via google-auth (optional dep)
-                try:
-                    import google.auth
-                    import google.auth.transport.requests
-                    creds, _ = google.auth.default(
-                        scopes=["https://www.googleapis.com/auth/cloud-billing.readonly"]
-                    )
-                    request = google.auth.transport.requests.Request()
-                    creds.refresh(request)
-                    headers["Authorization"] = f"Bearer {creds.token}"
-                except ImportError:
-                    raise NotConfiguredError(
-                        "IMPORTANT: GCP pricing is unavailable — do NOT estimate or approximate "
-                        "any GCP prices. State that GCP pricing is unavailable and explain why.\n\n"
-                        "GCP pricing requires a free API key (unlike AWS, GCP has no "
-                        "unauthenticated public pricing endpoint).\n\n"
-                        "Quickest setup (2 min, no credit card needed):\n"
-                        "  1. Go to https://console.cloud.google.com/apis/credentials\n"
-                        "  2. Create Project (free) if you don't have one\n"
-                        "  3. Click 'Create Credentials' → 'API key'\n"
-                        "  4. Set OCC_GCP_API_KEY=<your-key> in your environment or .env\n\n"
-                        "Alternative: install google-auth and run 'gcloud auth application-default login'"
-                    )
-            self._http = httpx.AsyncClient(
-                base_url=_CATALOG_BASE,
-                timeout=30.0,
-                headers=headers,
+        if self._api_key:
+            # API-key auth uses ?key= params, not headers — client is stable indefinitely.
+            if self._http is None or self._http.is_closed:
+                self._http = httpx.AsyncClient(base_url=_CATALOG_BASE, timeout=30.0)
+            return self._http
+
+        # Bearer auth: refresh headers each call so the token never goes stale.
+        try:
+            headers = await self._auth.get_headers()
+        except NotConfiguredError:
+            raise NotConfiguredError(
+                "IMPORTANT: GCP pricing is unavailable — do NOT estimate or approximate "
+                "any GCP prices. State that GCP pricing is unavailable and explain why.\n\n"
+                "GCP pricing requires a free API key (unlike AWS, GCP has no "
+                "unauthenticated public pricing endpoint).\n\n"
+                "Quickest setup (2 min, no credit card needed):\n"
+                "  1. Go to https://console.cloud.google.com/apis/credentials\n"
+                "  2. Create Project (free) if you don't have one\n"
+                "  3. Click 'Create Credentials' → 'API key'\n"
+                "  4. Set OCC_GCP_API_KEY=<your-key> in your environment or .env\n\n"
+                "Alternative: pip install opencloudcosts[gcp] and set "
+                "OCC_GCP_SERVICE_ACCOUNT_JSON_B64 or GOOGLE_APPLICATION_CREDENTIALS"
             )
+        if self._http is not None and not self._http.is_closed:
+            await self._http.aclose()
+        self._http = httpx.AsyncClient(base_url=_CATALOG_BASE, timeout=30.0, headers=headers)
         return self._http
 
     def _auth_params(self) -> dict[str, str]:
@@ -351,37 +348,13 @@ class GCPProvider(ProviderBase):
     # ------------------------------------------------------------------
 
     async def _get_billing_http(self) -> httpx.AsyncClient:
-        """Return an httpx client authenticated for the v1beta billing account API.
-
-        API keys are NOT accepted by billing-account-scoped endpoints — ADC Bearer
-        token is required. Raises NotConfiguredError when only an API key is configured.
-        """
-        if self._api_key and not self._settings.gcp_billing_account_id:
-            raise NotConfiguredError(
-                "GCP contract pricing requires OAuth credentials (ADC), not just an API key.\n"
-                "Run: gcloud auth application-default login\n"
-                "Then set: OCC_GCP_BILLING_ACCOUNT_ID=<your-billing-account-id>"
-            )
-        # Build a dedicated client with Bearer auth only (no ?key= param).
-        try:
-            import google.auth
-            import google.auth.transport.requests
-            creds, _ = google.auth.default(
-                scopes=["https://www.googleapis.com/auth/cloud-billing.readonly"]
-            )
-            request = google.auth.transport.requests.Request()
-            creds.refresh(request)
-            return httpx.AsyncClient(
-                base_url=_BILLING_V1BETA_BASE,
-                timeout=30.0,
-                headers={"Authorization": f"Bearer {creds.token}"},
-            )
-        except ImportError:
-            raise NotConfiguredError(
-                "GCP contract pricing requires google-auth.\n"
-                "Install it: pip install google-auth\n"
-                "Then: gcloud auth application-default login"
-            )
+        """Return a short-lived httpx client authenticated for the v1beta billing API."""
+        headers = await self._auth.get_headers()
+        return httpx.AsyncClient(
+            base_url=_BILLING_V1BETA_BASE,
+            timeout=30.0,
+            headers=headers,
+        )
 
     @staticmethod
     def _find_sku_name(
@@ -426,16 +399,29 @@ class GCPProvider(ProviderBase):
                     resp.raise_for_status()
             data = resp.json()
         except httpx.HTTPStatusError as exc:
-            if exc.response.status_code == 403:
+            status = exc.response.status_code
+            if status == 401:
+                # Auth error — do NOT cache; the caller may rotate credentials.
+                logger.error(
+                    "GCP: 401 fetching contract price for SKU %s — access token expired or invalid. "
+                    "Use OCC_GCP_SERVICE_ACCOUNT_JSON_B64, GOOGLE_APPLICATION_CREDENTIALS, "
+                    "or a GCP metadata-server credential for auto-refresh.", sku_id
+                )
+                return None
+            elif status == 403:
+                # IAM misconfiguration — do NOT cache; the admin may fix permissions.
                 logger.warning(
                     "GCP: 403 fetching contract price for SKU %s — "
-                    "check billing.billingAccountPrice.get IAM permission", sku_id
+                    "check billing.billingAccountPrice.get IAM permission.", sku_id
                 )
+                return None
             else:
-                logger.warning("GCP: error fetching contract price for SKU %s: %s", sku_id, exc)
-            await self._cache.set_metadata(cache_key, {"none": True},
-                                           ttl_hours=self._settings.effective_price_ttl_hours)
-            return None
+                # Transient / unexpected error — cache miss briefly to avoid hammering.
+                logger.warning("GCP: HTTP %s fetching contract price for SKU %s.",
+                               status, sku_id)
+                await self._cache.set_metadata(cache_key, {"none": True},
+                                               ttl_hours=self._settings.effective_price_ttl_hours)
+                return None
         finally:
             await billing_http.aclose()
 
@@ -462,7 +448,9 @@ class GCPProvider(ProviderBase):
                                            ttl_hours=self._settings.effective_price_ttl_hours)
             return None
 
-        reason = data.get("priceReason", {}).get("type", "contract")
+        # Sanitise reason: restrict to a safe identifier string before caching/returning.
+        raw_reason = data.get("priceReason", {}).get("type", "contract")
+        reason = raw_reason[:64] if isinstance(raw_reason, str) else "contract"
         await self._cache.set_metadata(
             cache_key, {"price": str(contract_dec), "reason": reason},
             ttl_hours=self._settings.effective_price_ttl_hours,
