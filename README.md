@@ -7,7 +7,7 @@ An open source MCP server that gives AI assistants accurate cloud pricing data f
 [![Tests](https://github.com/x7even/cloudcostmcp/actions/workflows/tests.yml/badge.svg)](https://github.com/x7even/cloudcostmcp/actions/workflows/tests.yml)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 
-Supports both **public list pricing** (no credentials needed for AWS and Azure; GCP requires a free API key) and **effective/bespoke pricing** (post-discount: Reserved Instances, Savings Plans, CUDs, EDPs).
+Supports both **public list pricing** (no credentials needed for AWS and Azure; GCP requires a free API key) and **effective (custom Private Pricing Agreement) rates** (post-discount: Reserved Instances, Savings Plans, CUDs, EDPs).
 
 ## Key Use Cases
 
