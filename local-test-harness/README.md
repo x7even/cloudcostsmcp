@@ -105,6 +105,10 @@ Results are saved to `local-test-harness/results/<timestamp>/`:
 
 ### 5. Analyse results
 
+Two complementary analysis tools are available:
+
+**Heuristic analyser** (`analyse.py`) — fast, no LLM required. Checks numeric grounding, truncation, missing tool calls, and empty answers.
+
 ```bash
 # Analyse most recent run
 uv run local-test-harness/analyse.py
@@ -113,9 +117,23 @@ uv run local-test-harness/analyse.py
 uv run local-test-harness/analyse.py local-test-harness/results/20260418_042813
 ```
 
-The analyser prints a per-category pass/fail report, failure breakdown, and writes:
+Writes:
 - `analysis.json` — structured results per prompt
 - `improvement_plan.md` — recommended fixes grouped by failure type
+
+**LLM judge** (`judge.py`) — semantic evaluation using a language model. Checks whether every figure in the answer is grounded in tool results, whether the answer is complete, and whether it addresses all parts of the question.
+
+```bash
+# Judge latest run (uses same LLM as configured in .env)
+uv run local-test-harness/judge.py
+
+# Judge a specific run, specific prompts, 8 concurrent calls
+uv run local-test-harness/judge.py results/matrix_20260424_044537 --ids C1,X1,M1 --parallel 8
+```
+
+The judge can use a separate model — set `OCC_JUDGE_BASE_URL` / `OCC_JUDGE_MODEL` / `OCC_JUDGE_API_KEY` to override the test-model config.
+
+Writes `judge.json` to the run directory. If `analysis.json` is also present, the judge prints an agreement comparison between the two methods.
 
 ## LLM recommendations
 
