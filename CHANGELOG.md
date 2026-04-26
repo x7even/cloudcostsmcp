@@ -7,6 +7,43 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.9.0] — 2026-04-26
+
+### Summary
+
+Minor release consolidating the v0.8.11–v0.8.14 GCP and Azure additions plus
+harness robustness improvements. All three clouds now have full effective/contract
+pricing support and cross-cloud egress comparison.
+
+### Added
+- **GCP storage contract pricing** (v0.8.11) — `effective_price` on `StoragePricingSpec`
+  for GCS and Persistent Disk when `OCC_GCP_BILLING_ACCOUNT_ID` is configured
+- **GCP database contract pricing** (v0.8.11) — `effective_price` on `DatabasePricingSpec`
+  for Cloud SQL (all engines/sizes/HA) and Memorystore
+- **Azure egress pricing** (v0.8.12) — `inter_region_egress` domain: internet and
+  inter-region outbound transfer, zone-keyed rates from Retail Prices API, 5 GB/month
+  free tier, monthly estimate in response
+- **GCP network contract pricing** (v0.8.13) — `effective_price` on `NetworkPricingSpec`
+  for Cloud LB, Cloud CDN, Cloud NAT, and Cloud Armor
+- **GCP inter-region egress** (v0.8.14) — `inter_region_egress` domain: continent-based
+  internet egress rates from Compute Engine SKU catalog with static fallbacks; intra-GCP
+  inter-region at $0.01/GB (same continent) or $0.08/GB (cross-continent)
+- **Cross-cloud egress comparison** — `compare_prices` now works across AWS, GCP, and
+  Azure for the `inter_region_egress` domain
+- **Harness loop detection** — replaces the arbitrary 30-round cap with sliding-window
+  fingerprint detection (window=6); on loop: injects a nudge message and forces
+  `tool_choice=none` to obtain a prose conclusion rather than a hard stop
+
+### Changed
+- `MAX_TOOL_ROUNDS` raised from 30 to 150 (true last-resort safety cap; loop detection
+  fires well before this in practice)
+
+### Notes
+- Harness validated: 169/169 scenarios pass on `qwen/qwen3.6-35b-a3b`; 166/166 on
+  first-pass completion (3 loop hits resolved by detection, 6 API errors transient)
+
+---
+
 ## [0.8.14] — 2026-04-25
 
 ### Added
