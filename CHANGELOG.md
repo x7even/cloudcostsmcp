@@ -7,6 +7,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.9.1] — 2026-04-26
+
+### Added
+- **GCP egress contract pricing** — `_effective_price_egress` follows the same
+  `_find_sku_name` + `_fetch_contract_price` + `_make_effective_price` pattern as
+  storage/database/network. Internet egress SKUs from `_COMPUTE_SERVICE_ID` are matched
+  by continent (`americas` / `emea` / `apac`), skipping China/Australia destination rows.
+  Returns `[]` for intra-GCP inter-region specs (those rates are rarely EDP-discounted).
+- Wired into `get_price()` alongside compute, storage, database, and network paths.
+- 4 new unit tests: no-billing-account guard, inter-region skipped, contract discount,
+  end-to-end via `get_price()`.
+
+### Fixed
+- `PricingResult.source` Literal now includes `"catalog+billing_api"` — the value set
+  by `get_price()` when effective pricing is active was missing from the model, causing
+  a Pydantic validation error on any end-to-end effective pricing call through `get_price()`.
+
+---
+
 ## [0.9.0] — 2026-04-26
 
 ### Summary

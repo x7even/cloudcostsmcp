@@ -2303,6 +2303,52 @@ class GCPProvider(ProviderBase):
             logger.warning("GCP: effective network pricing failed: %s", exc)
             return []
 
+    async def _effective_price_egress(
+        self, spec: EgressPricingSpec
+    ) -> list[EffectivePrice]:
+        """Contract pricing for GCP internet egress.
+
+        Only covers internet egress (no dest_region). Intra-GCP inter-region
+        egress rates ($0.01–$0.08/GB) are rarely subject to EDP discounts and
+        are omitted. Returns [] when no billing account is configured, when
+        the spec has a dest_region, or when no matching SKU/discount is found.
+        """
+        if not self._settings.gcp_billing_account_id:
+            return []
+        src = spec.source_region or spec.region or "us-central1"
+        if spec.dest_region:
+            return []
+        try:
+            base_prices = await self.get_egress_price(src, "", spec.data_gb)
+            if not base_prices:
+                return []
+            continent = self._gcp_egress_continent(src)
+            continent_label = continent.lower()
+            skus = await self._fetch_skus(_COMPUTE_SERVICE_ID)
+            sku_name: str | None = None
+            for sku in skus:
+                desc = sku.get("description", "").lower()
+                if "internet egress" not in desc:
+                    continue
+                if f"from {continent_label}" not in desc:
+                    continue
+                if any(x in desc for x in ("china", "australia", "oceania")):
+                    continue
+                if sku.get("category", {}).get("usageType") != "OnDemand":
+                    continue
+                sku_name = sku.get("name")
+                break
+            if not sku_name:
+                return []
+            result = await self._fetch_contract_price(sku_name)
+            if result is None:
+                return []
+            contract_price, price_reason = result
+            return [self._make_effective_price(base_prices[0], contract_price, price_reason)]
+        except Exception as exc:
+            logger.warning("GCP: effective egress pricing failed: %s", exc)
+            return []
+
     # ------------------------------------------------------------------
     # v0.8.0 capability surface — supports / get_price / describe_catalog
     # ------------------------------------------------------------------
@@ -2366,6 +2412,10 @@ class GCPProvider(ProviderBase):
                     effective_price = commitments[0]
             elif isinstance(spec, NetworkPricingSpec):
                 commitments = await self._effective_price_network(spec)
+                if commitments:
+                    effective_price = commitments[0]
+            elif isinstance(spec, EgressPricingSpec):
+                commitments = await self._effective_price_egress(spec)
                 if commitments:
                     effective_price = commitments[0]
 

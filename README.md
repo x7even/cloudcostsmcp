@@ -331,3 +331,4 @@ With credentials configured: actual spend, contract/negotiated pricing, reservat
 - **v0.8.12** ✅ Azure egress pricing (`inter_region_egress` domain) — internet and inter-region outbound transfer, Zone 1 rates from Retail Prices API, 5 GB/month free tier, monthly estimate in response
 - **v0.8.13** ✅ GCP network contract pricing — Cloud LB, CDN, NAT, Cloud Armor; `effective_price` on `NetworkPricingSpec` when billing account configured
 - **v0.8.14** ✅ GCP internet and inter-region egress (`inter_region_egress` domain) — continent-based rates from SKU catalog with static fallbacks; cross-cloud egress comparison now works across AWS, GCP, and Azure
+- **v0.9.1** ✅ GCP egress contract pricing — `effective_price` on internet egress when billing account configured; fix `PricingResult.source` Literal to include `"catalog+billing_api"`

@@ -503,7 +503,7 @@ class PricingResult(BaseModel):
     breakdown: dict[str, Any] = Field(default_factory=dict)
     # ^ composite pricing math: {"vcpu_rate": ..., "memory_rate": ..., "monthly_total": ...}
     note: str | None = None
-    source: Literal["catalog", "fallback", "mixed"] = "catalog"
+    source: Literal["catalog", "fallback", "mixed", "catalog+billing_api"] = "catalog"
     schema_version: Literal["1"] = "1"
 
     def summary(self) -> dict[str, Any]:

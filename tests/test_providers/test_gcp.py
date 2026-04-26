@@ -1012,3 +1012,117 @@ async def test_egress_via_get_price(gcp_provider: GCPProvider):
 
     assert len(result.public_prices) == 1
     assert result.public_prices[0].attributes.get("continent") == "emea"
+
+
+# ---------------------------------------------------------------------------
+# GCP egress contract pricing (v0.9.1)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_effective_price_egress_no_billing_account(gcp_provider: GCPProvider):
+    """Without a billing account, _effective_price_egress returns []."""
+    from opencloudcosts.models import EgressPricingSpec, PricingDomain
+
+    spec = EgressPricingSpec(
+        provider="gcp", domain=PricingDomain.INTER_REGION_EGRESS,
+        source_region="us-central1", data_gb=100.0,
+    )
+    result = await gcp_provider._effective_price_egress(spec)
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_effective_price_egress_skips_inter_region(tmp_path: Path):
+    """dest_region set → returns [] (intra-GCP rates not contracted)."""
+    from opencloudcosts.models import EgressPricingSpec, PricingDomain
+
+    settings = Settings(gcp_api_key="AIzaFAKE", gcp_billing_account_id="012345-ABCDEF")
+    cache = CacheManager(tmp_path / "test.db")
+    await cache.initialize()
+    provider = GCPProvider(settings, cache)
+
+    spec = EgressPricingSpec(
+        provider="gcp", domain=PricingDomain.INTER_REGION_EGRESS,
+        source_region="us-central1", dest_region="europe-west1", data_gb=100.0,
+    )
+    result = await provider._effective_price_egress(spec)
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_effective_price_egress_contract(tmp_path: Path):
+    """Internet egress with billing account returns a discounted EffectivePrice."""
+    from opencloudcosts.models import EgressPricingSpec, PricingDomain
+
+    settings = Settings(gcp_api_key="AIzaFAKE", gcp_billing_account_id="012345-ABCDEF")
+    cache = CacheManager(tmp_path / "test.db")
+    await cache.initialize()
+    provider = GCPProvider(settings, cache)
+
+    spec = EgressPricingSpec(
+        provider="gcp", domain=PricingDomain.INTER_REGION_EGRESS,
+        source_region="us-central1", data_gb=1000.0,
+    )
+    # Public rate: $0.08/GB (Americas internet egress)
+    fake_sku = {
+        "name": "services/6F81-5844-456A/skus/EGRESS-AMERICAS",
+        "description": "Network Internet Egress from Americas to Worldwide Destinations",
+        "category": {"usageType": "OnDemand"},
+        "serviceRegions": ["global"],
+        "pricingInfo": [{"pricingExpression": {"tieredRates": [
+            {"startUsageAmount": 0, "unitPrice": {"units": "0", "nanos": 80000000}},
+        ]}}],
+    }
+    # Contract rate: $0.048/GB (40% EDP discount)
+    contract_body = _contract_resp("0", 80000000, "0", 48000000, "floating-discount")
+
+    with (
+        patch.object(provider, "_fetch_skus", AsyncMock(return_value=[fake_sku])),
+        patch("opencloudcosts.providers.gcp.GCPProvider._get_billing_http",
+              new_callable=AsyncMock, return_value=_make_billing_client(contract_body)),
+    ):
+        result = await provider._effective_price_egress(spec)
+
+    assert len(result) == 1
+    ep = result[0]
+    assert abs(ep.discount_pct - 40.0) < 0.1
+    assert ep.source == "billing_account_pricing_api"
+    assert float(ep.effective_price_per_unit) == pytest.approx(0.048, rel=1e-3)
+
+
+@pytest.mark.asyncio
+async def test_effective_price_egress_via_get_price(tmp_path: Path):
+    """get_price populates effective_price on EgressPricingSpec when billing account set."""
+    from opencloudcosts.models import EgressPricingSpec, PricingDomain
+
+    settings = Settings(gcp_api_key="AIzaFAKE", gcp_billing_account_id="012345-ABCDEF")
+    cache = CacheManager(tmp_path / "test.db")
+    await cache.initialize()
+    provider = GCPProvider(settings, cache)
+
+    spec = EgressPricingSpec(
+        provider="gcp", domain=PricingDomain.INTER_REGION_EGRESS,
+        source_region="us-central1", data_gb=100.0,
+    )
+    fake_sku = {
+        "name": "services/6F81-5844-456A/skus/EGRESS-AMERICAS",
+        "description": "Network Internet Egress from Americas to Worldwide Destinations",
+        "category": {"usageType": "OnDemand"},
+        "serviceRegions": ["global"],
+        "pricingInfo": [{"pricingExpression": {"tieredRates": [
+            {"startUsageAmount": 0, "unitPrice": {"units": "0", "nanos": 80000000}},
+        ]}}],
+    }
+    contract_body = _contract_resp("0", 80000000, "0", 60000000, "floating-discount")
+
+    with (
+        patch.object(provider, "_fetch_skus", AsyncMock(return_value=[fake_sku])),
+        patch("opencloudcosts.providers.gcp.GCPProvider._get_billing_http",
+              new_callable=AsyncMock, return_value=_make_billing_client(contract_body)),
+    ):
+        result = await provider.get_price(spec)
+
+    assert result.auth_available is True
+    assert result.effective_price is not None
+    assert result.effective_price.discount_pct > 0
+    assert result.source == "catalog+billing_api"
