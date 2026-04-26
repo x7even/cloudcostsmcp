@@ -17,7 +17,7 @@ Supports both **public list pricing** (no credentials needed for AWS and Azure; 
 - "List all c6g instances in eu-west-1 with >= 8 vCPUs"
 - "What's my effective hourly rate on m5.xlarge after Savings Plans?"
 
-## Tools (v0.8.8 — 15 tools)
+## Tools (v0.9.0 — 15 tools)
 
 **Pricing**
 
