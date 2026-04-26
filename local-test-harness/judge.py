@@ -32,8 +32,12 @@ import httpx
 
 HARNESS_DIR = Path(__file__).parent
 RESULTS_ROOT = HARNESS_DIR / "results"
-# Total character budget for tool results across all calls in one judge prompt
-TOOL_RESULT_TOTAL_BUDGET = 6000
+# Total character budget for tool results in a judge prompt.
+# Raised for traces with few calls (≤5) so the judge sees enough detail
+# (e.g. a get_prices_batch returning 36 GPU instances needs > 800 chars).
+_BUDGET_FEW_CALLS = 12000   # ≤5 tool calls
+_BUDGET_MANY_CALLS = 6000   # >5 tool calls
+_MAX_PER_CALL = 3000        # hard cap per individual call regardless of n
 
 
 def _load_dotenv(env_file: Path) -> None:
@@ -129,7 +133,8 @@ def _format_tool_results(tool_calls: list[dict]) -> str:
     if not tool_calls:
         return "(no tool calls made)"
     n = len(tool_calls)
-    per_call = max(200, TOOL_RESULT_TOTAL_BUDGET // n)
+    total_budget = _BUDGET_FEW_CALLS if n <= 5 else _BUDGET_MANY_CALLS
+    per_call = min(_MAX_PER_CALL, max(200, total_budget // n))
     lines = []
     for i, tc in enumerate(tool_calls, 1):
         name = tc.get("tool", "?")
