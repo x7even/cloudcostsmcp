@@ -63,7 +63,11 @@ LLM_API_KEY = os.environ.get("OCC_LLM_API_KEY", "")  # optional
 PROJECT_DIR = _HARNESS_DIR.parent
 MCP_COMMAND = "uv"
 MCP_ARGS = ["run", "--directory", str(PROJECT_DIR), "opencloudcosts"]
-MAX_TOOL_ROUNDS = 30
+# Absolute safety cap — only fires if loop detection fails to catch a pathological case.
+MAX_TOOL_ROUNDS = 150
+# Sliding window for loop detection: if the same (tool, args) fingerprint appears
+# twice within this many consecutive calls, the model is in a loop.
+LOOP_DETECT_WINDOW = 6
 RESULTS_DIR = _HARNESS_DIR / "results"
 
 SYSTEM_PROMPT = (
@@ -878,6 +882,25 @@ def _preview(obj, n=150) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Loop detection
+# ---------------------------------------------------------------------------
+
+def _call_fingerprint(tool_name: str, args: dict) -> str:
+    """Canonical string for a (tool, args) pair — used to detect repeated calls."""
+    return f"{tool_name}:{json.dumps(args, sort_keys=True)}"
+
+
+def _loop_detected(recent_fingerprints: list[str]) -> bool:
+    """Return True if any fingerprint appears twice in the recent call window."""
+    seen: set[str] = set()
+    for fp in recent_fingerprints:
+        if fp in seen:
+            return True
+        seen.add(fp)
+    return False
+
+
+# ---------------------------------------------------------------------------
 # Core test runner
 # ---------------------------------------------------------------------------
 
@@ -896,6 +919,8 @@ async def run_single(
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": prompt},
     ]
+
+    recent_fingerprints: list[str] = []  # sliding window for loop detection
 
     trace = {
         "prompt_id": prompt_id,
@@ -1007,6 +1032,12 @@ async def run_single(
 
                 print(f"  → {tool_name}({_preview(tool_args, 100)})")
 
+                # Track fingerprint in sliding window
+                fp = _call_fingerprint(tool_name, tool_args)
+                recent_fingerprints.append(fp)
+                if len(recent_fingerprints) > LOOP_DETECT_WINDOW:
+                    recent_fingerprints.pop(0)
+
                 try:
                     mcp_result = await mcp_session.call_tool(tool_name, tool_args)
                     # MCP returns a list of content items; join text parts
@@ -1035,9 +1066,43 @@ async def run_single(
                     "tool_call_id": tc["id"],
                     "content": json.dumps(tool_result),
                 })
+
+            # After executing all tool calls this round, check for a loop.
+            # A loop is detected when the same (tool, args) fingerprint appears
+            # more than once in the recent window — the model is re-querying
+            # something it already tried. Force a conclusion via tool_choice=none.
+            if _loop_detected(recent_fingerprints):
+                print(f"  ⚠ Loop detected at round {round_num + 1} — forcing conclusion")
+                trace["loop_detected"] = round_num + 1
+                try:
+                    headers = {"Authorization": f"Bearer {LLM_API_KEY}"} if LLM_API_KEY else {}
+                    loop_resp = await client.post(
+                        f"{LLM_BASE_URL}/v1/chat/completions",
+                        json={**payload, "messages": messages, "tools": [], "tool_choice": "none"},
+                        headers=headers,
+                    )
+                    loop_resp.raise_for_status()
+                    loop_data = loop_resp.json()
+                    if loop_data.get("choices"):
+                        lc = loop_data["choices"][0]
+                        final_msg = lc["message"]
+                        content = final_msg.get("content") or ""
+                        if content.strip():
+                            messages.append(final_msg)
+                            trace["messages"].append(final_msg)
+                            trace["final_answer"] = content
+                            trace["rounds"] = round_num + 1
+                            print(f"  ✓ Loop broken — answer obtained after {round_num + 1} round(s)")
+                            print(f"  Answer preview: {content[:300]}")
+                            break
+                except Exception as e:
+                    print(f"  ✗ Loop-break request failed: {e}")
+                # If the forced call also failed, continue (will re-detect next round)
+                recent_fingerprints.clear()
+
         else:
-            trace["error"] = f"Hit max tool rounds ({MAX_TOOL_ROUNDS}) without final answer"
-            print(f"  ✗ Max rounds reached")
+            trace["error"] = f"Hit absolute tool-round cap ({MAX_TOOL_ROUNDS}) — loop detection did not fire"
+            print(f"  ✗ Absolute cap reached")
 
     # Persist full trace
     out_file = run_dir / f"{prompt_id}_trace.json"
