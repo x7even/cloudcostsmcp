@@ -1074,6 +1074,18 @@ async def run_single(
             if _loop_detected(recent_fingerprints):
                 print(f"  ⚠ Loop detected at round {round_num + 1} — forcing conclusion")
                 trace["loop_detected"] = round_num + 1
+                # Inject a user turn so the model knows to stop calling tools and
+                # write its answer — without this, some models (e.g. Qwen3) emit
+                # XML-formatted tool calls in the response text even with tool_choice=none.
+                nudge = {
+                    "role": "user",
+                    "content": (
+                        "You have enough information. Stop calling tools and write your "
+                        "final answer now in plain text."
+                    ),
+                }
+                messages.append(nudge)
+                trace["messages"].append(nudge)
                 try:
                     headers = {"Authorization": f"Bearer {LLM_API_KEY}"} if LLM_API_KEY else {}
                     loop_resp = await client.post(
