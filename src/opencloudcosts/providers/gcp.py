@@ -3024,6 +3024,12 @@ class GCPProvider(ProviderBase):
             "monthly_request_cost": float(req_cost),
             "monthly_total": float(policy_cost + req_cost),
         }
+        if spec.monthly_requests_millions == 0:
+            breakdown["hint"] = (
+                f"Request evaluation cost not shown — pass monthly_requests_millions=N "
+                f"in the spec to calculate it. "
+                f"Rate: ${float(request_rate):.4f}/million requests."
+            )
         if fallback:
             breakdown["fallback"] = True
         return prices, breakdown
@@ -3168,10 +3174,14 @@ class GCPProvider(ProviderBase):
                     "metric" in desc or "ingest" in desc
                 ):
                     p = self._sku_price(sku)
-                    if p > 0:
+                    # The GCP catalog expresses this SKU per byte or per metric
+                    # sample (e.g. $1.5e-07/unit), not per MiB. Only accept the
+                    # live rate when it looks like a plausible per-MiB value
+                    # ($0.01–$1.00/MiB); otherwise fall back to published rates.
+                    if Decimal("0.01") <= p <= Decimal("1.0"):
                         tier1_rate = p
                         matched = True
-                        break
+                    break
             if not matched:
                 fallback = True
         except Exception:
