@@ -170,8 +170,9 @@ def register_bom_tools(mcp: Any) -> None:
             },
             "not_included": not_included or None,
             "not_included_action": (
-                "REQUIRED: call get_price for each item above using its how_to_price "
-                "command before writing your answer. Do not estimate these costs."
+                "REQUIRED: for each item in not_included, call get_price using the "
+                "exact command in that item's how_to_price field before writing your "
+                "final answer. Do NOT estimate or guess these costs."
             ) if not_included else None,
             "errors": errors or None,
         }
