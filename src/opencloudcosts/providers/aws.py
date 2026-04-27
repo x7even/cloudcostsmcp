@@ -1381,7 +1381,7 @@ class AWSProvider(ProviderBase):
         dst = spec.dest_region
 
         filters: list[dict[str, str]] = [
-            {"Field": "transferType", "Value": "AWS Inter-Region Outbound"},
+            {"Field": "transferType", "Value": "InterRegion Outbound"},
         ]
         if src:
             try:
@@ -1412,7 +1412,95 @@ class AWSProvider(ProviderBase):
             if len(prices) >= 10:
                 break
 
+        if not prices:
+            prices = self._egress_static_fallback(src or "us-east-1", dst)
+
         return prices
+
+    # Published AWS inter-region egress rates (2024, USD/GB).
+    # Used as a fallback when the Pricing API returns no results.
+    _EGRESS_RATES: dict[tuple[str, str], Decimal] = {
+        # Same continent — flat $0.02/GB
+        ("us", "us"): Decimal("0.02"),
+        ("eu", "eu"): Decimal("0.02"),
+        ("ap", "ap"): Decimal("0.09"),
+        # Cross-continent
+        ("us", "eu"): Decimal("0.02"),
+        ("eu", "us"): Decimal("0.02"),
+        ("us", "ap"): Decimal("0.09"),
+        ("ap", "us"): Decimal("0.09"),
+        ("us", "sa"): Decimal("0.16"),
+        ("sa", "us"): Decimal("0.16"),
+        ("us", "me"): Decimal("0.16"),
+        ("eu", "ap"): Decimal("0.09"),
+        ("ap", "eu"): Decimal("0.09"),
+    }
+
+    @staticmethod
+    def _region_continent(region: str) -> str:
+        r = region.lower()
+        if r.startswith(("us-", "ca-", "mx-")):
+            return "us"
+        if r.startswith("eu-"):
+            return "eu"
+        if r.startswith(("ap-", "cn-", "il-")):
+            return "ap"
+        if r.startswith("sa-"):
+            return "sa"
+        if r.startswith("me-"):
+            return "me"
+        return "us"
+
+    def _egress_static_fallback(
+        self, src: str, dst: str | None
+    ) -> list[NormalizedPrice]:
+        """Return static inter-region egress prices when the Pricing API returns empty."""
+        src_c = self._region_continent(src)
+        if dst:
+            dst_c = self._region_continent(dst)
+            rate = self._EGRESS_RATES.get((src_c, dst_c), Decimal("0.09"))
+            return [NormalizedPrice(
+                provider=CloudProvider.AWS, service="inter_region_egress",
+                sku_id=f"aws:data_transfer:{src}:{dst}:fallback",
+                product_family="Data Transfer",
+                description=(
+                    f"AWS inter-region data transfer {src} → {dst} "
+                    f"(published rate; use real credentials for exact price)"
+                ),
+                region=src, pricing_term=PricingTerm.ON_DEMAND,
+                price_per_unit=rate, unit=PriceUnit.PER_GB,
+                attributes={
+                    "fromRegionCode": src,
+                    "toRegionCode": dst,
+                    "transferType": "InterRegion Outbound",
+                    "fallback": "true",
+                },
+            )]
+        # No dest — return common destination rates from src
+        results = []
+        seen: set[str] = set()
+        for (s_c, d_c), rate in self._EGRESS_RATES.items():
+            if s_c != src_c or d_c in seen:
+                continue
+            seen.add(d_c)
+            results.append(NormalizedPrice(
+                provider=CloudProvider.AWS, service="inter_region_egress",
+                sku_id=f"aws:data_transfer:{src}:{d_c}:fallback",
+                product_family="Data Transfer",
+                description=(
+                    f"AWS inter-region data transfer {src} → {d_c} regions "
+                    f"(published rate; use real credentials for exact price)"
+                ),
+                region=src, pricing_term=PricingTerm.ON_DEMAND,
+                price_per_unit=rate, unit=PriceUnit.PER_GB,
+                attributes={
+                    "fromRegionCode": src,
+                    "toRegionCode": f"{d_c}-*",
+                    "transferType": "InterRegion Outbound",
+                    "fallback": "true",
+                },
+            ))
+        return results
 
     async def _price_compute(self, spec: ComputePricingSpec) -> list[NormalizedPrice]:
         if spec.service == "fargate" or (spec.vcpu is not None and spec.memory_gb is not None and not spec.resource_type):
