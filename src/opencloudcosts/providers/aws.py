@@ -1252,7 +1252,7 @@ class AWSProvider(ProviderBase):
                     f'get_price(spec={{"provider": "aws", "domain": "network", "service": "data_transfer", '
                     f'"region": "{sample_region}"}})'
                 ),
-                "price": "unknown — use the how_to_price call above to get the real figure",
+                "price": "NOT FETCHED — call get_price using the how_to_price command before including this in your answer",
             })
             advisories.append({
                 "item": "Load balancer (ALB/NLB)",
@@ -1261,7 +1261,7 @@ class AWSProvider(ProviderBase):
                     f'get_price(spec={{"provider": "aws", "domain": "network", "service": "lb", '
                     f'"region": "{sample_region}"}})'
                 ),
-                "price": "unknown — use the how_to_price call above to get the real figure",
+                "price": "NOT FETCHED — call get_price using the how_to_price command before including this in your answer",
             })
             advisories.append({
                 "item": "NAT Gateway",
@@ -1270,7 +1270,7 @@ class AWSProvider(ProviderBase):
                     f'get_price(spec={{"provider": "aws", "domain": "network", "service": "nat", '
                     f'"region": "{sample_region}"}})'
                 ),
-                "price": "unknown — use the how_to_price call above to get the real figure",
+                "price": "NOT FETCHED — call get_price using the how_to_price command before including this in your answer",
             })
         advisories.append({
             "item": "CloudWatch monitoring",
@@ -1288,7 +1288,7 @@ class AWSProvider(ProviderBase):
                 "how_to_price": (
                     f'search_pricing(provider="aws", query="RDS Storage Snapshot", region="{sample_region}")'
                 ),
-                "price": "unknown — use the how_to_price call above to get the real figure",
+                "price": "NOT FETCHED — call get_price using the how_to_price command before including this in your answer",
             })
         if "storage" in services:
             advisories.append({
@@ -1297,7 +1297,7 @@ class AWSProvider(ProviderBase):
                 "how_to_price": (
                     f'search_pricing(provider="aws", query="EBS Storage Snapshot", region="{sample_region}")'
                 ),
-                "price": "unknown — use the how_to_price call above to get the real figure",
+                "price": "NOT FETCHED — call get_price using the how_to_price command before including this in your answer",
             })
         return advisories
 

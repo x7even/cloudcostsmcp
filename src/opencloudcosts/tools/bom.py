@@ -33,8 +33,11 @@ def register_bom_tools(mcp: Any) -> None:
         get_price individually for multi-resource questions; use this tool instead.
 
         Returns per-item and total monthly/annual costs with real public pricing data,
-        plus a not_included list with follow-up get_price calls for hidden costs
-        (egress, load balancers, NAT Gateway, monitoring, backups).
+        plus a not_included list of hidden costs (egress, load balancers, NAT Gateway,
+        monitoring, backups). IMPORTANT: if not_included is present in the response, you
+        MUST call get_price for each listed item — using the exact command in each item's
+        how_to_price field — before writing your final answer. Do NOT estimate or guess
+        any cost from the not_included list.
 
         Each item should be a PricingSpec dict PLUS a quantity field:
           - provider: "aws" | "gcp" | "azure"
@@ -166,6 +169,11 @@ def register_bom_tools(mcp: Any) -> None:
                 "currency": estimate.currency,
             },
             "not_included": not_included or None,
+            "not_included_action": (
+                "REQUIRED: for each item in not_included, call get_price using the "
+                "exact command in that item's how_to_price field before writing your "
+                "final answer. Do NOT estimate or guess these costs."
+            ) if not_included else None,
             "errors": errors or None,
         }
 
