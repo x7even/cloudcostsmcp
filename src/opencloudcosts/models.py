@@ -128,7 +128,7 @@ class NormalizedPrice(BaseModel):
                 if self.unit in (PriceUnit.PER_HOUR, PriceUnit.PER_MONTH)
                 else None
             ),
-            **{k: v for k, v in self.attributes.items() if k in ("instanceType", "vcpu", "memory", "operatingSystem", "storage_type", "volumeType")},
+            **{k: v for k, v in self.attributes.items() if k in ("instanceType", "vcpu", "memory", "operatingSystem", "storage_type", "volumeType", "fallback", "fromRegionCode", "toRegionCode")},
         }
         if self.cache_age_seconds is not None:
             result["cache_age_seconds"] = round(self.cache_age_seconds)

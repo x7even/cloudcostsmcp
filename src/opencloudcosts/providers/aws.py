@@ -1417,14 +1417,21 @@ class AWSProvider(ProviderBase):
 
         return prices
 
-    # Published AWS inter-region egress rates (2024, USD/GB).
-    # Used as a fallback when the Pricing API returns no results.
+    # Published AWS inter-region egress rates (source: aws.amazon.com/ec2/pricing/on-demand/#Data_Transfer).
+    # Used as a static fallback when the Pricing API returns no results.
+    # Key: (from_continent, to_continent); default for unknown pairs: $0.16/GB.
     _EGRESS_RATES: dict[tuple[str, str], Decimal] = {
-        # Same continent — flat $0.02/GB
+        # North America intra-continent
         ("us", "us"): Decimal("0.02"),
+        # Europe intra-continent
         ("eu", "eu"): Decimal("0.02"),
+        # Asia Pacific intra-continent
         ("ap", "ap"): Decimal("0.09"),
-        # Cross-continent
+        # South America / Middle East / Africa intra-continent
+        ("sa", "sa"): Decimal("0.16"),
+        ("me", "me"): Decimal("0.16"),
+        ("af", "af"): Decimal("0.16"),
+        # US ↔ other continents
         ("us", "eu"): Decimal("0.02"),
         ("eu", "us"): Decimal("0.02"),
         ("us", "ap"): Decimal("0.09"),
@@ -1432,8 +1439,33 @@ class AWSProvider(ProviderBase):
         ("us", "sa"): Decimal("0.16"),
         ("sa", "us"): Decimal("0.16"),
         ("us", "me"): Decimal("0.16"),
+        ("me", "us"): Decimal("0.16"),
+        ("us", "af"): Decimal("0.16"),
+        ("af", "us"): Decimal("0.16"),
+        # EU ↔ other continents
         ("eu", "ap"): Decimal("0.09"),
         ("ap", "eu"): Decimal("0.09"),
+        ("eu", "sa"): Decimal("0.16"),
+        ("sa", "eu"): Decimal("0.16"),
+        ("eu", "me"): Decimal("0.16"),
+        ("me", "eu"): Decimal("0.16"),
+        ("eu", "af"): Decimal("0.16"),
+        ("af", "eu"): Decimal("0.16"),
+        # AP ↔ SA / ME / AF
+        ("ap", "sa"): Decimal("0.16"),
+        ("sa", "ap"): Decimal("0.16"),
+        ("ap", "me"): Decimal("0.16"),
+        ("me", "ap"): Decimal("0.16"),
+        ("ap", "af"): Decimal("0.16"),
+        ("af", "ap"): Decimal("0.16"),
+        # SA ↔ ME / AF
+        ("sa", "me"): Decimal("0.16"),
+        ("me", "sa"): Decimal("0.16"),
+        ("sa", "af"): Decimal("0.16"),
+        ("af", "sa"): Decimal("0.16"),
+        # ME ↔ AF
+        ("me", "af"): Decimal("0.16"),
+        ("af", "me"): Decimal("0.16"),
     }
 
     @staticmethod
@@ -1443,12 +1475,14 @@ class AWSProvider(ProviderBase):
             return "us"
         if r.startswith("eu-"):
             return "eu"
-        if r.startswith(("ap-", "cn-", "il-")):
+        if r.startswith(("ap-", "cn-")):
             return "ap"
         if r.startswith("sa-"):
             return "sa"
-        if r.startswith("me-"):
+        if r.startswith(("me-", "il-")):
             return "me"
+        if r.startswith("af-"):
+            return "af"
         return "us"
 
     def _egress_static_fallback(
@@ -1456,17 +1490,16 @@ class AWSProvider(ProviderBase):
     ) -> list[NormalizedPrice]:
         """Return static inter-region egress prices when the Pricing API returns empty."""
         src_c = self._region_continent(src)
+        note = "static published rate; Pricing API returned no match for this route"
         if dst:
             dst_c = self._region_continent(dst)
-            rate = self._EGRESS_RATES.get((src_c, dst_c), Decimal("0.09"))
+            # Default $0.16/GB for any unknown pair (conservative / covers most cross-continent routes)
+            rate = self._EGRESS_RATES.get((src_c, dst_c), Decimal("0.16"))
             return [NormalizedPrice(
                 provider=CloudProvider.AWS, service="inter_region_egress",
                 sku_id=f"aws:data_transfer:{src}:{dst}:fallback",
                 product_family="Data Transfer",
-                description=(
-                    f"AWS inter-region data transfer {src} → {dst} "
-                    f"(published rate; use real credentials for exact price)"
-                ),
+                description=f"AWS inter-region data transfer {src} → {dst} ({note})",
                 region=src, pricing_term=PricingTerm.ON_DEMAND,
                 price_per_unit=rate, unit=PriceUnit.PER_GB,
                 attributes={
@@ -1476,7 +1509,7 @@ class AWSProvider(ProviderBase):
                     "fallback": "true",
                 },
             )]
-        # No dest — return common destination rates from src
+        # No dest — return one entry per destination continent from src
         results = []
         seen: set[str] = set()
         for (s_c, d_c), rate in self._EGRESS_RATES.items():
@@ -1485,12 +1518,9 @@ class AWSProvider(ProviderBase):
             seen.add(d_c)
             results.append(NormalizedPrice(
                 provider=CloudProvider.AWS, service="inter_region_egress",
-                sku_id=f"aws:data_transfer:{src}:{d_c}:fallback",
+                sku_id=f"aws:data_transfer:{src}:{d_c}-star:fallback",
                 product_family="Data Transfer",
-                description=(
-                    f"AWS inter-region data transfer {src} → {d_c} regions "
-                    f"(published rate; use real credentials for exact price)"
-                ),
+                description=f"AWS inter-region data transfer {src} → {d_c} regions ({note})",
                 region=src, pricing_term=PricingTerm.ON_DEMAND,
                 price_per_unit=rate, unit=PriceUnit.PER_GB,
                 attributes={

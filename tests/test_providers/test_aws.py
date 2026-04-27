@@ -658,3 +658,105 @@ async def test_nat_gateway_alias_resolves_to_ec2():
     from opencloudcosts.providers.aws import _resolve_service_code
     assert _resolve_service_code("nat_gateway") == "AmazonEC2"
     assert _resolve_service_code("natgateway") == "AmazonEC2"
+
+
+# ---------------------------------------------------------------------------
+# Inter-region egress tests
+# ---------------------------------------------------------------------------
+
+def test_region_continent_known_prefixes(aws_provider: AWSProvider):
+    """_region_continent correctly classifies all known AWS region prefix families."""
+    rc = aws_provider._region_continent
+    assert rc("us-east-1") == "us"
+    assert rc("us-west-2") == "us"
+    assert rc("ca-central-1") == "us"
+    assert rc("eu-west-1") == "eu"
+    assert rc("eu-central-1") == "eu"
+    assert rc("ap-southeast-1") == "ap"
+    assert rc("ap-northeast-1") == "ap"
+    assert rc("cn-north-1") == "ap"
+    assert rc("sa-east-1") == "sa"
+    assert rc("me-south-1") == "me"
+    assert rc("il-central-1") == "me"  # Israel classified with Middle East
+    assert rc("af-south-1") == "af"
+    assert rc("unknown-region-1") == "us"  # unknown defaults to us
+
+
+def test_egress_rates_symmetric(aws_provider: AWSProvider):
+    """_EGRESS_RATES should have entries for both (A, B) and (B, A) for all pairs."""
+    rates = aws_provider._EGRESS_RATES
+    for (a, b) in list(rates.keys()):
+        if a != b:
+            assert (b, a) in rates, f"Missing reverse entry for ({b}, {a})"
+
+
+def test_egress_static_fallback_known_route(aws_provider: AWSProvider):
+    """Fallback for us-east-1 → eu-west-1 returns the published $0.02/GB rate."""
+    results = aws_provider._egress_static_fallback("us-east-1", "eu-west-1")
+    assert len(results) == 1
+    p = results[0]
+    assert float(p.price_per_unit) == pytest.approx(0.02)
+    assert p.attributes.get("fallback") == "true"
+    assert p.attributes.get("fromRegionCode") == "us-east-1"
+    assert p.attributes.get("toRegionCode") == "eu-west-1"
+
+
+def test_egress_static_fallback_high_rate_route(aws_provider: AWSProvider):
+    """Fallback for me-south-1 → eu-west-1 returns the $0.16/GB rate (not $0.09 default)."""
+    results = aws_provider._egress_static_fallback("me-south-1", "eu-west-1")
+    assert len(results) == 1
+    assert float(results[0].price_per_unit) == pytest.approx(0.16)
+
+
+def test_egress_static_fallback_africa(aws_provider: AWSProvider):
+    """Fallback for af-south-1 → us-east-1 returns Africa rates, not US intra-continent."""
+    results = aws_provider._egress_static_fallback("af-south-1", "us-east-1")
+    assert len(results) == 1
+    assert float(results[0].price_per_unit) == pytest.approx(0.16)
+
+
+def test_egress_static_fallback_no_dest(aws_provider: AWSProvider):
+    """Fallback with no dest returns one entry per destination continent."""
+    results = aws_provider._egress_static_fallback("us-east-1", None)
+    assert len(results) > 1
+    to_codes = {r.attributes.get("toRegionCode", "") for r in results}
+    assert any("eu" in c for c in to_codes)
+    assert any("ap" in c for c in to_codes)
+
+
+async def test_price_egress_uses_correct_filter(aws_provider: AWSProvider):
+    """_price_egress must use 'InterRegion Outbound' not 'AWS Inter-Region Outbound'."""
+    from opencloudcosts.models import EgressPricingSpec
+    spec = EgressPricingSpec(
+        provider="aws", region="us-east-1",
+        source_region="us-east-1", dest_region="eu-west-1",
+    )
+    captured_filters: list = []
+
+    async def _capture(*args, **kwargs):
+        captured_filters.extend(args[1] if len(args) > 1 else [])
+        return []  # return empty to trigger fallback
+
+    with patch.object(aws_provider, "_get_products", side_effect=_capture):
+        await aws_provider._price_egress(spec)
+
+    transfer_type_filter = next(
+        (f for f in captured_filters if f.get("Field") == "transferType"), None
+    )
+    assert transfer_type_filter is not None
+    assert transfer_type_filter["Value"] == "InterRegion Outbound"
+
+
+async def test_price_egress_falls_back_when_api_empty(aws_provider: AWSProvider):
+    """When _get_products returns empty, _price_egress falls back to static rates."""
+    from opencloudcosts.models import EgressPricingSpec
+    spec = EgressPricingSpec(
+        provider="aws", region="us-east-1",
+        source_region="us-east-1", dest_region="eu-west-1",
+    )
+    with patch.object(aws_provider, "_get_products", return_value=[]):
+        prices = await aws_provider._price_egress(spec)
+
+    assert len(prices) == 1
+    assert prices[0].attributes.get("fallback") == "true"
+    assert float(prices[0].price_per_unit) == pytest.approx(0.02)
