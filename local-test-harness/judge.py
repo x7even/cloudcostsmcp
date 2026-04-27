@@ -147,19 +147,40 @@ def _format_tool_results(tool_calls: list[dict]) -> str:
     return "\n".join(lines)
 
 
+_VERDICTS = frozenset(("pass", "partial", "fail", "error"))
+
+
 def _parse_judge_json(text: str) -> dict | None:
-    """Extract verdict JSON from judge response, tolerating markdown fences."""
+    """Extract verdict JSON, tolerating markdown fences and one level of nesting."""
     text = re.sub(r"^```(?:json)?\s*", "", text.strip(), flags=re.MULTILINE)
     text = re.sub(r"\s*```\s*$", "", text.strip(), flags=re.MULTILINE)
-    m = re.search(r'\{.*\}', text, flags=re.DOTALL)
-    if not m:
-        return None
-    try:
-        d = json.loads(m.group())
-        if d.get("verdict") in ("pass", "partial", "fail", "error"):
-            return d
-    except json.JSONDecodeError:
-        pass
+    # Walk each '{' position and find its matching '}', then try to parse.
+    # This handles greedy regex failures (e.g. judge wraps result in outer object).
+    for start in (m.start() for m in re.finditer(r'\{', text)):
+        depth = 0
+        end = -1
+        for i, ch in enumerate(text[start:], start):
+            if ch == '{':
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+                if depth == 0:
+                    end = i
+                    break
+        if end == -1:
+            continue
+        try:
+            d = json.loads(text[start:end + 1])
+            if not isinstance(d, dict):
+                continue
+            if d.get("verdict") in _VERDICTS:
+                return d
+            # One level of nesting: e.g. {"result": {"verdict": ...}}
+            for v in d.values():
+                if isinstance(v, dict) and v.get("verdict") in _VERDICTS:
+                    return v
+        except json.JSONDecodeError:
+            pass
     return None
 
 
@@ -211,17 +232,23 @@ async def judge_trace(trace: dict, client: httpx.AsyncClient) -> dict:
         }
 
     tool_results_str = _format_tool_results(tool_calls)
+    # Escape curly braces in untrusted content so str.format() cannot
+    # interpret embedded {placeholders} as format specifiers.
+    def _esc(s: str) -> str:
+        return s.replace("{", "{{").replace("}", "}}")
+
     user_content = _JUDGE_TEMPLATE.format(
-        question=prompt,
-        tool_results=tool_results_str,
+        question=_esc(prompt),
+        tool_results=_esc(tool_results_str),
         n_calls=len(tool_calls),
-        answer=answer[:3000],
+        answer=_esc(answer[:3000]),
     )
     messages = [
         {"role": "system", "content": JUDGE_SYSTEM},
         {"role": "user", "content": user_content},
     ]
 
+    content = ""
     for attempt in range(2):
         try:
             content = await _llm_call(messages, client)
