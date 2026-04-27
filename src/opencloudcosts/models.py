@@ -403,7 +403,7 @@ class NetworkPricingSpec(BasePricingSpec):
     egress_gb: float = 0.0
     cache_fill_gb: float = 0.0
     policy_count: int = 1                   # Cloud Armor / WAF policies
-    monthly_requests_millions: float = 0.0
+    monthly_requests_millions: float = Field(default=0.0, ge=0.0)
     hours_per_month: float = 730.0
 
     def cache_key(self) -> str:
