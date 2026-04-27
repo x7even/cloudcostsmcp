@@ -1926,14 +1926,27 @@ class GCPProvider(ProviderBase):
             request_cost_val = request_rate * Decimal(str(monthly_requests_millions))
             result["estimated_total_monthly"] = f"${policy_cost_val + request_cost_val:.2f}"
 
+        zero_dims = []
+        if policy_count == 0:
+            zero_dims.append("policy_count")
+        if monthly_requests_millions <= 0:
+            zero_dims.append("monthly_requests_millions")
+        if zero_dims:
+            result["note"] = (
+                f"Cost for {' and '.join(zero_dims)} not shown — pass non-zero values "
+                f"to calculate the full estimate. "
+                f"Rates: ${float(policy_rate):.4f}/policy/month; "
+                f"${float(request_rate):.4f}/million requests."
+            )
+        else:
+            result["note"] = (
+                "Cloud Armor Standard: $0.75/policy/month + $0.75/million requests evaluated. "
+                "Enterprise tier ($3,000/month per project) adds advanced DDoS protection, "
+                "adaptive protection, and threat intelligence — contact GCP for details."
+            )
+
         if fallback:
             result["fallback"] = True
-
-        result["note"] = (
-            "Cloud Armor Standard: $0.75/policy/month + $0.75/million requests evaluated. "
-            "Enterprise tier ($3,000/month per project) adds advanced DDoS protection, "
-            "adaptive protection, and threat intelligence — contact GCP for details."
-        )
         return result
 
     async def get_cloud_monitoring_price(
@@ -3024,6 +3037,20 @@ class GCPProvider(ProviderBase):
             "monthly_request_cost": float(req_cost),
             "monthly_total": float(policy_cost + req_cost),
         }
+        zero_dims = []
+        if spec.policy_count == 0:
+            zero_dims.append("policy_count")
+        if spec.monthly_requests_millions <= 0:
+            zero_dims.append("monthly_requests_millions")
+        if zero_dims:
+            rates = (
+                f"Policy: ${float(policy_rate):.4f}/policy/month; "
+                f"Requests: ${float(request_rate):.4f}/million requests."
+            )
+            breakdown["note"] = (
+                f"Cost for {' and '.join(zero_dims)} not shown — set to a non-zero "
+                f"value to include it in the estimate. {rates}"
+            )
         if fallback:
             breakdown["fallback"] = True
         return prices, breakdown
@@ -3159,6 +3186,7 @@ class GCPProvider(ProviderBase):
 
         tier1_rate = _T1_RATE
         fallback = False
+        rejected_rate: Decimal | None = None
         try:
             skus = await self._fetch_skus(_CLOUD_MONITORING_SERVICE_ID)
             matched = False
@@ -3168,10 +3196,15 @@ class GCPProvider(ProviderBase):
                     "metric" in desc or "ingest" in desc
                 ):
                     p = self._sku_price(sku)
-                    if p > 0:
+                    # Per-byte SKUs are ~$2.4e-7; per-MiB SKUs are >= $0.10.
+                    # Accept only values >= $0.01 as a plausible per-MiB rate
+                    # to avoid using the per-byte unit rate as a per-MiB rate.
+                    if p >= Decimal("0.01"):
                         tier1_rate = p
                         matched = True
                         break
+                    elif p > 0:
+                        rejected_rate = p  # per-byte rate — keep scanning
             if not matched:
                 fallback = True
         except Exception:
@@ -3214,6 +3247,16 @@ class GCPProvider(ProviderBase):
             if rem > 0:
                 cost += rem * _T3_RATE
             breakdown["estimated_monthly_cost"] = f"${float(cost):.4f}/month"
+        if rejected_rate is not None and not matched:
+            logger.warning(
+                "GCP Cloud Monitoring: SKU rate %s is not in plausible per-MiB range "
+                "(expected >= $0.01); using published fallback ($0.258/MiB).",
+                rejected_rate,
+            )
+            breakdown["note"] = (
+                f"Live SKU found (${float(rejected_rate):.2e}/unit, appears to be "
+                "per-byte not per-MiB); using published fallback rates."
+            )
         if fallback:
             breakdown["fallback"] = True
         return prices, breakdown
