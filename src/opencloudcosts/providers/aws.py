@@ -14,7 +14,7 @@ import json
 import logging
 from datetime import UTC
 from decimal import Decimal
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 import boto3
 import botocore.exceptions
@@ -25,6 +25,7 @@ from opencloudcosts.config import Settings
 from opencloudcosts.models import (
     AiPricingSpec,
     AnalyticsPricingSpec,
+    BasePricingSpec,
     CloudProvider,
     ComputePricingSpec,
     ContainerPricingSpec,
@@ -231,6 +232,19 @@ class AWSProvider(ProviderBase):
             self._ce = session.client("ce", region_name="us-east-1")
             self._sp = session.client("savingsplans", region_name="us-east-1")
             self._ec2 = session.client("ec2", region_name=settings.aws_region)
+        # Must stay in sync with _AWS_CAPABILITIES — one entry per supported spec type.
+        self._dispatch_registry: dict[type[BasePricingSpec], Callable[..., Awaitable[list[NormalizedPrice]]]] = {
+            ComputePricingSpec: self._price_compute,
+            StoragePricingSpec: self._price_storage,
+            DatabasePricingSpec: self._price_database,
+            AiPricingSpec: self._price_ai,
+            ServerlessPricingSpec: self._price_serverless,
+            AnalyticsPricingSpec: self._price_analytics,
+            NetworkPricingSpec: self._price_network,
+            ObservabilityPricingSpec: self._price_observability,
+            ContainerPricingSpec: self._price_container,
+            EgressPricingSpec: self._price_egress,
+        }
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -1348,32 +1362,15 @@ class AWSProvider(ProviderBase):
 
     async def _dispatch_public(self, spec: PricingSpec) -> list[NormalizedPrice]:
         """Route spec to the appropriate public-pricing internal method."""
-        if isinstance(spec, ComputePricingSpec):
-            return await self._price_compute(spec)
-        if isinstance(spec, StoragePricingSpec):
-            return await self._price_storage(spec)
-        if isinstance(spec, DatabasePricingSpec):
-            return await self._price_database(spec)
-        if isinstance(spec, AiPricingSpec):
-            return await self._price_ai(spec)
-        if isinstance(spec, ServerlessPricingSpec):
-            return await self._price_serverless(spec)
-        if isinstance(spec, AnalyticsPricingSpec):
-            return await self._price_analytics(spec)
-        if isinstance(spec, NetworkPricingSpec):
-            return await self._price_network(spec)
-        if isinstance(spec, ObservabilityPricingSpec):
-            return await self._price_observability(spec)
-        if isinstance(spec, ContainerPricingSpec):
-            return await self._price_container(spec)
-        if isinstance(spec, EgressPricingSpec):
-            return await self._price_egress(spec)
-        raise NotSupportedError(
-            provider=self.provider,
-            domain=spec.domain,
-            service=spec.service,
-            reason=f"Unhandled domain '{spec.domain.value}'.",
-        )
+        handler = self._dispatch_registry.get(type(spec))
+        if handler is None:
+            raise NotSupportedError(
+                provider=self.provider,
+                domain=spec.domain,
+                service=spec.service,
+                reason=f"No handler registered for {type(spec).__name__} — update _dispatch_registry.",
+            )
+        return await handler(spec)
 
     async def _price_egress(self, spec: EgressPricingSpec) -> list[NormalizedPrice]:
         """Inter-region data transfer pricing from AWS Bulk Pricing (AWSDataTransfer)."""
