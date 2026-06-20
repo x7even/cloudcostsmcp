@@ -72,3 +72,28 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # Rolls the home cluster onto the freshly-built image the instant the build
+  # finishes. Runs on a self-hosted runner inside the cluster (no inbound
+  # internet exposure) and pins the Deployment to the exact :sha-<short> tag
+  # using the runner pod's in-cluster ServiceAccount. If the self-hosted runner
+  # is offline this job simply waits/skips; the build above is unaffected.
+  deploy-home-cluster:
+    needs: build-and-push
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, occ-cluster]
+    steps:
+      - name: Pin deployment to the new image
+        run: |
+          SHA="sha-${GITHUB_SHA::7}"
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY}:${SHA}"
+          echo "Rolling opencloudcosts onto ${IMAGE}"
+          if ! command -v kubectl >/dev/null 2>&1; then
+            curl -sSLo /tmp/kubectl "https://dl.k8s.io/release/$(curl -sSL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+            chmod +x /tmp/kubectl
+            export PATH="/tmp:${PATH}"
+          fi
+          # In-cluster auth via the runner pod's ServiceAccount token.
+          kubectl -n opencloudcosts set image deployment/opencloudcosts \
+            opencloudcosts="${IMAGE}"
+          kubectl -n opencloudcosts rollout status deployment/opencloudcosts --timeout=120s
