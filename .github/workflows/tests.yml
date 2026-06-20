@@ -31,6 +31,9 @@ jobs:
       - name: Lint (ruff)
         run: uv run ruff check src/
 
+      - name: Ruff format check
+        run: uv run ruff format --check .
+
       # mypy strict mode cleanup tracked for v0.9 — run in non-strict mode for now
       - name: Type check (mypy)
         run: uv run mypy src/ --ignore-missing-imports --allow-untyped-defs --allow-untyped-calls --no-warn-return-any

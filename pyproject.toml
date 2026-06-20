@@ -65,6 +65,14 @@ packages = ["src/opencloudcosts"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+addopts = "--cov=src/opencloudcosts --cov-report=term-missing"
+
+[tool.coverage.run]
+source = ["src/opencloudcosts"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
 
 [tool.ruff]
 src = ["src"]
