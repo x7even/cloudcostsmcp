@@ -1,0 +1,14 @@
+extensions:
+  cloudcost:
+    name: cloudcost
+    cmd: uvx
+    args:
+      - opencloudcosts
+    enabled: true
+    type: stdio
+    timeout: 300
+    envs:
+      AWS_PROFILE: default
+      OCC_AWS_ENABLE_COST_EXPLORER: "false"
+      OCC_GCP_API_KEY: "AIza..."
+      GOOGLE_APPLICATION_CREDENTIALS: "/path/to/service-account.json"

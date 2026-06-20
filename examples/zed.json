@@ -1,0 +1,17 @@
+{
+  "context_servers": {
+    "cloudcost": {
+      "command": {
+        "path": "uvx",
+        "args": ["opencloudcosts"],
+        "env": {
+          "AWS_PROFILE": "default",
+          "OCC_AWS_ENABLE_COST_EXPLORER": "false",
+          "OCC_GCP_API_KEY": "AIza...",
+          "GOOGLE_APPLICATION_CREDENTIALS": "/path/to/service-account.json"
+        }
+      },
+      "settings": {}
+    }
+  }
+}
