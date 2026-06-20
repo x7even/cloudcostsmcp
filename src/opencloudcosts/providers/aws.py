@@ -1775,7 +1775,10 @@ class AWSProvider(ProviderBase):
             return []
         try:
             return await self.get_effective_price("compute", spec.resource_type, spec.region)
-        except (NotConfiguredError, Exception):
+        except NotConfiguredError:
+            return []
+        except botocore.exceptions.ClientError as e:
+            logger.warning("Cost Explorer unavailable for commitment lookup: %s", e)
             return []
 
     async def describe_catalog(self) -> ProviderCatalog:
