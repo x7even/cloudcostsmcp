@@ -7,6 +7,9 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from opencloudcosts.utils.money import _money, _price
+from opencloudcosts.utils.regions import region_display_name
+
 
 class CloudProvider(str, Enum):
     AWS = "aws"
@@ -114,8 +117,6 @@ class NormalizedPrice(BaseModel):
 
     def summary(self) -> dict[str, Any]:
         """Compact dict for LLM consumption."""
-        from opencloudcosts.utils.money import _money, _price
-        from opencloudcosts.utils.regions import region_display_name
         result: dict[str, Any] = {
             "provider": self.provider.value,
             "description": self.description,
@@ -508,7 +509,6 @@ class PricingResult(BaseModel):
 
     def summary(self) -> dict[str, Any]:
         """Compact form for LLM consumption."""
-        from opencloudcosts.utils.money import _price
         out: dict[str, Any] = {
             "public_prices": [p.summary() for p in self.public_prices],
             "auth_available": self.auth_available,
