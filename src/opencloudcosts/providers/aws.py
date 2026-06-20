@@ -1787,11 +1787,13 @@ class AWSProvider(ProviderBase):
                     # Inherit trust metadata from first component price
                     if prices:
                         ref = prices[0]
-                        synthetic = synthetic.model_copy(update={
-                            "fetched_at": ref.fetched_at,
-                            "source_url": ref.source_url,
-                            "cache_age_seconds": ref.cache_age_seconds,
-                        })
+                        synthetic = synthetic.model_copy(
+                            update={
+                                "fetched_at": ref.fetched_at,
+                                "source_url": ref.source_url,
+                                "cache_age_seconds": ref.cache_age_seconds,
+                            }
+                        )
                     prices.insert(0, synthetic)
             return prices
         if svc == "sagemaker":

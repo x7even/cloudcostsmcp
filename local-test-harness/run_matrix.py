@@ -81,6 +81,9 @@ _CATEGORY_MAP: dict[str, str] = {
     "AZAKS": "Azure AKS",
     "AZFN":  "Azure Functions",
     "AZAI":  "Azure OpenAI",
+    "AZMON": "Azure Monitor",
+    "AZCDN": "Azure CDN",
+    "AZFD":  "Azure Front Door",
     "EGR":   "Inter-region Egress",
 }
 

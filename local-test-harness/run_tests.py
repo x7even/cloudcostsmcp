@@ -867,6 +867,66 @@ TEST_PROMPTS = {
         "Compare internet egress costs for 1 TB/month from AWS (us-east-1), "
         "GCP (us-central1), and Azure (eastus). Which is cheapest?"
     ),
+
+    # -----------------------------------------------------------------------
+    # Azure Monitor / Log Analytics (AZMON) [v0.8.x]
+    # -----------------------------------------------------------------------
+    "AZMON1": (
+        "What does Azure Monitor charge for log ingestion in eastus? "
+        "I plan to ingest 100 GB of Analytics Logs per month. What is the monthly cost after the free tier?"
+    ),
+    "AZMON2": (
+        "Compare Azure Monitor Analytics Logs vs Basic Logs pricing per GB in eastus. "
+        "Which log type should I use for high-volume, query-intensive workloads?"
+    ),
+    "AZMON3": (
+        "I have 50 Azure Monitor metric alert rules in eastus. "
+        "What is the monthly cost for those alert rules after the free tier?"
+    ),
+
+    # -----------------------------------------------------------------------
+    # Azure CDN / Front Door (AZCDN / AZFD) [v0.8.x]
+    # -----------------------------------------------------------------------
+    "AZCDN1": (
+        "What does Azure CDN Standard cost to serve 5TB of data per month from eastus? "
+        "Give me the per-GB rate and total monthly estimate."
+    ),
+    "AZFD1": (
+        "What does Azure Front Door Standard cost per month in eastus for a workload "
+        "serving 10TB of data and 500 million requests?"
+    ),
+    "AZFD2": (
+        "Compare Azure CDN vs Azure Front Door pricing for serving 1TB/month of content "
+        "to users primarily in North America and Europe. Which is cheaper and what are the trade-offs?"
+    ),
+
+    # -----------------------------------------------------------------------
+    # New Azure service spot checks (NSV) — added with v0.8.x critical fixes
+    # -----------------------------------------------------------------------
+    "NSV1": (
+        "What does an Azure SQL Database General Purpose 4 vCores instance cost per hour "
+        "and per month in eastus? Include single-az pricing."
+    ),
+    "NSV2": (
+        "My Azure Function on the Consumption plan runs 10 million times per month, "
+        "each using 512MB memory for 500ms. What is the monthly cost in eastus after the free tier?"
+    ),
+    "NSV3": (
+        "What is the AKS control plane fee for a Standard tier cluster in eastus? "
+        "How much would 3x Standard_D4s_v3 worker nodes add to the monthly cost?"
+    ),
+    "NSV4": (
+        "What does Azure OpenAI GPT-4o cost for 1 million input tokens and 500K output tokens "
+        "per month in eastus? Show input and output rates separately."
+    ),
+    "NSV5": (
+        "How much does Azure Monitor Log Analytics ingestion cost for 100 GB per month in eastus? "
+        "What is the monthly cost after the free tier?"
+    ),
+    "NSV6": (
+        "What does Azure CDN Standard cost to serve 1 TB of data per month from eastus (Zone 1)? "
+        "Give the per-GB rate and the total monthly estimate."
+    ),
 }
 
 

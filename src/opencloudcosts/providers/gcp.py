@@ -1221,7 +1221,9 @@ class GCPProvider(ProviderBase):
         desc_substring = _GCS_STORAGE_CLASSES[storage_class]
 
         cache_key_extras = {"storage_type": storage_class, "source": "gcs"}
-        cached_meta = await self._cache.get_prices_with_meta("gcp", "gcs_storage", region, cache_key_extras)
+        cached_meta = await self._cache.get_prices_with_meta(
+            "gcp", "gcs_storage", region, cache_key_extras
+        )
         if cached_meta is not None:
             cached_data, fetched_at = cached_meta
             return self._apply_cache_trust(
@@ -1278,7 +1280,9 @@ class GCPProvider(ProviderBase):
             )
 
         cache_key_extras = {"storage_type": storage_type}
-        cached_meta = await self._cache.get_prices_with_meta("gcp", "storage", region, cache_key_extras)
+        cached_meta = await self._cache.get_prices_with_meta(
+            "gcp", "storage", region, cache_key_extras
+        )
         if cached_meta is not None:
             cached_data, fetched_at = cached_meta
             return self._apply_cache_trust(

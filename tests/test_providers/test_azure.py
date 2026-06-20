@@ -557,3 +557,516 @@ async def test_egress_get_price_dispatch(azure_provider: AzureProvider):
 
     assert len(result.public_prices) == 1
     assert result.public_prices[0].service == "inter_region_egress"
+
+
+# ===========================================================================
+# New service tests — Azure SQL, Azure Functions, AKS, Azure OpenAI,
+# Azure Monitor, Azure CDN, Azure Cosmos DB, Azure Front Door
+# Added to cover the 6 new services and regression tests for critical fixes.
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Azure SQL (get_sql_price)
+# ---------------------------------------------------------------------------
+
+_AZURE_SQL_ITEM = {
+    "retailPrice": 0.3812,
+    "unitPrice": 0.3812,
+    "armRegionName": "eastus",
+    "armSkuName": "",
+    "productName": "SQL Database Vcore",
+    "skuName": "GP_Gen5_4 LRS",
+    "meterName": "GP_Gen5_4",
+    "serviceName": "SQL Database",
+    "serviceFamily": "Databases",
+    "unitOfMeasure": "1 Hour",
+    "type": "Consumption",
+    "currencyCode": "USD",
+    "meterId": "sql-gp-4vcores-lrs",
+}
+
+
+async def test_sql_price_gp_4vcores(azure_provider: AzureProvider):
+    """SQL General Purpose 4 vCores returns correct price and unit."""
+    api_resp = {"Items": [_AZURE_SQL_ITEM], "NextPageLink": None}
+    with patch("httpx.get", return_value=_make_mock_response(api_resp)):
+        prices = await azure_provider.get_sql_price("General Purpose 4 vCores", "eastus")
+
+    assert len(prices) == 1
+    p = prices[0]
+    assert p.provider == CloudProvider.AZURE
+    assert p.price_per_unit == Decimal("0.3812")
+    assert p.unit == PriceUnit.PER_HOUR
+    assert p.service == "sql"
+    assert p.fetched_at is not None
+    assert p.source_url is not None
+    assert p.cache_age_seconds == 0
+
+
+async def test_sql_price_vcores_word_boundary(azure_provider: AzureProvider):
+    """SQL vCore filter must not match 14 or 40 vCore items when requesting 4 vCores."""
+    items = [
+        # 4-vCore item — should match
+        {**_AZURE_SQL_ITEM, "skuName": "GP_Gen5_4 LRS", "meterId": "sql-gp-4"},
+        # 14-vCore item — must NOT match (false positive fixed by issue #3)
+        {**_AZURE_SQL_ITEM, "skuName": "GP_Gen5_14 LRS", "retailPrice": 1.34, "meterId": "sql-gp-14"},
+        # 40-vCore item — must NOT match
+        {**_AZURE_SQL_ITEM, "skuName": "GP_Gen5_40 LRS", "retailPrice": 3.05, "meterId": "sql-gp-40"},
+    ]
+    api_resp = {"Items": items, "NextPageLink": None}
+    with patch("httpx.get", return_value=_make_mock_response(api_resp)):
+        prices = await azure_provider.get_sql_price("General Purpose 4 vCores", "eastus")
+
+    # Only the 4-vCore item should be returned
+    assert len(prices) == 1
+    assert prices[0].price_per_unit == Decimal("0.3812")
+
+
+async def test_sql_price_empty_response(azure_provider: AzureProvider):
+    """Empty API response returns empty list (no exception, no fallback for SQL)."""
+    api_resp = {"Items": [], "NextPageLink": None}
+    with patch("httpx.get", return_value=_make_mock_response(api_resp)):
+        prices = await azure_provider.get_sql_price("General Purpose 4 vCores", "eastus")
+
+    assert prices == []
+
+
+async def test_sql_price_cache_hit(azure_provider: AzureProvider):
+    """Second call to get_sql_price hits cache; httpx.get called only once."""
+    api_resp = {"Items": [_AZURE_SQL_ITEM], "NextPageLink": None}
+    with patch("httpx.get", return_value=_make_mock_response(api_resp)) as mock_get:
+        await azure_provider.get_sql_price("General Purpose 4 vCores", "eastus")
+        prices = await azure_provider.get_sql_price("General Purpose 4 vCores", "eastus")
+
+    assert mock_get.call_count == 1
+    # Cache hit: cache_age_seconds >= 0 (may be 0 in fast test)
+    assert all(p.cache_age_seconds is not None for p in prices)
+
+
+# ---------------------------------------------------------------------------
+# Azure Functions (get_functions_price)
+# ---------------------------------------------------------------------------
+
+_AZURE_FUNCTIONS_GB_SEC_ITEM = {
+    "retailPrice": 0.000016,
+    "unitPrice": 0.000016,
+    "armRegionName": "eastus",
+    "armSkuName": "",
+    "productName": "Azure Functions",
+    "skuName": "Standard",
+    "meterName": "Standard GB-s",
+    "serviceName": "Functions",
+    "serviceFamily": "Compute",
+    "unitOfMeasure": "1 GB Second",
+    "type": "Consumption",
+    "currencyCode": "USD",
+    "meterId": "functions-gbsec",
+}
+
+_AZURE_FUNCTIONS_EXEC_ITEM = {
+    "retailPrice": 0.0000002,
+    "unitPrice": 0.0000002,
+    "armRegionName": "eastus",
+    "armSkuName": "",
+    "productName": "Azure Functions",
+    "skuName": "Standard",
+    "meterName": "Standard Execution",
+    "serviceName": "Functions",
+    "serviceFamily": "Compute",
+    "unitOfMeasure": "1 Execution",
+    "type": "Consumption",
+    "currencyCode": "USD",
+    "meterId": "functions-exec",
+}
+
+
+async def test_functions_price_basic(azure_provider: AzureProvider):
+    """Functions price returns gb-second and per-request items."""
+    api_resp = {
+        "Items": [_AZURE_FUNCTIONS_GB_SEC_ITEM, _AZURE_FUNCTIONS_EXEC_ITEM],
+        "NextPageLink": None,
+    }
+    with patch("httpx.get", return_value=_make_mock_response(api_resp)):
+        prices = await azure_provider.get_functions_price("eastus")
+
+    units = {p.unit for p in prices}
+    assert PriceUnit.PER_GB_SECOND in units
+    assert PriceUnit.PER_REQUEST in units
+    assert all(p.fetched_at is not None for p in prices)
+    assert all(p.source_url is not None for p in prices)
+    assert all(p.cache_age_seconds == 0 for p in prices)
+
+
+async def test_functions_price_with_estimate(azure_provider: AzureProvider):
+    """Providing gb_seconds and requests_millions adds a monthly estimate entry."""
+    api_resp = {
+        "Items": [_AZURE_FUNCTIONS_GB_SEC_ITEM, _AZURE_FUNCTIONS_EXEC_ITEM],
+        "NextPageLink": None,
+    }
+    with patch("httpx.get", return_value=_make_mock_response(api_resp)):
+        prices = await azure_provider.get_functions_price(
+            "eastus",
+            gb_seconds=5_000_000.0,  # 5M GB-s (after 400K free = 4.6M billable)
+            requests_millions=10.0,  # 10M req (after 1M free = 9M billable)
+        )
+
+    estimate = next((p for p in prices if "estimate" in p.sku_id), None)
+    assert estimate is not None
+    assert estimate.price_per_unit > Decimal("0")
+    assert "breakdown" in estimate.attributes
+
+
+async def test_functions_price_empty_uses_static_fallback(azure_provider: AzureProvider):
+    """Empty API response returns static fallback rates (not exception)."""
+    api_resp = {"Items": [], "NextPageLink": None}
+    with patch("httpx.get", return_value=_make_mock_response(api_resp)):
+        prices = await azure_provider.get_functions_price("eastus")
+
+    assert len(prices) >= 2
+    sources = {p.attributes.get("source") for p in prices}
+    assert "static_fallback" in sources
+
+
+# ---------------------------------------------------------------------------
+# AKS (get_aks_price)
+# ---------------------------------------------------------------------------
+
+_AZURE_AKS_ITEM = {
+    "retailPrice": 0.10,
+    "unitPrice": 0.10,
+    "armRegionName": "eastus",
+    "armSkuName": "",
+    "productName": "Azure Kubernetes Service",
+    "skuName": "Standard",
+    "meterName": "Standard Uptime SLA",
+    "serviceName": "Azure Kubernetes Service",
+    "serviceFamily": "Compute",
+    "unitOfMeasure": "1 Hour",
+    "type": "Consumption",
+    "currencyCode": "USD",
+    "meterId": "aks-standard-sla",
+}
+
+
+async def test_aks_price_standard(azure_provider: AzureProvider):
+    """AKS Standard tier returns the cluster management fee."""
+    api_resp = {"Items": [_AZURE_AKS_ITEM], "NextPageLink": None}
+    with patch("httpx.get", return_value=_make_mock_response(api_resp)):
+        prices = await azure_provider.get_aks_price("eastus", mode="standard")
+
+    assert len(prices) >= 1
+    p = prices[0]
+    assert p.provider == CloudProvider.AZURE
+    assert p.price_per_unit > Decimal("0")
+    assert p.unit == PriceUnit.PER_HOUR
+    assert p.fetched_at is not None
+    assert p.source_url is not None
+    assert p.cache_age_seconds == 0
+
+
+async def test_aks_price_free_tier(azure_provider: AzureProvider):
+    """AKS free tier returns $0 control plane cost."""
+    prices = await azure_provider.get_aks_price("eastus", mode="free")
+
+    assert len(prices) == 1
+    assert prices[0].price_per_unit == Decimal("0")
+
+
+async def test_aks_price_empty_api_uses_static_fallback(azure_provider: AzureProvider):
+    """Empty API response for standard tier uses static fallback rate ($0.10/hr)."""
+    api_resp = {"Items": [], "NextPageLink": None}
+    with patch("httpx.get", return_value=_make_mock_response(api_resp)):
+        prices = await azure_provider.get_aks_price("eastus", mode="standard")
+
+    assert len(prices) >= 1
+    assert prices[0].price_per_unit == Decimal("0.10")
+    assert prices[0].attributes.get("source") == "static_fallback"
+
+
+# ---------------------------------------------------------------------------
+# Azure OpenAI (get_openai_price)
+# ---------------------------------------------------------------------------
+
+
+async def test_openai_price_static_fallback_gpt4o(azure_provider: AzureProvider):
+    """gpt-4o returns static fallback input+output prices when API returns nothing."""
+    api_resp = {"Items": [], "NextPageLink": None}
+    with patch("httpx.get", return_value=_make_mock_response(api_resp)):
+        prices = await azure_provider.get_openai_price("gpt-4o", "eastus")
+
+    token_types = {p.attributes.get("token_type") for p in prices}
+    assert "input" in token_types
+    assert "output" in token_types
+    in_p = next(p for p in prices if p.attributes.get("token_type") == "input")
+    out_p = next(p for p in prices if p.attributes.get("token_type") == "output")
+    assert in_p.price_per_unit == Decimal("0.005")
+    assert out_p.price_per_unit == Decimal("0.015")
+    assert all(p.fetched_at is not None for p in prices)
+    assert all(p.cache_age_seconds == 0 for p in prices)
+
+
+async def test_openai_price_with_token_estimate(azure_provider: AzureProvider):
+    """Providing input_tokens and output_tokens adds a cost estimate entry."""
+    api_resp = {"Items": [], "NextPageLink": None}
+    with patch("httpx.get", return_value=_make_mock_response(api_resp)):
+        prices = await azure_provider.get_openai_price(
+            "gpt-4o",
+            "eastus",
+            input_tokens=1_000_000,
+            output_tokens=500_000,
+        )
+
+    estimate = next((p for p in prices if "estimate" in p.sku_id), None)
+    assert estimate is not None
+    # 1M input tokens × $0.005/1K = $5.00; 500K output × $0.015/1K = $7.50 → $12.50
+    assert estimate.price_per_unit == Decimal("12.50")
+
+
+async def test_openai_price_unknown_model_returns_empty(azure_provider: AzureProvider):
+    """Unknown model not in static rates returns empty list (no exception)."""
+    api_resp = {"Items": [], "NextPageLink": None}
+    with patch("httpx.get", return_value=_make_mock_response(api_resp)):
+        prices = await azure_provider.get_openai_price("unknown-model-xyz", "eastus")
+
+    assert prices == []
+
+
+# ---------------------------------------------------------------------------
+# Azure Monitor (get_monitor_price)
+# ---------------------------------------------------------------------------
+
+_AZURE_MONITOR_BASIC_LOG_ITEM = {
+    "retailPrice": 0.50,
+    "unitPrice": 0.50,
+    "armRegionName": "eastus",
+    "armSkuName": "",
+    "productName": "Log Analytics",
+    "skuName": "Basic Logs",
+    "meterName": "Basic Logs Data Ingestion",
+    "serviceName": "Azure Monitor",
+    "serviceFamily": "Management and Governance",
+    "unitOfMeasure": "1 GB",
+    "type": "Consumption",
+    "currencyCode": "USD",
+    "meterId": "monitor-basic-logs",
+}
+
+
+async def test_monitor_price_basic_logs(azure_provider: AzureProvider):
+    """Monitor returns Basic Logs ingestion price from API."""
+    api_resp = {"Items": [_AZURE_MONITOR_BASIC_LOG_ITEM], "NextPageLink": None}
+    with patch("httpx.get", return_value=_make_mock_response(api_resp)):
+        prices = await azure_provider.get_monitor_price("eastus")
+
+    assert len(prices) >= 1
+    assert any(p.price_per_unit == Decimal("0.50") for p in prices)
+    assert all(p.fetched_at is not None for p in prices)
+    assert all(p.cache_age_seconds == 0 for p in prices)
+
+
+async def test_monitor_price_log_estimate(azure_provider: AzureProvider):
+    """get_monitor_price with log_gb adds a cost estimate entry using static Analytics rate."""
+    api_resp = {"Items": [], "NextPageLink": None}
+    with patch("httpx.get", return_value=_make_mock_response(api_resp)):
+        prices = await azure_provider.get_monitor_price("eastus", log_gb=100.0)
+
+    estimate = next((p for p in prices if "estimate" in p.sku_id), None)
+    assert estimate is not None
+    # 100 - 5 = 95 GB billable × $2.30 = $218.50
+    assert estimate.price_per_unit == Decimal("218.50")
+
+
+async def test_monitor_price_empty_uses_static_fallback(azure_provider: AzureProvider):
+    """Empty API response returns static fallback Analytics Logs and Metrics prices."""
+    api_resp = {"Items": [], "NextPageLink": None}
+    with patch("httpx.get", return_value=_make_mock_response(api_resp)):
+        prices = await azure_provider.get_monitor_price("eastus")
+
+    assert len(prices) >= 1
+    sources = {p.attributes.get("source") for p in prices}
+    assert "static_fallback" in sources
+
+
+# ---------------------------------------------------------------------------
+# Azure CDN (get_cdn_price)
+# ---------------------------------------------------------------------------
+
+
+async def test_cdn_price_zone1_static_fallback(azure_provider: AzureProvider):
+    """Empty API response for Zone 1 region returns static Zone 1 rate ($0.081/GB)."""
+    api_resp = {"Items": [], "NextPageLink": None}
+    with patch("httpx.get", return_value=_make_mock_response(api_resp)):
+        prices = await azure_provider.get_cdn_price("eastus")
+
+    assert len(prices) >= 1
+    p = prices[0]
+    assert p.price_per_unit == Decimal("0.081")
+    assert p.attributes.get("cdn_zone") == "Zone 1"
+    assert p.attributes.get("source") == "static_fallback"
+
+
+async def test_cdn_price_zone2_non_zone1_rate(azure_provider: AzureProvider):
+    """Zone 2 region (e.g. southeastasia) returns Zone 2 rate, not Zone 1."""
+    api_resp = {"Items": [], "NextPageLink": None}
+    with patch("httpx.get", return_value=_make_mock_response(api_resp)):
+        prices = await azure_provider.get_cdn_price("southeastasia")
+
+    assert len(prices) >= 1
+    p = prices[0]
+    assert p.attributes.get("cdn_zone") == "Zone 2"
+    # Zone 2 rate must differ from Zone 1 ($0.081)
+    assert p.price_per_unit != Decimal("0.081")
+    assert p.price_per_unit > Decimal("0")
+
+
+async def test_cdn_price_with_estimate(azure_provider: AzureProvider):
+    """Providing data_gb adds a monthly cost estimate entry."""
+    api_resp = {"Items": [], "NextPageLink": None}
+    with patch("httpx.get", return_value=_make_mock_response(api_resp)):
+        prices = await azure_provider.get_cdn_price("eastus", data_gb=1000.0)
+
+    estimate = next((p for p in prices if "estimate" in p.sku_id), None)
+    assert estimate is not None
+    assert estimate.price_per_unit > Decimal("0")
+    assert "breakdown" in estimate.attributes
+
+
+# ---------------------------------------------------------------------------
+# Azure Cosmos DB (get_cosmos_price) — regression for critical fix #1
+# ---------------------------------------------------------------------------
+
+_AZURE_COSMOS_PROVISIONED_ITEM = {
+    "retailPrice": 0.008,
+    "unitPrice": 0.008,
+    "armRegionName": "eastus",
+    "armSkuName": "",
+    "productName": "Azure Cosmos DB",
+    "skuName": "100 RU/s",
+    "meterName": "100 RU/s",
+    "serviceName": "Azure Cosmos DB",
+    "serviceFamily": "Databases",
+    "unitOfMeasure": "1 Hour",
+    "type": "Consumption",
+    "currencyCode": "USD",
+    "meterId": "cosmos-provisioned",
+}
+
+_AZURE_COSMOS_SERVERLESS_ITEM = {
+    "retailPrice": 0.25,
+    "unitPrice": 0.25,
+    "armRegionName": "eastus",
+    "armSkuName": "",
+    "productName": "Azure Cosmos DB Serverless",
+    "skuName": "1M RUs",
+    "meterName": "Serverless Request Units",
+    "serviceName": "Azure Cosmos DB",
+    "serviceFamily": "Databases",
+    "unitOfMeasure": "1M",
+    "type": "Consumption",
+    "currencyCode": "USD",
+    "meterId": "cosmos-serverless",
+}
+
+
+async def test_cosmos_serverless_via_get_price(azure_provider: AzureProvider):
+    """get_price with deployment='serverless' routes to serverless pricing (fix #1 regression)."""
+    from opencloudcosts.models import DatabasePricingSpec, PricingDomain
+
+    spec = DatabasePricingSpec(
+        provider="azure",
+        domain=PricingDomain.DATABASE,
+        service="cosmos",
+        region="eastus",
+        deployment="serverless",
+    )
+    api_resp = {
+        "Items": [_AZURE_COSMOS_PROVISIONED_ITEM, _AZURE_COSMOS_SERVERLESS_ITEM],
+        "NextPageLink": None,
+    }
+    with patch("httpx.get", return_value=_make_mock_response(api_resp)):
+        result = await azure_provider.get_price(spec)
+
+    prices = result.public_prices
+    # With deployment=serverless, only the serverless item should match
+    assert len(prices) >= 1
+    descriptions = [p.description.lower() for p in prices]
+    meter_names = [p.attributes.get("meterName", "").lower() for p in prices]
+    # At least one price should come from a serverless meter
+    assert any("serverless" in d or "serverless" in m for d, m in zip(descriptions, meter_names))
+
+
+async def test_cosmos_autoscale_via_get_price(azure_provider: AzureProvider):
+    """get_price with deployment='autoscale' routes to autoscale pricing (fix #1 regression)."""
+    from opencloudcosts.models import DatabasePricingSpec, PricingDomain
+
+    _COSMOS_AUTOSCALE_ITEM = {
+        **_AZURE_COSMOS_PROVISIONED_ITEM,
+        "meterName": "Autoscale 100 RU/s",
+        "productName": "Azure Cosmos DB Autoscale",
+        "meterId": "cosmos-autoscale",
+    }
+
+    spec = DatabasePricingSpec(
+        provider="azure",
+        domain=PricingDomain.DATABASE,
+        service="cosmos",
+        region="eastus",
+        deployment="autoscale",
+    )
+    api_resp = {
+        "Items": [_AZURE_COSMOS_PROVISIONED_ITEM, _COSMOS_AUTOSCALE_ITEM],
+        "NextPageLink": None,
+    }
+    with patch("httpx.get", return_value=_make_mock_response(api_resp)):
+        result = await azure_provider.get_price(spec)
+
+    prices = result.public_prices
+    assert len(prices) >= 1
+    # Autoscale item should appear; provisioned-only item should be filtered out
+    meter_names = [p.attributes.get("meterName", "").lower() for p in prices]
+    assert any("autoscale" in m for m in meter_names)
+
+
+async def test_cosmos_price_provisioned_direct(azure_provider: AzureProvider):
+    """Direct get_cosmos_price with deployment='provisioned' returns the RU/s rate."""
+    api_resp = {
+        "Items": [_AZURE_COSMOS_PROVISIONED_ITEM],
+        "NextPageLink": None,
+    }
+    with patch("httpx.get", return_value=_make_mock_response(api_resp)):
+        prices = await azure_provider.get_cosmos_price("eastus", deployment="provisioned")
+
+    assert len(prices) >= 1
+    assert prices[0].price_per_unit == Decimal("0.008")
+    assert prices[0].fetched_at is not None
+    assert prices[0].source_url is not None
+    assert prices[0].cache_age_seconds == 0
+
+
+# ---------------------------------------------------------------------------
+# Azure Front Door (get_front_door_price) — regression for critical fix #2
+# ---------------------------------------------------------------------------
+
+
+async def test_front_door_zone1_static_fallback(azure_provider: AzureProvider):
+    """Empty API for Zone 1 region returns $0.0825/GB fallback rate."""
+    api_resp = {"Items": [], "NextPageLink": None}
+    with patch("httpx.get", return_value=_make_mock_response(api_resp)):
+        prices = await azure_provider.get_front_door_price("eastus")
+
+    dt_price = next(p for p in prices if p.unit == PriceUnit.PER_GB)
+    assert dt_price.price_per_unit == Decimal("0.0825")
+    assert dt_price.attributes.get("cdn_zone") == "Zone 1"
+
+
+async def test_front_door_zone2_returns_zone2_rate(azure_provider: AzureProvider):
+    """Zone 2 region returns a different (higher) rate than Zone 1."""
+    api_resp = {"Items": [], "NextPageLink": None}
+    with patch("httpx.get", return_value=_make_mock_response(api_resp)):
+        prices = await azure_provider.get_front_door_price("southeastasia")
+
+    dt_price = next(p for p in prices if p.unit == PriceUnit.PER_GB)
+    assert dt_price.attributes.get("cdn_zone") == "Zone 2"
+    # Zone 2 rate must differ from Zone 1
+    assert dt_price.price_per_unit != Decimal("0.0825")
+    assert dt_price.price_per_unit > Decimal("0")

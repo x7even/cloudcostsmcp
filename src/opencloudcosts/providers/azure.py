@@ -31,7 +31,9 @@ from opencloudcosts.models import (
     EffectivePrice,
     EgressPricingSpec,
     InstanceTypeInfo,
+    NetworkPricingSpec,
     NormalizedPrice,
+    ObservabilityPricingSpec,
     PriceUnit,
     PricingDomain,
     PricingResult,
@@ -121,6 +123,13 @@ _AZURE_CAPABILITIES: dict[tuple[str, str | None], bool] = {
     (PricingDomain.AI.value, None): True,
     (PricingDomain.AI.value, "openai"): True,
     (PricingDomain.INTER_REGION_EGRESS.value, None): True,
+    # Azure Monitor (Observability domain)
+    (PricingDomain.OBSERVABILITY.value, None): True,
+    (PricingDomain.OBSERVABILITY.value, "azure_monitor"): True,
+    # Azure CDN + Front Door (Network domain)
+    (PricingDomain.NETWORK.value, None): True,
+    (PricingDomain.NETWORK.value, "azure_cdn"): True,
+    (PricingDomain.NETWORK.value, "azure_front_door"): True,
 }
 
 # Azure outbound bandwidth: base-tier per-GB rates by billing zone.
@@ -185,6 +194,73 @@ _OPENAI_STATIC_RATES: dict[str, tuple[Decimal, Decimal]] = {
     "text-embedding-ada-002": (Decimal("0.0001"), Decimal("0.0001")),
     "text-embedding-3-small": (Decimal("0.00002"), Decimal("0.00002")),
     "text-embedding-3-large": (Decimal("0.00013"), Decimal("0.00013")),
+}
+
+# Azure Monitor static fallback rates (eastus, as of 2026-04)
+# Source: https://azure.microsoft.com/en-us/pricing/details/monitor/
+_MONITOR_LOG_ANALYTICS_RATE = Decimal("2.30")  # per GB Analytics Logs (after 5 GB free)
+_MONITOR_BASIC_LOG_RATE = Decimal("0.50")  # per GB Basic Logs
+_MONITOR_METRICS_RATE = Decimal("0.16")  # per 10M metric samples
+_MONITOR_ALERT_METRIC_RATE = Decimal("0.10")  # per rule/month after 10 free
+_MONITOR_FREE_LOG_GB = Decimal("5")  # 5 GB/month free tier
+_MONITOR_FREE_ALERT_RULES = 10  # first 10 metric alert rules free
+
+# Azure CDN / Front Door billing zone by source region.
+# CDN: Zone 1=NA+EU, Zone 2=APAC+ME, Zone 3=India/South Asia,
+#       Zone 4=South America, Zone 5=Australia/Pacific
+_CDN_ZONE: dict[str, str] = {
+    # Zone 2: APAC + Middle East
+    "eastasia": "Zone 2",
+    "southeastasia": "Zone 2",
+    "japaneast": "Zone 2",
+    "japanwest": "Zone 2",
+    "koreacentral": "Zone 2",
+    "koreasouth": "Zone 2",
+    "uaenorth": "Zone 2",
+    "uaecentral": "Zone 2",
+    # Zone 3: India/South Asia
+    "centralindia": "Zone 3",
+    "southindia": "Zone 3",
+    "westindia": "Zone 3",
+    # Zone 4: South America
+    "brazilsouth": "Zone 4",
+    # Zone 5: Australia/Pacific
+    "australiaeast": "Zone 5",
+    "australiasoutheast": "Zone 5",
+}
+# Default (all Americas + Europe) = "Zone 1"
+
+# Static fallback rates per GB for Azure CDN Standard (Microsoft), by billing zone.
+# Zone 1: Americas + Europe. Zone 2: APAC + ME. Zone 3: India/South Asia.
+# Zone 4: South America. Zone 5: Australia/Pacific.
+# Source: https://azure.microsoft.com/en-us/pricing/details/cdn/
+_CDN_STATIC_RATE_ZONE1 = Decimal("0.081")   # Zone 1, 0-10 TB tier
+_CDN_STATIC_RATE_ZONE2 = Decimal("0.163")   # Zone 2
+_CDN_STATIC_RATE_ZONE3 = Decimal("0.163")   # Zone 3
+_CDN_STATIC_RATE_ZONE4 = Decimal("0.200")   # Zone 4
+_CDN_STATIC_RATE_ZONE5 = Decimal("0.220")   # Zone 5
+_CDN_STATIC_RATES: dict[str, Decimal] = {
+    "Zone 1": _CDN_STATIC_RATE_ZONE1,
+    "Zone 2": _CDN_STATIC_RATE_ZONE2,
+    "Zone 3": _CDN_STATIC_RATE_ZONE3,
+    "Zone 4": _CDN_STATIC_RATE_ZONE4,
+    "Zone 5": _CDN_STATIC_RATE_ZONE5,
+}
+_FRONTDOOR_STATIC_RATE_ZONE1 = Decimal("0.0825")  # Zone 1, 0-10 TB tier Standard
+_FRONTDOOR_STATIC_RATES: dict[str, Decimal] = {
+    "Zone 1": Decimal("0.0825"),
+    "Zone 2": Decimal("0.160"),
+    "Zone 3": Decimal("0.160"),
+    "Zone 4": Decimal("0.195"),
+    "Zone 5": Decimal("0.210"),
+}
+_FRONTDOOR_REQ_STATIC_RATE_ZONE1 = Decimal("0.009")  # per 10K requests
+_FRONTDOOR_REQ_STATIC_RATES: dict[str, Decimal] = {
+    "Zone 1": Decimal("0.009"),
+    "Zone 2": Decimal("0.012"),
+    "Zone 3": Decimal("0.012"),
+    "Zone 4": Decimal("0.014"),
+    "Zone 5": Decimal("0.015"),
 }
 
 
@@ -551,7 +627,7 @@ class AzureProvider(ProviderBase):
             if tier_prefix and not sku_name.startswith(tier_prefix):
                 continue
             # Skip items not matching vCore count
-            if vcores_str and vcores_str not in sku_name:
+            if vcores_str and not re.search(rf"(?<!\d){re.escape(vcores_str)}(?!\d)", sku_name):
                 continue
             # Redundancy filter: ZRS = HA, LRS = single-az
             if ha and "ZRS" in sku_name:
@@ -784,9 +860,9 @@ class AzureProvider(ProviderBase):
             filters: dict[str, str] = {
                 "armRegionName": region,
                 "priceType": "Consumption",
-                "serviceName": "Azure Functions",
+                "serviceName": "Functions",
             }
-            items = await asyncio.to_thread(self._fetch_prices, filters, 20)
+            items = await asyncio.to_thread(self._fetch_prices, filters, 30)
 
             prices = []
             for item in items:
@@ -799,6 +875,30 @@ class AzureProvider(ProviderBase):
                     p = p.model_copy(update={"unit": PriceUnit.PER_REQUEST})
                 elif "gb" in uom and "second" in uom:
                     p = p.model_copy(update={"unit": PriceUnit.PER_GB_SECOND})
+                elif "vcpu" in meter:
+                    # Premium plan: per-vCPU-hour
+                    p = p.model_copy(
+                        update={
+                            "unit": PriceUnit.PER_HOUR,
+                            "attributes": {
+                                **p.attributes,
+                                "plan": "premium",
+                                "dimension": "vcpu_hour",
+                            },
+                        }
+                    )
+                elif "memory" in meter and "duration" in meter:
+                    # Premium plan: per-GiB-hour
+                    p = p.model_copy(
+                        update={
+                            "unit": PriceUnit.PER_HOUR,
+                            "attributes": {
+                                **p.attributes,
+                                "plan": "premium",
+                                "dimension": "gib_hour",
+                            },
+                        }
+                    )
                 else:
                     continue
                 prices.append(p)
@@ -885,11 +985,13 @@ class AzureProvider(ProviderBase):
                 # Inherit trust metadata from first component price
                 if prices:
                     ref = prices[0]
-                    synthetic = synthetic.model_copy(update={
-                        "fetched_at": ref.fetched_at,
-                        "source_url": ref.source_url,
-                        "cache_age_seconds": ref.cache_age_seconds,
-                    })
+                    synthetic = synthetic.model_copy(
+                        update={
+                            "fetched_at": ref.fetched_at,
+                            "source_url": ref.source_url,
+                            "cache_age_seconds": ref.cache_age_seconds,
+                        }
+                    )
                 prices.append(synthetic)
 
         return prices
@@ -923,7 +1025,7 @@ class AzureProvider(ProviderBase):
             filters: dict[str, str] = {
                 "armRegionName": region,
                 "priceType": "Consumption",
-                "serviceName": "Azure OpenAI",
+                "serviceName": "Foundry Models",
             }
             items = await asyncio.to_thread(self._fetch_prices, filters, 100)
 
@@ -931,9 +1033,13 @@ class AzureProvider(ProviderBase):
             for item in items:
                 meter = item.get("meterName", "").lower()
                 product = item.get("productName", "").lower()
+                sku = item.get("skuName", "").lower()
+                model_normalized = model_lower.replace("-", " ")
+                model_compact = model_lower.replace("-", "").replace(" ", "")
                 if (
-                    model_lower.replace("-", " ") not in product
-                    and model_lower.replace("-", " ") not in meter
+                    model_normalized not in product
+                    and model_normalized not in meter
+                    and model_compact not in sku.replace("-", "").replace(" ", "")
                 ):
                     continue
                 p = self._item_to_price(item, region, PricingTerm.ON_DEMAND, "openai")
@@ -1047,11 +1153,13 @@ class AzureProvider(ProviderBase):
                 # Inherit trust metadata from first component price
                 if prices:
                     ref = prices[0]
-                    synthetic = synthetic.model_copy(update={
-                        "fetched_at": ref.fetched_at,
-                        "source_url": ref.source_url,
-                        "cache_age_seconds": ref.cache_age_seconds,
-                    })
+                    synthetic = synthetic.model_copy(
+                        update={
+                            "fetched_at": ref.fetched_at,
+                            "source_url": ref.source_url,
+                            "cache_age_seconds": ref.cache_age_seconds,
+                        }
+                    )
                 prices.append(synthetic)
 
         return prices
@@ -1246,7 +1354,8 @@ class AzureProvider(ProviderBase):
                     f"Azure does not support {spec.domain.value}/{spec.service}. "
                     "Azure supports: compute (vm), storage (managed_disks, blob), "
                     "database (sql, cosmos), container (aks), serverless (azure_functions), "
-                    "ai (openai), inter_region_egress."
+                    "ai (openai), inter_region_egress, observability (azure_monitor), "
+                    "network (azure_cdn, azure_front_door)."
                 ),
                 alternatives=["Use describe_catalog(provider='azure') to see supported services."],
                 example_invocation={
@@ -1270,6 +1379,10 @@ class AzureProvider(ProviderBase):
             public_prices = await self._price_ai(spec)
         elif isinstance(spec, EgressPricingSpec):
             public_prices = await self._price_egress(spec)
+        elif isinstance(spec, ObservabilityPricingSpec):
+            public_prices = await self._price_observability(spec)
+        elif isinstance(spec, NetworkPricingSpec):
+            public_prices = await self._price_network(spec)
         else:
             raise NotSupportedError(
                 provider=self.provider,
@@ -1295,9 +1408,13 @@ class AzureProvider(ProviderBase):
     async def _price_database(self, spec: DatabasePricingSpec) -> list[NormalizedPrice]:
         svc = (spec.service or "sql").lower()
         if svc == "cosmos":
-            multi = spec.deployment.lower() in ("multi-az", "ha", "regional", "multi-region")
+            dep = spec.deployment.lower()
+            # Pass the requested deployment mode through to get_cosmos_price.
+            # "ha" and "multi-region" variants mean multi-region provisioned writes.
+            multi = dep in ("multi-az", "ha", "regional", "multi-region")
+            cosmos_deployment = dep if dep in ("serverless", "autoscale") else "provisioned"
             return await self.get_cosmos_price(
-                spec.region, deployment="provisioned", multi_region=multi
+                spec.region, deployment=cosmos_deployment, multi_region=multi
             )
         # Default: Azure SQL / MySQL / PostgreSQL
         return await self.get_sql_price(
@@ -1331,6 +1448,55 @@ class AzureProvider(ProviderBase):
     async def _price_egress(self, spec: EgressPricingSpec) -> list[NormalizedPrice]:
         src = spec.source_region or spec.region or "eastus"
         return await self.get_egress_price(src, spec.dest_region, spec.data_gb)
+
+    async def _price_observability(self, spec: ObservabilityPricingSpec) -> list[NormalizedPrice]:
+        svc = (spec.service or "azure_monitor").lower()
+        if svc == "azure_monitor":
+            return await self.get_monitor_price(
+                region=spec.region,
+                log_gb=spec.log_gb,
+                metrics_millions=spec.ingestion_mib,  # repurposed: millions of samples
+                alert_rules=spec.metrics_count,  # repurposed: alert rule count
+            )
+        raise NotSupportedError(
+            provider=self.provider,
+            domain=spec.domain,
+            service=spec.service,
+            reason=(
+                f"Azure observability service '{spec.service}' not supported. Use 'azure_monitor'."
+            ),
+        )
+
+    async def _price_network(self, spec: NetworkPricingSpec) -> list[NormalizedPrice]:
+        svc = (spec.service or "azure_cdn").lower()
+        if svc == "azure_cdn":
+            return await self.get_cdn_price(
+                region=spec.region,
+                data_gb=spec.data_gb or spec.egress_gb,
+            )
+        elif svc == "azure_front_door":
+            return await self.get_front_door_price(
+                region=spec.region,
+                data_gb=spec.data_gb or spec.egress_gb,
+                monthly_requests_millions=spec.monthly_requests_millions,
+            )
+        raise NotSupportedError(
+            provider=self.provider,
+            domain=spec.domain,
+            service=spec.service,
+            reason=(
+                f"Azure network service '{spec.service}' not supported. "
+                "Use 'azure_cdn' or 'azure_front_door'."
+            ),
+            alternatives=["azure_cdn", "azure_front_door"],
+            example_invocation={
+                "provider": "azure",
+                "domain": "network",
+                "service": "azure_cdn",
+                "region": "eastus",
+                "data_gb": 1000,
+            },
+        )
 
     async def get_egress_price(
         self,
@@ -1424,6 +1590,538 @@ class AzureProvider(ProviderBase):
         )
         return self._annotate_fresh([price], self._SOURCE_URL)
 
+    async def get_monitor_price(
+        self,
+        region: str,
+        log_gb: float = 0.0,
+        metrics_millions: float = 0.0,
+        alert_rules: int = 0,
+    ) -> list[NormalizedPrice]:
+        """
+        Price Azure Monitor.
+
+        log_gb: Analytics Logs ingestion volume in GB/month (after 5 GB free).
+        metrics_millions: Custom metrics ingestion in millions of samples (per 10M billed).
+        alert_rules: Number of metric alert rules (first 10 free, then $0.10/rule/month).
+        Free tier: 5 GB/month Analytics Logs. Log types: Analytics ($2.30/GB),
+        Basic ($0.50/GB), Auxiliary ($0.05/GB).
+        """
+        cache_extras: dict[str, str] = {}
+        cached_meta = await self._cache.get_prices_with_meta(
+            "azure", "azure_monitor", region, cache_extras
+        )
+        if cached_meta is not None:
+            cached_data, fetched_at = cached_meta
+            prices = self._apply_cache_trust(
+                [NormalizedPrice.model_validate(p) for p in cached_data],
+                fetched_at,
+                self._SOURCE_URL,
+            )
+        else:
+            filters: dict[str, str] = {
+                "armRegionName": region,
+                "priceType": "Consumption",
+                "serviceName": "Azure Monitor",
+            }
+            items = await asyncio.to_thread(self._fetch_prices, filters, 300)
+
+            prices: list[NormalizedPrice] = []
+            for item in items:
+                meter = item.get("meterName", "").lower()
+
+                # Match only log ingestion, metrics, and alert meters that are
+                # billed on a volume/count basis.
+                # Note: Analytics Logs ($2.30/GB) are not exposed via this API
+                # endpoint; the method falls back to static rates for that tier.
+                if "basic logs data ingestion" in meter:
+                    unit = PriceUnit.PER_GB
+                elif "auxiliary logs data ingestion" in meter:
+                    unit = PriceUnit.PER_GB
+                elif "metrics ingestion" in meter and "metric samples" in meter:
+                    unit = PriceUnit.PER_UNIT  # per 10M samples
+                elif meter == "alerts metric monitored":
+                    unit = PriceUnit.PER_UNIT  # per rule/month
+                else:
+                    continue
+
+                p = self._item_to_price(item, region, PricingTerm.ON_DEMAND, "azure_monitor")
+                if p is None:
+                    continue
+                prices.append(
+                    p.model_copy(
+                        update={
+                            "unit": unit,
+                            "attributes": {
+                                **p.attributes,
+                                "monitor_dimension": meter,
+                            },
+                        }
+                    )
+                )
+
+            if not prices:
+                prices = [
+                    NormalizedPrice(
+                        provider=CloudProvider.AZURE,
+                        service="azure_monitor",
+                        sku_id="monitor-analytics-logs",
+                        product_family="Management and Governance",
+                        description="Azure Monitor — Analytics Logs ingestion (after 5 GB free)",
+                        region=region,
+                        pricing_term=PricingTerm.ON_DEMAND,
+                        price_per_unit=_MONITOR_LOG_ANALYTICS_RATE,
+                        unit=PriceUnit.PER_GB,
+                        attributes={
+                            "free_tier": "5 GB/month",
+                            "source": "static_fallback",
+                        },
+                    ),
+                    NormalizedPrice(
+                        provider=CloudProvider.AZURE,
+                        service="azure_monitor",
+                        sku_id="monitor-metrics",
+                        product_family="Management and Governance",
+                        description="Azure Monitor — Metrics ingestion",
+                        region=region,
+                        pricing_term=PricingTerm.ON_DEMAND,
+                        price_per_unit=_MONITOR_METRICS_RATE,
+                        unit=PriceUnit.PER_UNIT,
+                        attributes={
+                            "unit_label": "per 10M metric samples",
+                            "source": "static_fallback",
+                        },
+                    ),
+                ]
+
+            await self._cache.set_prices(
+                "azure",
+                "azure_monitor",
+                region,
+                cache_extras,
+                [p.model_dump(mode="json") for p in prices],
+                ttl_hours=self._settings.cache_ttl_hours,
+            )
+            prices = self._annotate_fresh(prices, self._SOURCE_URL)
+
+        # Synthetic cost estimate if volume provided
+        if log_gb > 0 or metrics_millions > 0 or alert_rules > 0:
+            # Analytics Logs rate is not in live API (no "Analytics Logs Data
+            # Ingestion" meter); always use the static fallback rate.
+            log_rate = _MONITOR_LOG_ANALYTICS_RATE  # $2.30/GB
+            metrics_price = next(
+                (
+                    p
+                    for p in prices
+                    if "metrics ingestion" in p.attributes.get("monitor_dimension", "")
+                ),
+                None,
+            )
+            if metrics_price is None:
+                metrics_price = next(
+                    (
+                        p
+                        for p in prices
+                        if p.unit == PriceUnit.PER_UNIT and "metric" in p.description.lower()
+                    ),
+                    None,
+                )
+            alert_price = next(
+                (
+                    p
+                    for p in prices
+                    if p.attributes.get("monitor_dimension", "") == "alerts metric monitored"
+                ),
+                None,
+            )
+
+            total = Decimal("0")
+            breakdown: list[str] = []
+
+            if log_gb > 0:
+                billable = max(Decimal("0"), Decimal(str(log_gb)) - _MONITOR_FREE_LOG_GB)
+                cost = log_rate * billable
+                total += cost
+                breakdown.append(
+                    f"{float(billable):.1f} GB × ${float(log_rate):.2f}/GB (Analytics Logs)"
+                    f" = ${float(cost):.4f}"
+                )
+            if metrics_price and metrics_millions > 0:
+                cost = metrics_price.price_per_unit * Decimal(str(metrics_millions / 10))
+                total += cost
+                breakdown.append(
+                    f"{metrics_millions:.1f}M samples × "
+                    f"${float(metrics_price.price_per_unit):.2f}/10M = ${float(cost):.4f}"
+                )
+            if alert_rules > 0:
+                billable_rules = max(0, alert_rules - _MONITOR_FREE_ALERT_RULES)
+                rate = alert_price.price_per_unit if alert_price else _MONITOR_ALERT_METRIC_RATE
+                cost = rate * Decimal(str(billable_rules))
+                total += cost
+                breakdown.append(
+                    f"{billable_rules} rules × ${float(rate):.2f}/mo = ${float(cost):.4f}"
+                )
+
+            if breakdown:
+                synthetic = NormalizedPrice(
+                    provider=CloudProvider.AZURE,
+                    service="azure_monitor",
+                    sku_id="monitor-estimate",
+                    product_family="Management and Governance",
+                    description="Azure Monitor — estimated monthly cost",
+                    region=region,
+                    pricing_term=PricingTerm.ON_DEMAND,
+                    price_per_unit=total,
+                    unit=PriceUnit.PER_UNIT,
+                    attributes={
+                        "breakdown": "; ".join(breakdown),
+                        "note": (
+                            "Analytics Logs free tier: 5 GB/month. "
+                            "Metric alerts: first 10 rules free."
+                        ),
+                    },
+                )
+                if prices:
+                    ref = prices[0]
+                    synthetic = synthetic.model_copy(
+                        update={
+                            "fetched_at": ref.fetched_at,
+                            "source_url": ref.source_url,
+                            "cache_age_seconds": ref.cache_age_seconds,
+                        }
+                    )
+                prices.append(synthetic)
+
+        return prices
+
+    async def get_cdn_price(
+        self,
+        region: str,
+        data_gb: float = 0.0,
+        sku: str = "standard",  # "standard" | "premium"
+    ) -> list[NormalizedPrice]:
+        """
+        Price Azure CDN (Content Delivery Network).
+
+        data_gb: Monthly outbound data transfer in GB for cost estimate.
+        sku: "standard" (default) or "premium".
+        CDN pricing is zone-based (Zone 1: Americas+Europe, Zone 2: APAC+ME).
+        Rate at 0-10 TB: $0.081/GB (Zone 1).
+        Note: CDN API prices are zone-based, not region-based. armRegionName is NOT
+        passed to the API filter; region is used only for zone lookup.
+        """
+        zone_label = _CDN_ZONE.get(region.lower(), "Zone 1")
+        cache_extras = {"sku": sku, "zone": zone_label}
+        cached_meta = await self._cache.get_prices_with_meta(
+            "azure", "azure_cdn", region, cache_extras
+        )
+        if cached_meta is not None:
+            cached_data, fetched_at = cached_meta
+            prices = self._apply_cache_trust(
+                [NormalizedPrice.model_validate(p) for p in cached_data],
+                fetched_at,
+                self._SOURCE_URL,
+            )
+        else:
+            # CDN pricing is zone-based — do NOT include armRegionName in filter
+            filters: dict[str, str] = {
+                "priceType": "Consumption",
+                "serviceName": "Content Delivery Network",
+            }
+            items = await asyncio.to_thread(self._fetch_prices, filters, 700)
+
+            prices = []
+            for item in items:
+                meter = item.get("meterName", "").lower()
+                sku_name = item.get("skuName", "").lower()
+                product = item.get("productName", "").lower()
+
+                # Accept only data transfer out meters for the target zone
+                if "data transfer" not in meter:
+                    continue
+                # SKU filter
+                if sku == "premium" and "premium" not in sku_name:
+                    continue
+                if sku == "standard" and "standard" not in sku_name:
+                    continue
+                # Restrict to Microsoft CDN (skip Akamai/Verizon products)
+                # CDN API returns no zone label in meterName; zones are implicit in
+                # the price points. We collect all rows and pick by price tier.
+                if "akamai" in product or "verizon" in product:
+                    continue
+
+                p = self._item_to_price(item, region, PricingTerm.ON_DEMAND, "azure_cdn")
+                if p is None:
+                    continue
+                prices.append(
+                    p.model_copy(
+                        update={
+                            "unit": PriceUnit.PER_GB,
+                            "attributes": {
+                                **p.attributes,
+                                "cdn_zone": zone_label,
+                                "cdn_sku": sku,
+                            },
+                        }
+                    )
+                )
+
+            if not prices:
+                cdn_static_rate = _CDN_STATIC_RATES.get(zone_label, _CDN_STATIC_RATE_ZONE1)
+                prices = [
+                    NormalizedPrice(
+                        provider=CloudProvider.AZURE,
+                        service="azure_cdn",
+                        sku_id=f"cdn-{zone_label.lower().replace(' ', '')}-standard-dt",
+                        product_family="Networking",
+                        description=f"Azure CDN Standard — Data Transfer Out ({zone_label})",
+                        region=region,
+                        pricing_term=PricingTerm.ON_DEMAND,
+                        price_per_unit=cdn_static_rate,
+                        unit=PriceUnit.PER_GB,
+                        attributes={
+                            "cdn_zone": zone_label,
+                            "cdn_sku": sku,
+                            "source": "static_fallback",
+                            "note": (
+                                f"{zone_label} base tier (0-10 TB). Prices decrease at higher volumes."
+                            ),
+                        },
+                    )
+                ]
+
+            await self._cache.set_prices(
+                "azure",
+                "azure_cdn",
+                region,
+                cache_extras,
+                [p.model_dump(mode="json") for p in prices],
+                ttl_hours=self._settings.cache_ttl_hours,
+            )
+            prices = self._annotate_fresh(prices, self._SOURCE_URL)
+
+        # Synthetic estimate if data_gb provided
+        if data_gb > 0 and prices:
+            # Pick base rate (highest $/GB = first volume tier)
+            base = max(prices, key=lambda p: p.price_per_unit)
+            cost = base.price_per_unit * Decimal(str(data_gb))
+            synthetic = NormalizedPrice(
+                provider=CloudProvider.AZURE,
+                service="azure_cdn",
+                sku_id="cdn-estimate",
+                product_family="Networking",
+                description=f"Azure CDN — estimated monthly cost for {data_gb:.1f} GB",
+                region=region,
+                pricing_term=PricingTerm.ON_DEMAND,
+                price_per_unit=cost,
+                unit=PriceUnit.PER_UNIT,
+                attributes={
+                    "breakdown": (
+                        f"{data_gb:.1f} GB × ${float(base.price_per_unit):.4f}/GB"
+                        f" = ${float(cost):.4f}"
+                    ),
+                    "cdn_zone": zone_label,
+                    "note": "Base tier rate. Volume discounts apply above 10 TB/month.",
+                },
+            )
+            ref = prices[0]
+            synthetic = synthetic.model_copy(
+                update={
+                    "fetched_at": ref.fetched_at,
+                    "source_url": ref.source_url,
+                    "cache_age_seconds": ref.cache_age_seconds,
+                }
+            )
+            prices.append(synthetic)
+
+        return prices
+
+    async def get_front_door_price(
+        self,
+        region: str,
+        data_gb: float = 0.0,
+        monthly_requests_millions: float = 0.0,
+        sku: str = "standard",  # "standard" | "premium"
+    ) -> list[NormalizedPrice]:
+        """
+        Price Azure Front Door.
+
+        data_gb: Monthly data transfer out in GB for cost estimate.
+        monthly_requests_millions: Monthly request count in millions for cost estimate.
+        sku: "standard" (default) or "premium".
+        Front Door has 8 pricing zones. Standard SKU Zone 1 base: $0.0825/GB,
+        $0.009/10K requests.
+        Note: Front Door API prices are zone-based — armRegionName is NOT passed to
+        the API filter.
+        """
+        zone_label = _CDN_ZONE.get(region.lower(), "Zone 1")
+        cache_extras = {"sku": sku, "zone": zone_label}
+        cached_meta = await self._cache.get_prices_with_meta(
+            "azure", "azure_front_door", region, cache_extras
+        )
+        if cached_meta is not None:
+            cached_data, fetched_at = cached_meta
+            prices = self._apply_cache_trust(
+                [NormalizedPrice.model_validate(p) for p in cached_data],
+                fetched_at,
+                self._SOURCE_URL,
+            )
+        else:
+            # Front Door pricing is zone-based — do NOT include armRegionName in filter
+            filters: dict[str, str] = {
+                "priceType": "Consumption",
+                "serviceName": "Azure Front Door Service",
+            }
+            items = await asyncio.to_thread(self._fetch_prices, filters, 500)
+
+            prices = []
+            for item in items:
+                meter = item.get("meterName", "").lower()
+                sku_name = item.get("skuName", "").lower()
+                uom = item.get("unitOfMeasure", "").lower()
+                product = item.get("productName", "").lower()
+
+                # SKU filter
+                if sku == "premium" and "premium" not in sku_name:
+                    continue
+                if sku == "standard" and "standard" not in sku_name:
+                    continue
+                # Front Door API returns no zone label in meterName; zones are
+                # implicit in the price points. Restrict to Front Door Service product.
+                if "front door service" not in product and "front door" not in product:
+                    continue
+
+                if "data transfer out" in meter:
+                    unit = PriceUnit.PER_GB
+                elif "requests" in meter and "10k" in uom:
+                    unit = PriceUnit.PER_UNIT  # per 10K requests
+                else:
+                    continue
+
+                p = self._item_to_price(item, region, PricingTerm.ON_DEMAND, "azure_front_door")
+                if p is None:
+                    continue
+                attrs = {**p.attributes, "cdn_zone": zone_label, "front_door_sku": sku}
+                if unit == PriceUnit.PER_UNIT:
+                    attrs["unit_label"] = "per 10K requests"
+                prices.append(p.model_copy(update={"unit": unit, "attributes": attrs}))
+
+            if not prices:
+                fd_dt_rate = _FRONTDOOR_STATIC_RATES.get(zone_label, _FRONTDOOR_STATIC_RATE_ZONE1)
+                fd_req_rate = _FRONTDOOR_REQ_STATIC_RATES.get(
+                    zone_label, _FRONTDOOR_REQ_STATIC_RATE_ZONE1
+                )
+                zone_slug = zone_label.lower().replace(" ", "")
+                prices = [
+                    NormalizedPrice(
+                        provider=CloudProvider.AZURE,
+                        service="azure_front_door",
+                        sku_id=f"frontdoor-{zone_slug}-standard-dt",
+                        product_family="Networking",
+                        description=(
+                            f"Azure Front Door Standard — Data Transfer Out ({zone_label})"
+                        ),
+                        region=region,
+                        pricing_term=PricingTerm.ON_DEMAND,
+                        price_per_unit=fd_dt_rate,
+                        unit=PriceUnit.PER_GB,
+                        attributes={
+                            "cdn_zone": zone_label,
+                            "front_door_sku": sku,
+                            "source": "static_fallback",
+                        },
+                    ),
+                    NormalizedPrice(
+                        provider=CloudProvider.AZURE,
+                        service="azure_front_door",
+                        sku_id=f"frontdoor-{zone_slug}-standard-req",
+                        product_family="Networking",
+                        description=(f"Azure Front Door Standard — Requests ({zone_label})"),
+                        region=region,
+                        pricing_term=PricingTerm.ON_DEMAND,
+                        price_per_unit=fd_req_rate,
+                        unit=PriceUnit.PER_UNIT,
+                        attributes={
+                            "cdn_zone": zone_label,
+                            "front_door_sku": sku,
+                            "unit_label": "per 10K requests",
+                            "source": "static_fallback",
+                        },
+                    ),
+                ]
+
+            await self._cache.set_prices(
+                "azure",
+                "azure_front_door",
+                region,
+                cache_extras,
+                [p.model_dump(mode="json") for p in prices],
+                ttl_hours=self._settings.cache_ttl_hours,
+            )
+            prices = self._annotate_fresh(prices, self._SOURCE_URL)
+
+        # Synthetic estimate if volumes provided
+        if data_gb > 0 or monthly_requests_millions > 0:
+            dt_price = next(
+                (p for p in prices if p.unit == PriceUnit.PER_GB and p.price_per_unit > 0),
+                None,
+            )
+            req_price = next(
+                (
+                    p
+                    for p in prices
+                    if p.unit == PriceUnit.PER_UNIT
+                    and p.attributes.get("unit_label") == "per 10K requests"
+                ),
+                None,
+            )
+            total = Decimal("0")
+            breakdown: list[str] = []
+
+            if dt_price and data_gb > 0:
+                cost = dt_price.price_per_unit * Decimal(str(data_gb))
+                total += cost
+                breakdown.append(
+                    f"{data_gb:.1f} GB × ${float(dt_price.price_per_unit):.4f}/GB"
+                    f" = ${float(cost):.4f}"
+                )
+            if req_price and monthly_requests_millions > 0:
+                # req_price is per 10K requests; convert millions to 10K units
+                units_10k = monthly_requests_millions * 1_000_000 / 10_000
+                cost = req_price.price_per_unit * Decimal(str(units_10k))
+                total += cost
+                breakdown.append(
+                    f"{monthly_requests_millions:.1f}M requests × "
+                    f"${float(req_price.price_per_unit):.4f}/10K = ${float(cost):.4f}"
+                )
+
+            if breakdown:
+                synthetic = NormalizedPrice(
+                    provider=CloudProvider.AZURE,
+                    service="azure_front_door",
+                    sku_id="frontdoor-estimate",
+                    product_family="Networking",
+                    description="Azure Front Door — estimated monthly cost",
+                    region=region,
+                    pricing_term=PricingTerm.ON_DEMAND,
+                    price_per_unit=total,
+                    unit=PriceUnit.PER_UNIT,
+                    attributes={
+                        "breakdown": "; ".join(breakdown),
+                        "cdn_zone": zone_label,
+                    },
+                )
+                ref = prices[0]
+                synthetic = synthetic.model_copy(
+                    update={
+                        "fetched_at": ref.fetched_at,
+                        "source_url": ref.source_url,
+                        "cache_age_seconds": ref.cache_age_seconds,
+                    }
+                )
+                prices.append(synthetic)
+
+        return prices
+
     async def describe_catalog(self) -> ProviderCatalog:
         return ProviderCatalog(
             provider=CloudProvider.AZURE,
@@ -1435,6 +2133,8 @@ class AzureProvider(ProviderBase):
                 PricingDomain.SERVERLESS,
                 PricingDomain.AI,
                 PricingDomain.INTER_REGION_EGRESS,
+                PricingDomain.OBSERVABILITY,
+                PricingDomain.NETWORK,
             ],
             services={
                 "compute": ["vm"],
@@ -1444,6 +2144,8 @@ class AzureProvider(ProviderBase):
                 "serverless": ["azure_functions"],
                 "ai": ["openai"],
                 "inter_region_egress": [],
+                "observability": ["azure_monitor"],
+                "network": ["azure_cdn", "azure_front_door"],
             },
             supported_terms={
                 "compute/vm": ["on_demand", "spot", "reserved_1yr", "reserved_3yr"],
@@ -1455,6 +2157,9 @@ class AzureProvider(ProviderBase):
                 "serverless/azure_functions": ["on_demand"],
                 "ai/openai": ["on_demand"],
                 "inter_region_egress": ["on_demand"],
+                "observability/azure_monitor": ["on_demand"],
+                "network/azure_cdn": ["on_demand"],
+                "network/azure_front_door": ["on_demand"],
             },
             filter_hints={
                 "compute/vm": {
@@ -1477,8 +2182,10 @@ class AzureProvider(ProviderBase):
                     "term": "on_demand | reserved_1yr | reserved_3yr",
                 },
                 "database/cosmos": {
-                    "deployment": "'provisioned' (per 100 RU/s) | 'serverless' (per 1M RUs) | 'autoscale'",
-                    "note": "Multi-region: set deployment='ha' to include geo-replication write pricing",
+                    "deployment": (
+                        "'provisioned' (per 100 RU/s, default) | 'serverless' (per 1M RUs) | 'autoscale' | "
+                        "'ha'/'multi-region' (provisioned with multi-region writes)"
+                    ),
                 },
                 "container/aks": {
                     "mode": "'standard' ($0.10/hr, Uptime SLA) | 'free' (no SLA, control plane free)",
@@ -1499,6 +2206,41 @@ class AzureProvider(ProviderBase):
                     "dest_region": "Destination region (optional); empty = internet egress",
                     "data_gb": "Data volume in GB for monthly cost estimate",
                     "note": "Zone 1 rate (Americas + Europe). First 5 GB/month free.",
+                },
+                "observability/azure_monitor": {
+                    "log_gb": (
+                        "Analytics Logs ingestion volume in GB/month (after 5 GB free tier)"
+                    ),
+                    "ingestion_mib": (
+                        "Custom metrics ingestion in millions of samples "
+                        "(e.g. 100 for 100M samples/month)"
+                    ),
+                    "metrics_count": (
+                        "Number of metric alert rules (first 10 free, then $0.10/rule/month)"
+                    ),
+                    "note": (
+                        "Free tier: 5 GB/month Analytics Logs. "
+                        "Log types: Analytics ($2.30/GB), Basic ($0.50/GB), "
+                        "Auxiliary ($0.05/GB)."
+                    ),
+                },
+                "network/azure_cdn": {
+                    "data_gb": "Monthly outbound data transfer in GB for cost estimate",
+                    "note": (
+                        "CDN pricing is zone-based "
+                        "(Zone 1: Americas+Europe, Zone 2: APAC+ME). "
+                        "Rate at 0-10 TB: $0.081/GB (Zone 1)."
+                    ),
+                },
+                "network/azure_front_door": {
+                    "data_gb": "Monthly data transfer out in GB",
+                    "monthly_requests_millions": (
+                        "Monthly request count in millions for cost estimate"
+                    ),
+                    "note": (
+                        "Front Door has 8 pricing zones. "
+                        "Standard SKU Zone 1 base: $0.0825/GB, $0.009/10K requests."
+                    ),
                 },
             },
             example_invocations={
@@ -1564,6 +2306,29 @@ class AzureProvider(ProviderBase):
                     "dest_region": "westeurope",
                     "data_gb": 1000,
                 },
+                "observability/azure_monitor": {
+                    "provider": "azure",
+                    "domain": "observability",
+                    "service": "azure_monitor",
+                    "region": "eastus",
+                    "log_gb": 50.0,
+                    "metrics_count": 20,
+                },
+                "network/azure_cdn": {
+                    "provider": "azure",
+                    "domain": "network",
+                    "service": "azure_cdn",
+                    "region": "eastus",
+                    "data_gb": 5000,
+                },
+                "network/azure_front_door": {
+                    "provider": "azure",
+                    "domain": "network",
+                    "service": "azure_front_door",
+                    "region": "eastus",
+                    "data_gb": 1000,
+                    "monthly_requests_millions": 100,
+                },
             },
             decision_matrix={
                 "Azure VMs": "compute/vm",
@@ -1582,6 +2347,16 @@ class AzureProvider(ProviderBase):
                 "Azure Bandwidth": "inter_region_egress — set source_region and data_gb",
                 "Azure Data Transfer": "inter_region_egress — set source_region, dest_region (optional), data_gb",
                 "Azure Egress": "inter_region_egress — set source_region, data_gb",
+                "Azure Monitor": "observability/azure_monitor",
+                "Log Analytics": "observability/azure_monitor — set log_gb for ingestion volume",
+                "Azure Monitor Logs": "observability/azure_monitor — set log_gb for Analytics Logs cost",
+                "Azure Monitor Metrics": "observability/azure_monitor — set ingestion_mib for custom metrics millions",
+                "Azure Monitor Alerts": "observability/azure_monitor — set metrics_count for alert rule count",
+                "Azure CDN": "network/azure_cdn — set data_gb for monthly transfer estimate",
+                "Content Delivery Network": "network/azure_cdn — set data_gb for monthly transfer estimate",
+                "Azure Front Door": "network/azure_front_door — set data_gb and monthly_requests_millions",
+                "Azure Front Door Standard": "network/azure_front_door — set data_gb, monthly_requests_millions",
+                "Azure Front Door Premium": "network/azure_front_door — Premium WAF rules cost additional",
             },
         )
 
