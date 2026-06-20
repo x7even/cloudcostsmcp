@@ -21,7 +21,6 @@ from mcp.server.fastmcp import FastMCP
 from opencloudcosts.cache import CacheManager
 from opencloudcosts.config import Settings
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -104,6 +103,7 @@ def create_server(host: str = "127.0.0.1", port: int = 8080) -> FastMCP:
 
 
 def main() -> None:
+    logging.basicConfig(level=logging.INFO)
     parser = argparse.ArgumentParser(description="OpenCloudCosts MCP server")
     parser.add_argument(
         "--transport",
