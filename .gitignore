@@ -20,6 +20,10 @@ env/
 
 # Secrets / local config — .env.example is tracked, .env is not
 .env
+deploy/docker/.env
+# Never commit a populated secret.yaml — use Sealed Secrets or External Secrets instead
+deploy/kubernetes/secret.yaml
+!deploy/kubernetes/secret.yaml.example
 
 # SQLite cache databases
 *.db

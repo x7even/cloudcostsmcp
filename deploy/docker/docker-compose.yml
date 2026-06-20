@@ -1,0 +1,59 @@
+services:
+  opencloudcosts:
+    image: ghcr.io/x7even/opencloudcosts:latest
+    # To build locally instead:
+    # build:
+    #   context: ../..
+    #   dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+
+    environment:
+      # ── AWS ──────────────────────────────────────────────────────────────
+      # Public pricing (EC2, EBS, RDS list prices) works without credentials.
+      # Uncomment and set for effective pricing (RI / Savings Plan discounts).
+      # Costs $0.01 per Cost Explorer API call — opt-in only.
+      #
+      # AWS_DEFAULT_REGION: us-east-1
+      # AWS_ACCESS_KEY_ID: ""
+      # AWS_SECRET_ACCESS_KEY: ""
+      # OCC_AWS_ENABLE_COST_EXPLORER: "false"
+
+      # ── GCP ──────────────────────────────────────────────────────────────
+      # Option A: free API key (catalog prices only, no effective pricing)
+      # OCC_GCP_API_KEY: ""
+      #
+      # Option B: service account JSON — inline base64 (see README for how
+      # to encode: base64 -w0 service-account.json)
+      # OCC_GCP_SERVICE_ACCOUNT_JSON_B64: ""
+      #
+      # Option C: mount the key file below and set the path
+      # GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/gcp-sa-key.json
+      #
+      # Option D: GCP Workload Identity / ADC — no env vars needed if the
+      # host already has application default credentials configured
+
+      # ── Azure ────────────────────────────────────────────────────────────
+      # No credentials required — uses the public Azure Retail Prices API.
+
+      # ── General ──────────────────────────────────────────────────────────
+      OCC_CACHE_TTL_HOURS: "24"
+      # OCC_DEFAULT_CURRENCY: USD
+      # OCC_DEFAULT_REGIONS: us-east-1,us-west-2
+
+    volumes:
+      # AWS credentials from host (preferred over env var keys in dev)
+      # - ~/.aws:/root/.aws:ro
+
+      # GCP service account key file (use with GOOGLE_APPLICATION_CREDENTIALS)
+      # - ./secrets/gcp-sa-key.json:/run/secrets/gcp-sa-key.json:ro
+
+    healthcheck:
+      test: ["CMD", "python3", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    restart: unless-stopped

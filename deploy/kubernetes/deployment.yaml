@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opencloudcosts
+  namespace: opencloudcosts
+  labels:
+    app: opencloudcosts
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: opencloudcosts
+  template:
+    metadata:
+      labels:
+        app: opencloudcosts
+    spec:
+      # On EKS with IRSA: annotate the ServiceAccount with the IAM role ARN
+      # instead of passing AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY.
+      # On GKE with Workload Identity: annotate the ServiceAccount with the
+      # GCP service account email — no OCC_GCP_* keys needed.
+      # serviceAccountName: opencloudcosts
+
+      containers:
+        - name: opencloudcosts
+          image: ghcr.io/x7even/opencloudcosts:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              name: http
+
+          envFrom:
+            - secretRef:
+                name: opencloudcosts-credentials
+
+          # Mount a GCP service account JSON file if preferred over inline env var.
+          # Uncomment the volume and volumeMount sections below and set
+          # GOOGLE_APPLICATION_CREDENTIALS in the secret.
+          # env:
+          #   - name: GOOGLE_APPLICATION_CREDENTIALS
+          #     value: /run/secrets/gcp-sa-key.json
+
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+
+      # Uncomment to mount a GCP service account key from a Kubernetes Secret.
+      # volumes:
+      #   - name: gcp-sa-key
+      #     secret:
+      #       secretName: opencloudcosts-credentials
+      #       items:
+      #         - key: gcp-sa-key.json
+      #           path: gcp-sa-key.json
+
+      # containers[0].volumeMounts:
+      #   - name: gcp-sa-key
+      #     mountPath: /run/secrets
+      #     readOnly: true

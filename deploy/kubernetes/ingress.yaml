@@ -1,0 +1,40 @@
+# Optional: expose via an Ingress controller (nginx, traefik, AWS ALB, etc.)
+# Requires an ingress controller already installed in your cluster.
+#
+# For Claude.ai web MCP or any remote HTTP client, the endpoint must be
+# HTTPS with a public hostname — configure TLS here or at the LB level.
+#
+# Update host and tls.hosts / tls.secretName before applying.
+#
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: opencloudcosts
+  namespace: opencloudcosts
+  annotations:
+    # nginx ingress controller
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    # Uncomment for cert-manager TLS:
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+    #
+    # AWS ALB controller (EKS):
+    # kubernetes.io/ingress.class: alb
+    # alb.ingress.kubernetes.io/scheme: internet-facing
+    # alb.ingress.kubernetes.io/target-type: ip
+spec:
+  ingressClassName: nginx   # adjust for your controller
+  rules:
+    - host: opencloudcosts.example.com   # replace with your domain
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: opencloudcosts
+                port:
+                  number: 8080
+  tls:
+    - hosts:
+        - opencloudcosts.example.com     # replace with your domain
+      secretName: opencloudcosts-tls     # cert-manager will populate this
