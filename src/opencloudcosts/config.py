@@ -19,7 +19,9 @@ class Settings(BaseSettings):
     cache_ttl_hours: int = 24
     metadata_ttl_days: int = 7
     effective_price_ttl_hours: int = 1
-    spot_cache_ttl_minutes: int = Field(default=5, description="TTL for spot price cache entries in minutes")
+    spot_cache_ttl_minutes: int = Field(
+        default=5, description="TTL for spot price cache entries in minutes"
+    )
     default_currency: str = "USD"
     default_regions: list[str] = ["us-east-1", "us-west-2"]
     max_results: int = 20
@@ -41,7 +43,7 @@ class Settings(BaseSettings):
     # Auth credential sources (resolved in priority order — see GcpAuthProvider):
     # 1. Raw Bearer token — debug/escape hatch only; expires ~1 h, no auto-refresh.
     gcp_access_token: str | None = None
-    gcp_access_token_expires_at: str | None = None   # ISO-8601, e.g. 2026-04-25T07:00:00Z
+    gcp_access_token_expires_at: str | None = None  # ISO-8601, e.g. 2026-04-25T07:00:00Z
     # 2. Service account key JSON — base64-encoded (B64) or raw string.
     gcp_service_account_json_b64: str | None = None  # preferred for Docker/K8s secrets
     gcp_service_account_json: str | None = None
@@ -51,9 +53,15 @@ class Settings(BaseSettings):
     # 4. GOOGLE_APPLICATION_CREDENTIALS / ADC / GCP metadata server — handled by google-auth.
 
     # HTTP transport (used with --transport http)
-    http_port: int = Field(default=8080, description="HTTP server port (used with --transport http)")
-    http_host: str = Field(default="127.0.0.1", description="HTTP bind address (used with --transport http)")
-    api_key: str = Field(default="", description="Optional bearer token for HTTP transport authentication")
+    http_port: int = Field(
+        default=8080, description="HTTP server port (used with --transport http)"
+    )
+    http_host: str = Field(
+        default="127.0.0.1", description="HTTP bind address (used with --transport http)"
+    )
+    api_key: str = Field(
+        default="", description="Optional bearer token for HTTP transport authentication"
+    )
 
     @field_validator("cache_dir", mode="before")
     @classmethod

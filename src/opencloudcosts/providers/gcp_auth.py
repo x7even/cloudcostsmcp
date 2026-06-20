@@ -12,6 +12,7 @@ Resolution order (first match wins):
 google-auth is an optional dependency (pip install opencloudcosts[gcp]).
 If not installed, only the raw-token path works.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -105,6 +106,7 @@ class GcpAuthProvider:
                 # Re-check under the lock — another coroutine may have refreshed already.
                 if not getattr(creds, "valid", False):
                     import google.auth.transport.requests
+
                     request = google.auth.transport.requests.Request()
                     # creds.refresh() is a blocking network call; run off the event loop.
                     await asyncio.to_thread(creds.refresh, request)  # type: ignore[union-attr]
@@ -120,7 +122,9 @@ class GcpAuthProvider:
 
         # 2a. Service account JSON — B64 variant
         if s.gcp_service_account_json_b64:
-            info = _decode_json_b64(s.gcp_service_account_json_b64, "OCC_GCP_SERVICE_ACCOUNT_JSON_B64")
+            info = _decode_json_b64(
+                s.gcp_service_account_json_b64, "OCC_GCP_SERVICE_ACCOUNT_JSON_B64"
+            )
             return google.oauth2.service_account.Credentials.from_service_account_info(
                 info, scopes=[_BILLING_READONLY_SCOPE]
             )
@@ -134,7 +138,9 @@ class GcpAuthProvider:
 
         # 3a. External account / WIF — B64 variant
         if s.gcp_external_account_json_b64:
-            info = _decode_json_b64(s.gcp_external_account_json_b64, "OCC_GCP_EXTERNAL_ACCOUNT_JSON_B64")
+            info = _decode_json_b64(
+                s.gcp_external_account_json_b64, "OCC_GCP_EXTERNAL_ACCOUNT_JSON_B64"
+            )
             return _external_account_creds(info)
 
         # 3b. External account / WIF — raw
@@ -183,6 +189,7 @@ class GcpAuthProvider:
 # Helpers
 # ------------------------------------------------------------------
 
+
 def _decode_json_b64(value: str, var_name: str) -> dict:
     stripped = value.strip()
     if len(stripped) > _MAX_JSON_BYTES:
@@ -207,9 +214,7 @@ def _parse_json(value: str, var_name: str) -> dict:
     try:
         return json.loads(value)
     except json.JSONDecodeError as exc:
-        raise NotConfiguredError(
-            f"{var_name} is not valid JSON. Check the value."
-        ) from exc
+        raise NotConfiguredError(f"{var_name} is not valid JSON. Check the value.") from exc
 
 
 def _external_account_creds(info: dict) -> object:
@@ -219,7 +224,6 @@ def _external_account_creds(info: dict) -> object:
     concrete subclass based on the 'type' field in the config JSON.
     """
     import google.auth
-    creds, _ = google.auth.load_credentials_from_dict(
-        info, scopes=[_BILLING_READONLY_SCOPE]
-    )
+
+    creds, _ = google.auth.load_credentials_from_dict(info, scopes=[_BILLING_READONLY_SCOPE])
     return creds

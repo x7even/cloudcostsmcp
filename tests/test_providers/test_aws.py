@@ -1,4 +1,5 @@
 """Tests for the AWS provider, mocking _get_products to avoid boto3 paginator complexity."""
+
 from __future__ import annotations
 
 import json
@@ -168,9 +169,24 @@ async def test_bulk_fallback_on_no_credentials(aws_provider: AWSProvider):
 
 _SPOT_PRICE_HISTORY_RESPONSE = {
     "SpotPriceHistory": [
-        {"AvailabilityZone": "us-east-1a", "SpotPrice": "0.0420", "InstanceType": "m5.xlarge", "ProductDescription": "Linux/UNIX"},
-        {"AvailabilityZone": "us-east-1b", "SpotPrice": "0.0380", "InstanceType": "m5.xlarge", "ProductDescription": "Linux/UNIX"},
-        {"AvailabilityZone": "us-east-1a", "SpotPrice": "0.0390", "InstanceType": "m5.xlarge", "ProductDescription": "Linux/UNIX"},
+        {
+            "AvailabilityZone": "us-east-1a",
+            "SpotPrice": "0.0420",
+            "InstanceType": "m5.xlarge",
+            "ProductDescription": "Linux/UNIX",
+        },
+        {
+            "AvailabilityZone": "us-east-1b",
+            "SpotPrice": "0.0380",
+            "InstanceType": "m5.xlarge",
+            "ProductDescription": "Linux/UNIX",
+        },
+        {
+            "AvailabilityZone": "us-east-1a",
+            "SpotPrice": "0.0390",
+            "InstanceType": "m5.xlarge",
+            "ProductDescription": "Linux/UNIX",
+        },
     ]
 }
 
@@ -181,7 +197,9 @@ async def test_get_spot_price_returns_cheapest_az(aws_provider: AWSProvider):
     mock_ec2.describe_spot_price_history.return_value = _SPOT_PRICE_HISTORY_RESPONSE
 
     with patch("boto3.client", return_value=mock_ec2):
-        prices = await aws_provider.get_compute_price("m5.xlarge", "us-east-1", term=PricingTerm.SPOT)
+        prices = await aws_provider.get_compute_price(
+            "m5.xlarge", "us-east-1", term=PricingTerm.SPOT
+        )
 
     assert len(prices) == 1
     p = prices[0]
@@ -205,7 +223,9 @@ async def test_get_spot_price_no_credentials_returns_empty(aws_provider: AWSProv
         raise botocore.exceptions.NoCredentialsError()
 
     with patch("boto3.client", side_effect=raise_no_creds):
-        prices = await aws_provider.get_compute_price("m5.xlarge", "us-east-1", term=PricingTerm.SPOT)
+        prices = await aws_provider.get_compute_price(
+            "m5.xlarge", "us-east-1", term=PricingTerm.SPOT
+        )
         assert prices == []
 
 
@@ -215,7 +235,9 @@ async def test_get_spot_price_empty_response(aws_provider: AWSProvider):
     mock_ec2.describe_spot_price_history.return_value = {"SpotPriceHistory": []}
 
     with patch("boto3.client", return_value=mock_ec2):
-        prices = await aws_provider.get_compute_price("m5.xlarge", "us-east-1", term=PricingTerm.SPOT)
+        prices = await aws_provider.get_compute_price(
+            "m5.xlarge", "us-east-1", term=PricingTerm.SPOT
+        )
 
     assert prices == []
 
@@ -262,6 +284,7 @@ async def test_get_spot_history_stable(aws_provider: AWSProvider):
 
 async def test_get_spot_history_no_credentials(aws_provider: AWSProvider):
     import botocore.exceptions
+
     with patch("boto3.client", side_effect=botocore.exceptions.NoCredentialsError()):
         with pytest.raises(ValueError, match="requires AWS credentials"):
             await aws_provider._get_spot_history("m5.xlarge", "us-east-1")
@@ -374,7 +397,7 @@ async def test_bulk_fallback_filters_correctly(aws_provider: AWSProvider):
         "sku": "DIFFERENTSKU",
         "productFamily": "Compute Instance",
         "attributes": {
-            "instanceType": "c5.xlarge",   # different — should be filtered out
+            "instanceType": "c5.xlarge",  # different — should be filtered out
             "vcpu": "4",
             "memory": "8 GiB",
             "operatingSystem": "Linux",
@@ -496,7 +519,6 @@ async def test_list_services(aws_provider: AWSProvider):
         }
     }
 
-
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
     mock_response.json.return_value = mock_index
@@ -518,9 +540,7 @@ async def test_list_services(aws_provider: AWSProvider):
 
 async def test_search_pricing_generic_service(aws_provider: AWSProvider):
     """search_pricing with service='cloudwatch' should search via get_service_price."""
-    with patch.object(
-        aws_provider, "_get_products", return_value=[_CLOUDWATCH_PRICE_ITEM]
-    ):
+    with patch.object(aws_provider, "_get_products", return_value=[_CLOUDWATCH_PRICE_ITEM]):
         results = await aws_provider.search_pricing("metric", service_code="AmazonCloudWatch")
 
     assert isinstance(results, list)
@@ -565,6 +585,7 @@ async def test_get_storage_price_gp3(aws_provider: AWSProvider):
     pricing JSON, not inside attributes. _get_products_bulk previously only
     checked attrs, causing productFamily='Storage' filter to always fail.
     """
+
     def _gp3_side_effect(service: str, filters: list, **kwargs: object) -> list:
         # Only return the base storage item; IOPS/throughput add-on calls return empty
         if any(f.get("Value") == "Storage" for f in filters):
@@ -654,6 +675,7 @@ async def test_search_pricing_nat_gateway(aws_provider: AWSProvider):
 async def test_nat_gateway_alias_resolves_to_ec2():
     """The 'nat_gateway' alias must resolve to AmazonEC2, not AmazonVPC."""
     from opencloudcosts.providers.aws import _resolve_service_code
+
     assert _resolve_service_code("nat_gateway") == "AmazonEC2"
     assert _resolve_service_code("natgateway") == "AmazonEC2"
 
@@ -661,6 +683,7 @@ async def test_nat_gateway_alias_resolves_to_ec2():
 # ---------------------------------------------------------------------------
 # Inter-region egress tests
 # ---------------------------------------------------------------------------
+
 
 def test_region_continent_known_prefixes(aws_provider: AWSProvider):
     """_region_continent correctly classifies all known AWS region prefix families."""
@@ -683,7 +706,7 @@ def test_region_continent_known_prefixes(aws_provider: AWSProvider):
 def test_egress_rates_symmetric(aws_provider: AWSProvider):
     """_EGRESS_RATES should have entries for both (A, B) and (B, A) for all pairs."""
     rates = aws_provider._EGRESS_RATES
-    for (a, b) in list(rates.keys()):
+    for a, b in list(rates.keys()):
         if a != b:
             assert (b, a) in rates, f"Missing reverse entry for ({b}, {a})"
 
@@ -725,9 +748,12 @@ def test_egress_static_fallback_no_dest(aws_provider: AWSProvider):
 async def test_price_egress_uses_correct_filter(aws_provider: AWSProvider):
     """_price_egress must use 'InterRegion Outbound' not 'AWS Inter-Region Outbound'."""
     from opencloudcosts.models import EgressPricingSpec
+
     spec = EgressPricingSpec(
-        provider="aws", region="us-east-1",
-        source_region="us-east-1", dest_region="eu-west-1",
+        provider="aws",
+        region="us-east-1",
+        source_region="us-east-1",
+        dest_region="eu-west-1",
     )
     captured_filters: list = []
 
@@ -748,9 +774,12 @@ async def test_price_egress_uses_correct_filter(aws_provider: AWSProvider):
 async def test_price_egress_falls_back_when_api_empty(aws_provider: AWSProvider):
     """When _get_products returns empty, _price_egress falls back to static rates."""
     from opencloudcosts.models import EgressPricingSpec
+
     spec = EgressPricingSpec(
-        provider="aws", region="us-east-1",
-        source_region="us-east-1", dest_region="eu-west-1",
+        provider="aws",
+        region="us-east-1",
+        source_region="us-east-1",
+        dest_region="eu-west-1",
     )
     with patch.object(aws_provider, "_get_products", return_value=[]):
         prices = await aws_provider._price_egress(spec)

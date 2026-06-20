@@ -1,4 +1,5 @@
 """Spec pre-processing helpers — domain inference and error enrichment."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -76,10 +77,13 @@ def fill_domain(spec: dict[str, Any]) -> dict[str, Any]:
             return {**spec, "domain": "database"}
         # Compute: AWS (contains dot, e.g. m5.xlarge), GCP (dash-separated families),
         # Azure (starts with Standard_ / Basic_ / Premium_)
-        if ("." in rt or "-" in rt
-                or rt.startswith("standard_")
-                or rt.startswith("basic_")
-                or rt.startswith("premium_")):
+        if (
+            "." in rt
+            or "-" in rt
+            or rt.startswith("standard_")
+            or rt.startswith("basic_")
+            or rt.startswith("premium_")
+        ):
             return {**spec, "domain": "compute"}
 
     return spec

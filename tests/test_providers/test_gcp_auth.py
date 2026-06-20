@@ -6,6 +6,7 @@ concurrent-refresh locking, and error handling for malformed credentials.
 google-auth is an optional dependency; all google.auth/google.oauth2 imports
 are injected as mock modules into sys.modules so tests run without GCP credentials.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -521,6 +522,7 @@ class TestTokenRefresh:
         provider._credentials = mock_creds  # bypass _build_credentials
 
         with patch("asyncio.to_thread") as mock_to_thread:
+
             async def _run_in_thread(fn, *args):
                 fn(*args)
 

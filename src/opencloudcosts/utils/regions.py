@@ -4,6 +4,7 @@ Region code <-> display name mappings for AWS and GCP.
 AWS Pricing API uses display names ("US East (N. Virginia)") rather than region
 codes ("us-east-1"), so we need bidirectional mapping.
 """
+
 from __future__ import annotations
 
 # AWS: region code -> human-readable display name used by the Pricing API
@@ -152,8 +153,7 @@ def aws_region_to_display(region_code: str) -> str:
     display = AWS_REGION_DISPLAY.get(region_code)
     if display is None:
         raise ValueError(
-            f"Unknown AWS region code: {region_code!r}. "
-            f"Known regions: {sorted(AWS_REGION_DISPLAY)}"
+            f"Unknown AWS region code: {region_code!r}. Known regions: {sorted(AWS_REGION_DISPLAY)}"
         )
     return display
 

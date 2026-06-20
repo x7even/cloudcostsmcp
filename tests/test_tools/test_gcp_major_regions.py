@@ -1,4 +1,5 @@
 """Tests for major-regions default in find_cheapest_region and find_available_regions (v0.8.2)."""
+
 from __future__ import annotations
 
 from decimal import Decimal
@@ -23,6 +24,7 @@ _AWS_MAJOR_REGIONS = AWSProvider._MAJOR_REGIONS
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_gcp_price(region: str, price: str = "0.1900") -> NormalizedPrice:
     return NormalizedPrice(
@@ -62,6 +64,7 @@ def _make_ctx(provider_name: str, pvdr_mock):
 
 def _register_availability():
     from opencloudcosts.tools.availability import register_availability_tools
+
     registered: dict = {}
 
     class FakeMCP:
@@ -69,6 +72,7 @@ def _register_availability():
             def decorator(fn):
                 registered[fn.__name__] = fn
                 return fn
+
             return decorator
 
     register_availability_tools(FakeMCP())
@@ -79,15 +83,25 @@ def _register_availability():
 # major_regions constant values (sanity checks on provider classes)
 # ---------------------------------------------------------------------------
 
+
 def test_gcp_major_regions_has_twelve_entries():
     assert len(_GCP_MAJOR_REGIONS) == 12
 
 
 def test_gcp_major_regions_contains_expected_regions():
     expected = {
-        "us-central1", "us-east1", "us-west1", "us-west2",
-        "europe-west1", "europe-west2", "europe-west3", "europe-west4",
-        "asia-east1", "asia-northeast1", "asia-southeast1", "australia-southeast1",
+        "us-central1",
+        "us-east1",
+        "us-west1",
+        "us-west2",
+        "europe-west1",
+        "europe-west2",
+        "europe-west3",
+        "europe-west4",
+        "asia-east1",
+        "asia-northeast1",
+        "asia-southeast1",
+        "australia-southeast1",
     }
     assert set(_GCP_MAJOR_REGIONS) == expected
 
@@ -95,6 +109,7 @@ def test_gcp_major_regions_contains_expected_regions():
 # ---------------------------------------------------------------------------
 # find_cheapest_region — GCP defaults to major regions
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def gcp_pvdr():
@@ -197,6 +212,7 @@ async def test_find_cheapest_region_aws_behaviour_unchanged():
 # ---------------------------------------------------------------------------
 # find_available_regions — GCP defaults to major regions
 # ---------------------------------------------------------------------------
+
 
 async def test_find_available_regions_gcp_defaults_to_major_regions(gcp_pvdr):
     """GCP find_available_regions without regions param must query only major_regions()."""

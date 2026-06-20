@@ -1,4 +1,5 @@
 """Abstract provider interface — all cloud providers implement this Protocol."""
+
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -112,9 +113,7 @@ class ProviderBase:
             alternatives=["Use get_price with term='spot' for current spot rate."],
         )
 
-    def bom_advisories(
-        self, services: set[str], sample_region: str
-    ) -> list[dict[str, str]]:
+    def bom_advisories(self, services: set[str], sample_region: str) -> list[dict[str, str]]:
         """Return provider-specific BOM advisory rows for services not included in estimate_bom."""
         return []
 
@@ -137,13 +136,33 @@ class ProviderBase:
         source_url: str = "",
     ) -> list[NormalizedPrice]:
         """Stamp trust metadata onto prices returned from a cache hit."""
-        age = (datetime.now(UTC) - fetched_at).total_seconds()
+        age = max(0, int((datetime.now(UTC) - fetched_at).total_seconds()))
         return [
-            p.model_copy(update={
-                "fetched_at": fetched_at,
-                "cache_age_seconds": age,
-                "source_url": source_url or p.source_url,
-            })
+            p.model_copy(
+                update={
+                    "fetched_at": fetched_at,
+                    "cache_age_seconds": age,
+                    "source_url": source_url or p.source_url,
+                }
+            )
+            for p in prices
+        ]
+
+    def _annotate_fresh(
+        self,
+        prices: list[NormalizedPrice],
+        source_url: str = "",
+    ) -> list[NormalizedPrice]:
+        """Stamp trust metadata onto prices returned from a fresh API fetch."""
+        now = datetime.now(UTC)
+        return [
+            p.model_copy(
+                update={
+                    "fetched_at": now,
+                    "cache_age_seconds": 0,
+                    "source_url": source_url or p.source_url,
+                }
+            )
             for p in prices
         ]
 
@@ -153,6 +172,7 @@ class ProviderBase:
 # This will be replaced by the v2 Protocol as providers are migrated on the
 # v0.8.0-prep branch. Both coexist during transition.
 # ---------------------------------------------------------------------------
+
 
 @runtime_checkable
 class CloudPricingProvider(Protocol):

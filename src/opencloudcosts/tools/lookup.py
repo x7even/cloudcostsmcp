@@ -1,4 +1,5 @@
 """Price lookup MCP tools — v0.8.0 consolidated surface."""
+
 from __future__ import annotations
 
 import asyncio
@@ -82,13 +83,19 @@ def register_lookup_tools(mcp: Any) -> None:
 
         pvdr = _provider_for(ctx, parsed.provider.value)
         if pvdr is None:
-            return {"error": f"Provider '{parsed.provider.value}' not configured. "
-                             f"Available: {list(_providers(ctx))}"}
+            return {
+                "error": f"Provider '{parsed.provider.value}' not configured. "
+                f"Available: {list(_providers(ctx))}"
+            }
 
         if not parsed.region:
             default = pvdr.default_region() or "us-east-1"
             parsed = parsed.model_copy(update={"region": default})
-            logger.info("get_price: region not specified, defaulting to %s for %s", default, parsed.provider.value)
+            logger.info(
+                "get_price: region not specified, defaulting to %s for %s",
+                default,
+                parsed.provider.value,
+            )
 
         if not pvdr.supports(parsed.domain, parsed.service):
             return NotSupportedError(
@@ -115,7 +122,11 @@ def register_lookup_tools(mcp: Any) -> None:
             }
         except Exception as e:
             logger.error("get_price error: %s", e, exc_info=True)
-            return {"error": "upstream_failure", "message": "Pricing lookup failed. Try again shortly.", "retryable": True}
+            return {
+                "error": "upstream_failure",
+                "message": "Pricing lookup failed. Try again shortly.",
+                "retryable": True,
+            }
 
     @mcp.tool()
     async def get_prices_batch(
@@ -145,10 +156,16 @@ def register_lookup_tools(mcp: Any) -> None:
 
         async def fetch_one(itype: str) -> tuple[str, list | str]:
             try:
-                spec = _SPEC_ADAPTER.validate_python({
-                    "provider": provider, "domain": "compute",
-                    "resource_type": itype, "region": region, "os": os, "term": term,
-                })
+                spec = _SPEC_ADAPTER.validate_python(
+                    {
+                        "provider": provider,
+                        "domain": "compute",
+                        "resource_type": itype,
+                        "region": region,
+                        "os": os,
+                        "term": term,
+                    }
+                )
                 result = await pvdr.get_price(spec)
                 return itype, result.public_prices
             except Exception as e:
@@ -170,15 +187,20 @@ def register_lookup_tools(mcp: Any) -> None:
                     "price_per_hour": _price(p.price_per_unit, p.unit.value),
                     "monthly_estimate": _money(p.monthly_cost, "/mo"),
                 }
-                entry.update({k: v for k, v in p.summary().items()
-                               if k in ("vcpu", "memory", "description")})
+                entry.update(
+                    {k: v for k, v in p.summary().items() if k in ("vcpu", "memory", "description")}
+                )
                 results.append(entry)
 
         results.sort(key=lambda x: x["price_per_hour"]["amount"])
 
         out: dict[str, Any] = {
-            "provider": provider, "region": region, "os": os, "term": term,
-            "count": len(results), "results": results,
+            "provider": provider,
+            "region": region,
+            "os": os,
+            "term": term,
+            "count": len(results),
+            "results": results,
         }
         if errors:
             out["errors"] = errors
@@ -204,6 +226,7 @@ def register_lookup_tools(mcp: Any) -> None:
             baseline_region: Optional region for delta comparison, e.g. "us-east-1".
         """
         from opencloudcosts.utils.regions import region_display_name
+
         try:
             base_spec = _SPEC_ADAPTER.validate_python(fill_domain(spec))
         except Exception as e:
@@ -214,8 +237,10 @@ def register_lookup_tools(mcp: Any) -> None:
             return {"error": f"Provider '{base_spec.provider.value}' not configured."}
 
         if not pvdr.supports(base_spec.domain, base_spec.service):
-            return {"error": f"{base_spec.provider.value} does not support "
-                             f"{base_spec.domain.value}/{base_spec.service}."}
+            return {
+                "error": f"{base_spec.provider.value} does not support "
+                f"{base_spec.domain.value}/{base_spec.service}."
+            }
 
         semaphore = asyncio.Semaphore(10)
 
@@ -239,8 +264,10 @@ def register_lookup_tools(mcp: Any) -> None:
                 not_available.append(region)
 
         if not all_prices:
-            return {"result": "no_prices_found",
-                    "message": "No pricing found in any of the specified regions."}
+            return {
+                "result": "no_prices_found",
+                "message": "No pricing found in any of the specified regions.",
+            }
 
         all_prices.sort(key=lambda p: p.price_per_unit)
 
@@ -258,6 +285,7 @@ def register_lookup_tools(mcp: Any) -> None:
 
         if baseline_region:
             from opencloudcosts.utils.baseline import apply_baseline_deltas
+
             try:
                 apply_baseline_deltas(entries, baseline_region, hourly_key="price_per_unit")
             except ValueError as e:
@@ -275,11 +303,16 @@ def register_lookup_tools(mcp: Any) -> None:
             "most_expensive_region": most_exp.region,
             "most_expensive_price": _price(most_exp.price_per_unit, most_exp.unit.value),
             "price_delta_pct": (
-                round(float(
-                    (most_exp.price_per_unit - cheapest.price_per_unit)
-                    / cheapest.price_per_unit * 100
-                ), 1)
-                if cheapest.price_per_unit > 0 else None
+                round(
+                    float(
+                        (most_exp.price_per_unit - cheapest.price_per_unit)
+                        / cheapest.price_per_unit
+                        * 100
+                    ),
+                    1,
+                )
+                if cheapest.price_per_unit > 0
+                else None
             ),
             "all_regions_sorted": entries,
         }
@@ -322,7 +355,11 @@ def register_lookup_tools(mcp: Any) -> None:
             prices = await pvdr.search_pricing(query, region or None, max_results)
         except Exception as e:
             logger.error("search_pricing error: %s", e, exc_info=True)
-            return {"error": "upstream_failure", "message": "Search request failed. Try again shortly.", "retryable": True}
+            return {
+                "error": "upstream_failure",
+                "message": "Search request failed. Try again shortly.",
+                "retryable": True,
+            }
 
         return {
             "provider": provider,
@@ -368,7 +405,11 @@ def register_lookup_tools(mcp: Any) -> None:
             }
         except Exception as e:
             logger.error("get_discount_summary error: %s", e, exc_info=True)
-            return {"error": "upstream_failure", "message": "Discount summary lookup failed. Try again shortly.", "retryable": True}
+            return {
+                "error": "upstream_failure",
+                "message": "Discount summary lookup failed. Try again shortly.",
+                "retryable": True,
+            }
 
     @mcp.tool()
     async def get_spot_history(
@@ -400,6 +441,7 @@ def register_lookup_tools(mcp: Any) -> None:
             return {"error": f"Provider '{parsed.provider.value}' not configured."}
 
         from opencloudcosts.providers.base import NotSupportedError
+
         try:
             result = await pvdr.get_spot_history(parsed, hours, availability_zone=availability_zone)
         except NotSupportedError as e:
@@ -408,10 +450,15 @@ def register_lookup_tools(mcp: Any) -> None:
             return {"error": "invalid_input", "message": str(e), "retryable": False}
         except Exception as e:
             logger.error("get_spot_history error: %s", e, exc_info=True)
-            return {"error": "upstream_failure", "message": "Spot history lookup failed. Try again shortly.", "retryable": True}
+            return {
+                "error": "upstream_failure",
+                "message": "Spot history lookup failed. Try again shortly.",
+                "retryable": True,
+            }
 
         if not result:
             from opencloudcosts.utils.regions import region_display_name
+
             return {
                 "result": "no_data",
                 "message": (
@@ -422,6 +469,7 @@ def register_lookup_tools(mcp: Any) -> None:
             }
 
         from opencloudcosts.utils.regions import region_display_name
+
         result["provider"] = parsed.provider.value
         result["region_name"] = region_display_name(parsed.provider.value, parsed.region)
         return result

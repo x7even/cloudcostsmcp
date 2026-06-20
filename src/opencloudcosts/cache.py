@@ -49,6 +49,7 @@ def _now() -> str:
 
 def _expires(hours: float) -> str:
     from datetime import timedelta
+
     return (datetime.now(UTC) + timedelta(hours=hours)).isoformat()
 
 
@@ -173,13 +174,9 @@ class CacheManager:
 
     async def purge_expired(self) -> int:
         now = _now()
-        async with self.db.execute(
-            "DELETE FROM prices WHERE expires_at < ?", (now,)
-        ) as cur:
+        async with self.db.execute("DELETE FROM prices WHERE expires_at < ?", (now,)) as cur:
             prices_deleted = cur.rowcount
-        async with self.db.execute(
-            "DELETE FROM metadata WHERE expires_at < ?", (now,)
-        ) as cur:
+        async with self.db.execute("DELETE FROM metadata WHERE expires_at < ?", (now,)) as cur:
             meta_deleted = cur.rowcount
         await self.db.commit()
         return prices_deleted + meta_deleted
@@ -204,14 +201,15 @@ class CacheManager:
         async with self.db.execute("DELETE FROM prices") as cur:
             prices_deleted = cur.rowcount
         # Delete everything from metadata except the version key itself
-        async with self.db.execute(
-            "DELETE FROM metadata WHERE cache_key != ?", (_KEY,)
-        ) as cur:
+        async with self.db.execute("DELETE FROM metadata WHERE cache_key != ?", (_KEY,)) as cur:
             meta_deleted = cur.rowcount
         await self.db.commit()
         logger.info(
             "Schema version changed (%s → %d): purged %d price rows, %d metadata rows",
-            stored, _SCHEMA_VERSION, prices_deleted, meta_deleted,
+            stored,
+            _SCHEMA_VERSION,
+            prices_deleted,
+            meta_deleted,
         )
         await self.set_metadata(_KEY, _SCHEMA_VERSION, ttl_hours=365 * 24)
         return True
@@ -225,14 +223,13 @@ class CacheManager:
         await self.db.commit()
         logger.info(
             "Cache cleared: %d price entries, %d metadata entries",
-            prices_deleted, meta_deleted,
+            prices_deleted,
+            meta_deleted,
         )
         return {"prices_deleted": prices_deleted, "metadata_deleted": meta_deleted}
 
     async def clear_provider(self, provider: str) -> dict[str, int]:
-        async with self.db.execute(
-            "DELETE FROM prices WHERE provider = ?", (provider,)
-        ) as cur:
+        async with self.db.execute("DELETE FROM prices WHERE provider = ?", (provider,)) as cur:
             prices_deleted = cur.rowcount
         async with self.db.execute(
             "DELETE FROM metadata WHERE cache_key LIKE ?", (f"{provider}:%",)
@@ -241,7 +238,9 @@ class CacheManager:
         await self.db.commit()
         logger.info(
             "Cleared cache for provider %s: %d price entries, %d metadata entries",
-            provider, prices_deleted, meta_deleted,
+            provider,
+            prices_deleted,
+            meta_deleted,
         )
         return {"prices_deleted": prices_deleted, "metadata_deleted": meta_deleted}
 

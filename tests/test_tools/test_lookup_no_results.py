@@ -1,4 +1,5 @@
 """Tests for no-results hints in get_service_price and search_pricing tools."""
+
 from __future__ import annotations
 
 from decimal import Decimal
@@ -51,6 +52,7 @@ async def aws_provider(tmp_path: Path) -> AWSProvider:
 # get_service_price — no-results path
 # ------------------------------------------------------------------
 
+
 async def test_get_service_price_no_results_has_tip(aws_provider: AWSProvider):
     """When _get_products returns empty, get_service_price should return structured
     no_results with a tip field."""
@@ -81,8 +83,7 @@ async def test_get_service_price_no_results_has_tip(aws_provider: AWSProvider):
             "region": region,
             "filters_applied": filters,
             "message": (
-                f"No pricing found for service '{service}' in {region} "
-                "with the provided filters."
+                f"No pricing found for service '{service}' in {region} with the provided filters."
             ),
             "tip": (
                 f"Try search_pricing(provider='{provider_name}', service='{service}', query='...') "
@@ -122,8 +123,7 @@ async def test_get_service_price_no_results_no_alias(aws_provider: AWSProvider):
             "region": region,
             "filters_applied": {},
             "message": (
-                f"No pricing found for service '{service}' in {region} "
-                "with the provided filters."
+                f"No pricing found for service '{service}' in {region} with the provided filters."
             ),
             "tip": (
                 f"Try search_pricing(provider='{provider_name}', service='{service}', query='...') "
@@ -143,6 +143,7 @@ async def test_get_service_price_no_results_no_alias(aws_provider: AWSProvider):
 # ------------------------------------------------------------------
 # search_pricing — no-results path
 # ------------------------------------------------------------------
+
 
 async def test_search_pricing_no_results_has_tip(aws_provider: AWSProvider):
     """When search_pricing returns empty list, the tool should return structured

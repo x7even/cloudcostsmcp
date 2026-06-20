@@ -1,4 +1,5 @@
 """Tests for GCP Vertex AI pricing (compute + Gemini)."""
+
 from __future__ import annotations
 
 from decimal import Decimal
@@ -27,9 +28,18 @@ def _make_vertex_sku(
         "description": description,
         "serviceRegions": regions,
         "category": {"usageType": usage_type},
-        "pricingInfo": [{"pricingExpression": {"tieredRates": [
-            {"startUsageAmount": 0, "unitPrice": {"units": price_units, "nanos": price_nanos}}
-        ]}}],
+        "pricingInfo": [
+            {
+                "pricingExpression": {
+                    "tieredRates": [
+                        {
+                            "startUsageAmount": 0,
+                            "unitPrice": {"units": price_units, "nanos": price_nanos},
+                        }
+                    ]
+                }
+            }
+        ],
     }
 
 
@@ -67,7 +77,7 @@ async def test_vertex_training_vcpu_rate(provider):
             "Vertex AI Custom Training N1 predefined RAM",
             ["us-central1"],
             price_units="0",
-            price_nanos=32_000_000,   # $0.032/GiB-hr
+            price_nanos=32_000_000,  # $0.032/GiB-hr
         ),
     ]
     with patch.object(provider, "_fetch_skus", new=AsyncMock(return_value=fake_skus)):
@@ -90,8 +100,8 @@ async def test_vertex_training_vcpu_rate(provider):
 @pytest.mark.asyncio
 async def test_vertex_training_rate_extraction(provider):
     """Both vcpu and ram rates are extracted correctly from matching SKUs."""
-    vcpu_nanos = 240_000_000   # $0.24/vCPU-hr
-    ram_nanos = 32_000_000     # $0.032/GiB-hr
+    vcpu_nanos = 240_000_000  # $0.24/vCPU-hr
+    ram_nanos = 32_000_000  # $0.032/GiB-hr
 
     fake_skus = [
         _make_vertex_sku(
@@ -206,13 +216,13 @@ async def test_gemini_rate_extraction(provider):
             "Gemini 1.5 Flash Input",
             ["us-central1"],
             price_units="0",
-            price_nanos=250,   # $0.00000025 / char
+            price_nanos=250,  # $0.00000025 / char
         ),
         _make_vertex_sku(
             "Gemini 1.5 Flash Output",
             ["us-central1"],
             price_units="0",
-            price_nanos=750,   # $0.00000075 / char
+            price_nanos=750,  # $0.00000075 / char
         ),
     ]
     with patch.object(provider, "_fetch_skus", new=AsyncMock(return_value=fake_skus)):

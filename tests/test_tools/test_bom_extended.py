@@ -1,4 +1,5 @@
 """Extended tests for estimate_bom and estimate_unit_economics (v0.8.0)."""
+
 from __future__ import annotations
 
 from decimal import Decimal
@@ -83,6 +84,7 @@ class _ToolCapture:
         def decorator(fn):
             self._tools[fn.__name__] = fn
             return fn
+
         return decorator
 
     def __getitem__(self, name: str):
@@ -113,6 +115,7 @@ def bom_tools():
 # test_estimate_bom_database_aws
 # ---------------------------------------------------------------------------
 
+
 async def test_estimate_bom_database_aws(bom_tools):
     """AWS database item should call get_price and return a valid line item."""
     rds_price = _make_rds_price(instance_type="db.t4g.micro")
@@ -139,6 +142,7 @@ async def test_estimate_bom_database_aws(bom_tools):
 # test_estimate_bom_database_gcp_graceful_error (unsupported domain)
 # ---------------------------------------------------------------------------
 
+
 async def test_estimate_bom_database_gcp_graceful_error(bom_tools):
     """Provider that returns supports()=False should produce a structured error."""
     gcp_mock = MagicMock()
@@ -161,6 +165,7 @@ async def test_estimate_bom_database_gcp_graceful_error(bom_tools):
 # ---------------------------------------------------------------------------
 # test_estimate_bom_mixed_compute_storage_database
 # ---------------------------------------------------------------------------
+
 
 async def test_estimate_bom_mixed_compute_storage_database(bom_tools):
     """A BoM with compute, storage, and database items should produce 3 line items."""
@@ -212,6 +217,7 @@ async def test_estimate_bom_mixed_compute_storage_database(bom_tools):
 # ---------------------------------------------------------------------------
 # test_estimate_unit_economics_basic
 # ---------------------------------------------------------------------------
+
 
 async def test_estimate_unit_economics_basic(bom_tools):
     """estimate_unit_economics should return cost_per_unit, infrastructure_monthly, volume."""

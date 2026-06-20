@@ -1,4 +1,5 @@
 """Tests for opencloudcosts.utils.spec_infer."""
+
 from __future__ import annotations
 
 import pytest
@@ -10,39 +11,42 @@ from opencloudcosts.utils.spec_infer import fill_domain, spec_error_response
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("service,expected_domain", [
-    ("rds", "database"),
-    ("cloud_sql", "database"),
-    ("elasticache", "database"),
-    ("memorystore", "database"),
-    ("sql", "database"),
-    ("cosmos", "database"),
-    ("bigquery", "analytics"),
-    ("cloud_nat", "network"),
-    ("cloud_lb", "network"),
-    ("cloud_cdn", "network"),
-    ("nat", "network"),
-    ("lb", "network"),
-    ("cdn", "network"),
-    ("cloud_armor", "observability"),
-    ("cloudwatch", "observability"),
-    ("cloud_monitoring", "observability"),
-    ("bedrock", "ai"),
-    ("gemini", "ai"),
-    ("vertex", "ai"),
-    ("openai", "ai"),
-    ("sagemaker", "ai"),
-    ("lambda", "serverless"),
-    ("functions", "serverless"),
-    ("azure_functions", "serverless"),
-    ("cloud_functions", "serverless"),
-    ("cloud_run", "serverless"),
-    ("gke", "container"),
-    ("eks", "container"),
-    ("aks", "container"),
-    ("data_transfer", "inter_region_egress"),
-    ("egress", "inter_region_egress"),
-])
+@pytest.mark.parametrize(
+    "service,expected_domain",
+    [
+        ("rds", "database"),
+        ("cloud_sql", "database"),
+        ("elasticache", "database"),
+        ("memorystore", "database"),
+        ("sql", "database"),
+        ("cosmos", "database"),
+        ("bigquery", "analytics"),
+        ("cloud_nat", "network"),
+        ("cloud_lb", "network"),
+        ("cloud_cdn", "network"),
+        ("nat", "network"),
+        ("lb", "network"),
+        ("cdn", "network"),
+        ("cloud_armor", "observability"),
+        ("cloudwatch", "observability"),
+        ("cloud_monitoring", "observability"),
+        ("bedrock", "ai"),
+        ("gemini", "ai"),
+        ("vertex", "ai"),
+        ("openai", "ai"),
+        ("sagemaker", "ai"),
+        ("lambda", "serverless"),
+        ("functions", "serverless"),
+        ("azure_functions", "serverless"),
+        ("cloud_functions", "serverless"),
+        ("cloud_run", "serverless"),
+        ("gke", "container"),
+        ("eks", "container"),
+        ("aks", "container"),
+        ("data_transfer", "inter_region_egress"),
+        ("egress", "inter_region_egress"),
+    ],
+)
 def test_fill_domain_from_service(service, expected_domain):
     spec = {"service": service, "provider": "aws"}
     result = fill_domain(spec)
@@ -110,10 +114,18 @@ def test_fill_domain_cache_resource_type_infers_database(resource_type):
     assert result["domain"] == "database"
 
 
-@pytest.mark.parametrize("resource_type", [
-    "m5.xlarge", "c6i.2xlarge", "n2-standard-4", "e2-medium",
-    "Standard_D4s_v3", "Basic_A1", "Premium_P1",
-])
+@pytest.mark.parametrize(
+    "resource_type",
+    [
+        "m5.xlarge",
+        "c6i.2xlarge",
+        "n2-standard-4",
+        "e2-medium",
+        "Standard_D4s_v3",
+        "Basic_A1",
+        "Premium_P1",
+    ],
+)
 def test_fill_domain_compute_resource_type_patterns(resource_type):
     spec = {"resource_type": resource_type, "provider": "aws"}
     result = fill_domain(spec)

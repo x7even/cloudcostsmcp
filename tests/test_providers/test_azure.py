@@ -1,4 +1,5 @@
 """Tests for the Azure provider, mocking httpx.get to avoid live API calls."""
+
 from __future__ import annotations
 
 from decimal import Decimal
@@ -35,7 +36,7 @@ _AZURE_VM_ITEM = {
 _AZURE_API_RESPONSE = {"Items": [_AZURE_VM_ITEM], "NextPageLink": None}
 
 _AZURE_RESERVED_ITEM = {
-    "retailPrice": 1016.16,   # annual total (API returns total reservation cost, not hourly)
+    "retailPrice": 1016.16,  # annual total (API returns total reservation cost, not hourly)
     "unitPrice": 1016.16,
     "armRegionName": "eastus",
     "armSkuName": "Standard_D4s_v3",
@@ -91,6 +92,7 @@ async def azure_provider(tmp_path: Path):
 # ---------------------------------------------------------------------------
 # get_compute_price
 # ---------------------------------------------------------------------------
+
 
 async def test_azure_get_compute_price(azure_provider: AzureProvider):
     with patch("httpx.get", return_value=_make_mock_response(_AZURE_API_RESPONSE)):
@@ -216,9 +218,7 @@ async def test_azure_linux_excludes_windows_skus(azure_provider: AzureProvider):
     """Linux on-demand results must not include Windows productName SKUs."""
     api_resp = {"Items": [_AZURE_LINUX_ITEM, _AZURE_WINDOWS_ITEM], "NextPageLink": None}
     with patch("httpx.get", return_value=_make_mock_response(api_resp)):
-        prices = await azure_provider.get_compute_price(
-            "Standard_D8s_v3", "eastus", os="Linux"
-        )
+        prices = await azure_provider.get_compute_price("Standard_D8s_v3", "eastus", os="Linux")
 
     assert len(prices) == 1
     assert prices[0].price_per_unit == Decimal("0.384")
@@ -232,9 +232,7 @@ async def test_azure_windows_excludes_linux_skus(azure_provider: AzureProvider):
     """Windows on-demand results must only include Windows productName SKUs."""
     api_resp = {"Items": [_AZURE_LINUX_ITEM, _AZURE_WINDOWS_ITEM], "NextPageLink": None}
     with patch("httpx.get", return_value=_make_mock_response(api_resp)):
-        prices = await azure_provider.get_compute_price(
-            "Standard_D8s_v3", "eastus", os="Windows"
-        )
+        prices = await azure_provider.get_compute_price("Standard_D8s_v3", "eastus", os="Windows")
 
     assert len(prices) == 1
     assert prices[0].price_per_unit == Decimal("0.752")
@@ -252,9 +250,7 @@ async def test_azure_compute_price_sorted_cheapest_first(azure_provider: AzurePr
         "NextPageLink": None,
     }
     with patch("httpx.get", return_value=_make_mock_response(api_resp)):
-        prices = await azure_provider.get_compute_price(
-            "Standard_D8s_v3", "eastus", os="Linux"
-        )
+        prices = await azure_provider.get_compute_price("Standard_D8s_v3", "eastus", os="Linux")
 
     assert len(prices) == 2
     assert prices[0].price_per_unit <= prices[1].price_per_unit, (
@@ -271,9 +267,7 @@ async def test_azure_linux_on_demand_excludes_spot(azure_provider: AzureProvider
         "NextPageLink": None,
     }
     with patch("httpx.get", return_value=_make_mock_response(api_resp)):
-        prices = await azure_provider.get_compute_price(
-            "Standard_D8s_v3", "eastus", os="Linux"
-        )
+        prices = await azure_provider.get_compute_price("Standard_D8s_v3", "eastus", os="Linux")
 
     assert len(prices) == 1
     assert prices[0].price_per_unit == Decimal("0.384")
@@ -286,6 +280,7 @@ async def test_azure_linux_on_demand_excludes_spot(azure_provider: AzureProvider
 # ---------------------------------------------------------------------------
 # get_storage_price
 # ---------------------------------------------------------------------------
+
 
 async def test_azure_get_storage_price(azure_provider: AzureProvider):
     api_resp = {"Items": [_AZURE_STORAGE_ITEM], "NextPageLink": None}
@@ -308,6 +303,7 @@ async def test_azure_get_storage_price_unknown_type(azure_provider: AzureProvide
 # list_regions
 # ---------------------------------------------------------------------------
 
+
 async def test_azure_list_regions(azure_provider: AzureProvider):
     regions = await azure_provider.list_regions("compute")
     assert "eastus" in regions
@@ -320,20 +316,17 @@ async def test_azure_list_regions(azure_provider: AzureProvider):
 # check_availability
 # ---------------------------------------------------------------------------
 
+
 async def test_azure_check_availability_true(azure_provider: AzureProvider):
     with patch("httpx.get", return_value=_make_mock_response(_AZURE_API_RESPONSE)):
-        available = await azure_provider.check_availability(
-            "compute", "Standard_D4s_v3", "eastus"
-        )
+        available = await azure_provider.check_availability("compute", "Standard_D4s_v3", "eastus")
     assert available is True
 
 
 async def test_azure_check_availability_false(azure_provider: AzureProvider):
     empty_resp = {"Items": [], "NextPageLink": None}
     with patch("httpx.get", return_value=_make_mock_response(empty_resp)):
-        available = await azure_provider.check_availability(
-            "compute", "Standard_D4s_v3", "eastus"
-        )
+        available = await azure_provider.check_availability("compute", "Standard_D4s_v3", "eastus")
     assert available is False
 
 
@@ -341,13 +334,16 @@ async def test_azure_check_availability_false(azure_provider: AzureProvider):
 # search_pricing
 # ---------------------------------------------------------------------------
 
+
 async def test_azure_search_pricing(azure_provider: AzureProvider):
     api_resp = {"Items": [_AZURE_VM_ITEM], "NextPageLink": None}
     with patch("httpx.get", return_value=_make_mock_response(api_resp)):
         results = await azure_provider.search_pricing("D4s", region="eastus")
 
     assert len(results) >= 1
-    assert any("D4s" in r.description or "D4s" in r.attributes.get("meterName", "") for r in results)
+    assert any(
+        "D4s" in r.description or "D4s" in r.attributes.get("meterName", "") for r in results
+    )
 
 
 async def test_azure_search_pricing_no_match(azure_provider: AzureProvider):
@@ -363,11 +359,16 @@ async def test_azure_search_pricing_no_match(azure_provider: AzureProvider):
 # list_instance_types
 # ---------------------------------------------------------------------------
 
+
 async def test_azure_list_instance_types(azure_provider: AzureProvider):
     vm_items = [
         {**_AZURE_VM_ITEM, "armSkuName": "Standard_D4s_v3", "skuName": "D4s v3"},
         {**_AZURE_VM_ITEM, "armSkuName": "Standard_E8s_v3", "skuName": "E8s v3"},
-        {**_AZURE_VM_ITEM, "armSkuName": "Standard_D4s_v3", "skuName": "D4s v3 Spot"},  # duplicate + spot
+        {
+            **_AZURE_VM_ITEM,
+            "armSkuName": "Standard_D4s_v3",
+            "skuName": "D4s v3 Spot",
+        },  # duplicate + spot
     ]
     api_resp = {"Items": vm_items, "NextPageLink": None}
     with patch("httpx.get", return_value=_make_mock_response(api_resp)):
@@ -384,8 +385,10 @@ async def test_azure_list_instance_types(azure_provider: AzureProvider):
 # region_display_name integration
 # ---------------------------------------------------------------------------
 
+
 def test_region_display_name_azure():
     from opencloudcosts.utils.regions import region_display_name
+
     assert region_display_name("azure", "eastus") == "East US"
     assert region_display_name("azure", "westeurope") == "West Europe"
     assert region_display_name("azure", "southeastasia") == "Southeast Asia"
@@ -395,6 +398,7 @@ def test_region_display_name_azure():
 
 def test_normalize_region_azure():
     from opencloudcosts.utils.regions import normalize_region
+
     assert normalize_region("azure", "eastus") == "eastus"
     assert normalize_region("azure", "East US") == "eastus"
     assert normalize_region("azure", "West Europe") == "westeurope"
@@ -403,6 +407,7 @@ def test_normalize_region_azure():
 # ---------------------------------------------------------------------------
 # v0.8.12 — Azure egress pricing tests
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_egress_internet_uses_api_rate(azure_provider: AzureProvider):
@@ -530,6 +535,7 @@ async def test_egress_zone2_uses_zone2_rate(azure_provider: AzureProvider):
 async def test_egress_supports_capability(azure_provider: AzureProvider):
     """AzureProvider.supports returns True for inter_region_egress domain."""
     from opencloudcosts.models import PricingDomain
+
     assert azure_provider.supports(PricingDomain.INTER_REGION_EGRESS)
 
 
@@ -537,6 +543,7 @@ async def test_egress_supports_capability(azure_provider: AzureProvider):
 async def test_egress_get_price_dispatch(azure_provider: AzureProvider):
     """get_price with EgressPricingSpec returns a PricingResult with egress prices."""
     from opencloudcosts.models import EgressPricingSpec, PricingDomain
+
     spec = EgressPricingSpec(
         provider="azure",
         domain=PricingDomain.INTER_REGION_EGRESS,

@@ -18,6 +18,7 @@ Windows pricing (T31):
     Not all families support Windows; E2 and families without Windows SKU mappings
     return empty results rather than silently returning Linux price.
 """
+
 from __future__ import annotations
 
 import logging
@@ -67,13 +68,13 @@ logger = logging.getLogger(__name__)
 
 _CATALOG_BASE = "https://cloudbilling.googleapis.com/v1"
 _BILLING_V1BETA_BASE = "https://cloudbilling.googleapis.com/v1beta"
-_COMPUTE_SERVICE_ID = "6F81-5844-456A"   # Compute Engine
-_GCS_SERVICE_ID = "95FF-2EF5-5EA1"       # Cloud Storage
-_CLOUD_SQL_SERVICE_ID = "9662-B51E-5089" # Cloud SQL
-_GKE_SERVICE_ID = "CCD8-9BF1-090E"       # Google Kubernetes Engine
+_COMPUTE_SERVICE_ID = "6F81-5844-456A"  # Compute Engine
+_GCS_SERVICE_ID = "95FF-2EF5-5EA1"  # Cloud Storage
+_CLOUD_SQL_SERVICE_ID = "9662-B51E-5089"  # Cloud SQL
+_GKE_SERVICE_ID = "CCD8-9BF1-090E"  # Google Kubernetes Engine
 _MEMORYSTORE_SERVICE_ID = "5AF5-2C11-D467"  # Memorystore for Redis
-_VERTEX_SERVICE_ID = "C7E2-9256-1C43"       # Vertex AI
-_BIGQUERY_SERVICE_ID = "24E6-581D-38E5"     # BigQuery
+_VERTEX_SERVICE_ID = "C7E2-9256-1C43"  # Vertex AI
+_BIGQUERY_SERVICE_ID = "24E6-581D-38E5"  # BigQuery
 _CLOUD_ARMOR_SERVICE_ID = "E3D3-8838-A232"  # Cloud Armor (best-effort)
 _CLOUD_MONITORING_SERVICE_ID = "58CD-E7C3-72CA"  # Cloud Monitoring (best-effort)
 
@@ -109,7 +110,7 @@ _GCS_STORAGE_CLASSES: dict[str, str] = {
     "standard": "Standard Storage",
     "nearline": "Nearline Storage",
     "coldline": "Coldline Storage",
-    "archive":  "Archive Storage",
+    "archive": "Archive Storage",
 }
 
 # Words in SKU description that indicate non-capacity SKUs to exclude
@@ -126,17 +127,17 @@ _CLOUD_SQL_ENGINE_NAMES: dict[str, str] = {
 
 # Map PricingTerm -> (usageType value in SKU category, description key in GCP_FAMILY_SKU)
 _TERM_USAGE_TYPE: dict[PricingTerm, tuple[str, str, str]] = {
-    PricingTerm.ON_DEMAND:   ("OnDemand",   "cpu_desc",          "ram_desc"),
-    PricingTerm.SPOT:        ("Preemptible", "preempt_cpu_desc",  "preempt_ram_desc"),
-    PricingTerm.CUD_1YR:     ("Commit1Yr",  "cud_cpu_desc",      "cud_ram_desc"),
-    PricingTerm.CUD_3YR:     ("Commit3Yr",  "cud_cpu_desc",      "cud_ram_desc"),
+    PricingTerm.ON_DEMAND: ("OnDemand", "cpu_desc", "ram_desc"),
+    PricingTerm.SPOT: ("Preemptible", "preempt_cpu_desc", "preempt_ram_desc"),
+    PricingTerm.CUD_1YR: ("Commit1Yr", "cud_cpu_desc", "cud_ram_desc"),
+    PricingTerm.CUD_3YR: ("Commit3Yr", "cud_cpu_desc", "cud_ram_desc"),
 }
 
 
 _GCP_CAPABILITIES: dict[tuple[str, str | None], bool] = {
     (PricingDomain.COMPUTE.value, None): True,
     (PricingDomain.COMPUTE.value, "compute_engine"): True,
-    (PricingDomain.COMPUTE.value, "vm"): True,   # Azure-style alias
+    (PricingDomain.COMPUTE.value, "vm"): True,  # Azure-style alias
     (PricingDomain.STORAGE.value, None): True,
     (PricingDomain.STORAGE.value, "gcs"): True,
     (PricingDomain.STORAGE.value, "persistent_disk"): True,
@@ -172,10 +173,13 @@ def _windows_sku_suffix(family: str) -> tuple[str, str] | None:
     Families without Windows support (E2, C2D, T2D, T2A, M1, A2, etc.) return None.
     """
     _MAP: dict[str, tuple[str, str]] = {
-        "n1":  ("N1 Predefined Instance Core running Windows",  "N1 Predefined Instance Ram running Windows"),
-        "n2":  ("N2 Instance Core running Windows",              "N2 Instance Ram running Windows"),
-        "n2d": ("N2D AMD Instance Core running Windows",         "N2D AMD Instance Ram running Windows"),
-        "c2":  ("Compute optimized Core running Windows",        "Compute optimized Ram running Windows"),
+        "n1": (
+            "N1 Predefined Instance Core running Windows",
+            "N1 Predefined Instance Ram running Windows",
+        ),
+        "n2": ("N2 Instance Core running Windows", "N2 Instance Ram running Windows"),
+        "n2d": ("N2D AMD Instance Core running Windows", "N2D AMD Instance Ram running Windows"),
+        "c2": ("Compute optimized Core running Windows", "Compute optimized Ram running Windows"),
         # E2: cost-optimised, no Windows support
         # C2D, T2D, T2A, M1, A2: no Windows support
     }
@@ -204,6 +208,7 @@ class GCPProvider(ProviderBase):
         self._api_key = api_key
         self._http: httpx.AsyncClient | None = None
         from opencloudcosts.providers.gcp_auth import GcpAuthProvider
+
         self._auth = GcpAuthProvider(settings)
 
     async def _get_http(self) -> httpx.AsyncClient:
@@ -321,9 +326,7 @@ class GCPProvider(ProviderBase):
             pass
         return Decimal("0")
 
-    async def _build_price_index(
-        self, region: str
-    ) -> dict[tuple[str, str], Decimal]:
+    async def _build_price_index(self, region: str) -> dict[tuple[str, str], Decimal]:
         """
         Build a price index for Compute Engine in a given region.
 
@@ -435,22 +438,24 @@ class GCPProvider(ProviderBase):
                 logger.error(
                     "GCP: 401 fetching contract price for SKU %s — access token expired or invalid. "
                     "Use OCC_GCP_SERVICE_ACCOUNT_JSON_B64, GOOGLE_APPLICATION_CREDENTIALS, "
-                    "or a GCP metadata-server credential for auto-refresh.", sku_id
+                    "or a GCP metadata-server credential for auto-refresh.",
+                    sku_id,
                 )
                 return None
             elif status == 403:
                 # IAM misconfiguration — do NOT cache; the admin may fix permissions.
                 logger.warning(
                     "GCP: 403 fetching contract price for SKU %s — "
-                    "check billing.billingAccountPrice.get IAM permission.", sku_id
+                    "check billing.billingAccountPrice.get IAM permission.",
+                    sku_id,
                 )
                 return None
             else:
                 # Transient / unexpected error — cache miss briefly to avoid hammering.
-                logger.warning("GCP: HTTP %s fetching contract price for SKU %s.",
-                               status, sku_id)
-                await self._cache.set_metadata(cache_key, {"none": True},
-                                               ttl_hours=self._settings.effective_price_ttl_hours)
+                logger.warning("GCP: HTTP %s fetching contract price for SKU %s.", status, sku_id)
+                await self._cache.set_metadata(
+                    cache_key, {"none": True}, ttl_hours=self._settings.effective_price_ttl_hours
+                )
                 return None
         finally:
             await billing_http.aclose()
@@ -466,23 +471,21 @@ class GCPProvider(ProviderBase):
         if cp is None or lp is None:
             return None
 
-        contract_dec = gcp_money_to_decimal(
-            str(cp.get("units", "0")), cp.get("nanos", 0)
-        )
-        list_dec = gcp_money_to_decimal(
-            str(lp.get("units", "0")), lp.get("nanos", 0)
-        )
+        contract_dec = gcp_money_to_decimal(str(cp.get("units", "0")), cp.get("nanos", 0))
+        list_dec = gcp_money_to_decimal(str(lp.get("units", "0")), lp.get("nanos", 0))
         # If contract == list price, no actual discount
         if contract_dec >= list_dec:
-            await self._cache.set_metadata(cache_key, {"none": True},
-                                           ttl_hours=self._settings.effective_price_ttl_hours)
+            await self._cache.set_metadata(
+                cache_key, {"none": True}, ttl_hours=self._settings.effective_price_ttl_hours
+            )
             return None
 
         # Sanitise reason: restrict to a safe identifier string before caching/returning.
         raw_reason = data.get("priceReason", {}).get("type", "contract")
         reason = raw_reason[:64] if isinstance(raw_reason, str) else "contract"
         await self._cache.set_metadata(
-            cache_key, {"price": str(contract_dec), "reason": reason},
+            cache_key,
+            {"price": str(contract_dec), "reason": reason},
             ttl_hours=self._settings.effective_price_ttl_hours,
         )
         return contract_dec, reason
@@ -528,15 +531,16 @@ class GCPProvider(ProviderBase):
         elif term == PricingTerm.CUD_3YR:
             cud_year = "3yr"
 
-        cache_key_extras = {
-            "instance_type": instance_type, "os": os, "term": term.value
-        }
-        cached_meta = await self._cache.get_prices_with_meta("gcp", "compute", region, cache_key_extras)
+        cache_key_extras = {"instance_type": instance_type, "os": os, "term": term.value}
+        cached_meta = await self._cache.get_prices_with_meta(
+            "gcp", "compute", region, cache_key_extras
+        )
         if cached_meta is not None:
             cached_data, fetched_at = cached_meta
             return self._apply_cache_trust(
                 [NormalizedPrice.model_validate(p) for p in cached_data],
-                fetched_at, self._SOURCE_URL,
+                fetched_at,
+                self._SOURCE_URL,
             )
 
         index = await self._build_price_index(region)
@@ -548,7 +552,8 @@ class GCPProvider(ProviderBase):
         if not cpu_desc or not ram_desc:
             logger.info(
                 "GCP: %s family does not support term=%s — returning empty.",
-                family, term.value,
+                family,
+                term.value,
             )
             return []
 
@@ -565,15 +570,17 @@ class GCPProvider(ProviderBase):
             logger.warning(
                 "GCP: could not find %s/%s SKU for %s in %s (term=%s). "
                 "CPU found: %s, RAM found: %s",
-                cpu_desc, ram_desc, instance_type, region, term.value,
-                cpu_price is not None, ram_price is not None,
+                cpu_desc,
+                ram_desc,
+                instance_type,
+                region,
+                term.value,
+                cpu_price is not None,
+                ram_price is not None,
             )
             return []
 
-        total_price = (
-            Decimal(str(vcpus)) * cpu_price
-            + Decimal(str(memory_gb)) * ram_price
-        )
+        total_price = Decimal(str(vcpus)) * cpu_price + Decimal(str(memory_gb)) * ram_price
 
         # Windows pricing: add Windows Server license cost on top of base Linux price
         if os == "Windows":
@@ -592,13 +599,14 @@ class GCPProvider(ProviderBase):
                 logger.warning(
                     "GCP: could not find Windows SKU for %s in %s. "
                     "Win CPU found: %s, Win RAM found: %s",
-                    instance_type, region,
-                    win_cpu_price is not None, win_ram_price is not None,
+                    instance_type,
+                    region,
+                    win_cpu_price is not None,
+                    win_ram_price is not None,
                 )
                 return []
             windows_license = (
-                Decimal(str(vcpus)) * win_cpu_price
-                + Decimal(str(memory_gb)) * win_ram_price
+                Decimal(str(vcpus)) * win_cpu_price + Decimal(str(memory_gb)) * win_ram_price
             )
             total_price = total_price + windows_license
 
@@ -622,19 +630,20 @@ class GCPProvider(ProviderBase):
         )
 
         await self._cache.set_prices(
-            "gcp", "compute", region, cache_key_extras,
+            "gcp",
+            "compute",
+            region,
+            cache_key_extras,
             [price.model_dump(mode="json")],
             ttl_hours=self._settings.cache_ttl_hours,
         )
-        return [price]
+        return self._annotate_fresh([price], self._SOURCE_URL)
 
     # ------------------------------------------------------------------
     # GCS (Cloud Storage) pricing
     # ------------------------------------------------------------------
 
-    async def _build_gcs_price_index(
-        self, region: str
-    ) -> dict[tuple[str, str], Decimal]:
+    async def _build_gcs_price_index(self, region: str) -> dict[tuple[str, str], Decimal]:
         """Build price index for Cloud Storage SKUs in a given region."""
         cache_key = f"gcp:gcs_price_index:{region}"
         cached = await self._cache.get_metadata(cache_key)
@@ -674,9 +683,7 @@ class GCPProvider(ProviderBase):
     # Cloud SQL pricing
     # ------------------------------------------------------------------
 
-    async def _build_cloud_sql_price_index(
-        self, region: str
-    ) -> dict[tuple[str, str], Decimal]:
+    async def _build_cloud_sql_price_index(self, region: str) -> dict[tuple[str, str], Decimal]:
         """Build price index for Cloud SQL SKUs in a given region."""
         cache_key = f"gcp:cloud_sql_price_index:{region}"
         cached = await self._cache.get_metadata(cache_key)
@@ -726,12 +733,15 @@ class GCPProvider(ProviderBase):
         engine_norm = _CLOUD_SQL_ENGINE_NAMES.get(engine.lower(), engine)
 
         cache_key_extras = {"instance_type": instance_type, "engine": engine_norm, "ha": str(ha)}
-        cached_meta = await self._cache.get_prices_with_meta("gcp", "cloud_sql", region, cache_key_extras)
+        cached_meta = await self._cache.get_prices_with_meta(
+            "gcp", "cloud_sql", region, cache_key_extras
+        )
         if cached_meta is not None:
             cached_data, fetched_at = cached_meta
             return self._apply_cache_trust(
                 [NormalizedPrice.model_validate(p) for p in cached_data],
-                fetched_at, self._SOURCE_URL,
+                fetched_at,
+                self._SOURCE_URL,
             )
 
         index = await self._build_cloud_sql_price_index(region)
@@ -758,7 +768,12 @@ class GCPProvider(ProviderBase):
         if total_price is None:
             logger.warning(
                 "GCP Cloud SQL: no SKU matching '%s vCPU + %sGB RAM' for %s %s in %s (ha=%s)",
-                vcpu_str, ram_str, engine_norm, instance_type, region, ha,
+                vcpu_str,
+                ram_str,
+                engine_norm,
+                instance_type,
+                region,
+                ha,
             )
             return []
 
@@ -781,19 +796,20 @@ class GCPProvider(ProviderBase):
         )
 
         await self._cache.set_prices(
-            "gcp", "cloud_sql", region, cache_key_extras,
+            "gcp",
+            "cloud_sql",
+            region,
+            cache_key_extras,
             [result.model_dump(mode="json")],
             ttl_hours=self._settings.cache_ttl_hours,
         )
-        return [result]
+        return self._annotate_fresh([result], self._SOURCE_URL)
 
     # ------------------------------------------------------------------
     # Memorystore for Redis pricing
     # ------------------------------------------------------------------
 
-    async def _build_memorystore_price_index(
-        self, region: str
-    ) -> dict[tuple[str, str], Decimal]:
+    async def _build_memorystore_price_index(self, region: str) -> dict[tuple[str, str], Decimal]:
         """Build price index for Memorystore for Redis SKUs in a given region."""
         cache_key = f"gcp:memorystore_price_index:v2:{region}"
         cached = await self._cache.get_metadata(cache_key)
@@ -862,12 +878,15 @@ class GCPProvider(ProviderBase):
             "tier": tier_lower,
             "hours_per_month": str(hours_per_month),
         }
-        cached_meta = await self._cache.get_prices_with_meta("gcp", "memorystore", region, cache_key_extras)
+        cached_meta = await self._cache.get_prices_with_meta(
+            "gcp", "memorystore", region, cache_key_extras
+        )
         if cached_meta is not None:
             cached_data, fetched_at = cached_meta
             return self._apply_cache_trust(
                 [NormalizedPrice.model_validate(p) for p in cached_data],
-                fetched_at, self._SOURCE_URL,
+                fetched_at,
+                self._SOURCE_URL,
             )
 
         index = await self._build_memorystore_price_index(region)
@@ -900,7 +919,9 @@ class GCPProvider(ProviderBase):
         if raw_rate is None:
             logger.warning(
                 "GCP Memorystore: could not find Redis %s SKU for capacity=%.1f GB in %s",
-                tier, capacity_gb, region,
+                tier,
+                capacity_gb,
+                region,
             )
             return []
 
@@ -924,19 +945,20 @@ class GCPProvider(ProviderBase):
         )
 
         await self._cache.set_prices(
-            "gcp", "memorystore", region, cache_key_extras,
+            "gcp",
+            "memorystore",
+            region,
+            cache_key_extras,
             [result.model_dump(mode="json")],
             ttl_hours=self._settings.cache_ttl_hours,
         )
-        return [result]
+        return self._annotate_fresh([result], self._SOURCE_URL)
 
     # ------------------------------------------------------------------
     # BigQuery pricing
     # ------------------------------------------------------------------
 
-    async def _build_bigquery_price_index(
-        self, region: str
-    ) -> dict[str, Decimal]:
+    async def _build_bigquery_price_index(self, region: str) -> dict[str, Decimal]:
         """Build price index for BigQuery SKUs in a given region.
 
         BigQuery has multi-region identifiers in serviceRegions (e.g. "us",
@@ -965,8 +987,11 @@ class GCPProvider(ProviderBase):
             # BigQuery Analysis, Active Storage, and Long-term Storage SKUs all have
             # a free-quota tier at startUsageAmount=0 ($0) followed by the actual
             # paid rate. Use _sku_paid_price to skip the free tier.
-            if ("Analysis" in desc and "Streaming" not in desc) or \
-               "Active Logical Storage" in desc or "Long Term Logical Storage" in desc:
+            if (
+                ("Analysis" in desc and "Streaming" not in desc)
+                or "Active Logical Storage" in desc
+                or "Long Term Logical Storage" in desc
+            ):
                 price = self._sku_paid_price(sku)
             else:
                 price = self._sku_price(sku)
@@ -1066,9 +1091,7 @@ class GCPProvider(ProviderBase):
     # GKE (Google Kubernetes Engine) pricing
     # ------------------------------------------------------------------
 
-    async def _build_gke_price_index(
-        self, region: str
-    ) -> dict[tuple[str, str], Decimal]:
+    async def _build_gke_price_index(self, region: str) -> dict[tuple[str, str], Decimal]:
         """Build price index for GKE SKUs in a given region."""
         cache_key = f"gcp:gke_price_index:{region}"
         cached = await self._cache.get_metadata(cache_key)
@@ -1180,10 +1203,7 @@ class GCPProvider(ProviderBase):
             }
 
             if vcpu > 0 or memory_gb > 0:
-                hourly = (
-                    Decimal(str(vcpu)) * vcpu_rate
-                    + Decimal(str(memory_gb)) * mem_rate_val
-                )
+                hourly = Decimal(str(vcpu)) * vcpu_rate + Decimal(str(memory_gb)) * mem_rate_val
                 result["hourly_cost"] = f"${hourly:.6f}"
                 result["monthly_cost"] = f"${hourly * Decimal(str(hours_per_month)):.2f}"
             else:
@@ -1201,9 +1221,14 @@ class GCPProvider(ProviderBase):
         desc_substring = _GCS_STORAGE_CLASSES[storage_class]
 
         cache_key_extras = {"storage_type": storage_class, "source": "gcs"}
-        cached = await self._cache.get_prices("gcp", "gcs_storage", region, cache_key_extras)
-        if cached:
-            return [NormalizedPrice.model_validate(p) for p in cached]
+        cached_meta = await self._cache.get_prices_with_meta("gcp", "gcs_storage", region, cache_key_extras)
+        if cached_meta is not None:
+            cached_data, fetched_at = cached_meta
+            return self._apply_cache_trust(
+                [NormalizedPrice.model_validate(p) for p in cached_data],
+                fetched_at,
+                self._SOURCE_URL,
+            )
 
         index = await self._build_gcs_price_index(region)
 
@@ -1225,11 +1250,14 @@ class GCPProvider(ProviderBase):
         )
 
         await self._cache.set_prices(
-            "gcp", "gcs_storage", region, cache_key_extras,
+            "gcp",
+            "gcs_storage",
+            region,
+            cache_key_extras,
             [result.model_dump(mode="json")],
             ttl_hours=self._settings.cache_ttl_hours,
         )
-        return [result]
+        return self._annotate_fresh([result], self._SOURCE_URL)
 
     async def get_storage_price(
         self,
@@ -1250,9 +1278,14 @@ class GCPProvider(ProviderBase):
             )
 
         cache_key_extras = {"storage_type": storage_type}
-        cached = await self._cache.get_prices("gcp", "storage", region, cache_key_extras)
-        if cached:
-            return [NormalizedPrice.model_validate(p) for p in cached]
+        cached_meta = await self._cache.get_prices_with_meta("gcp", "storage", region, cache_key_extras)
+        if cached_meta is not None:
+            cached_data, fetched_at = cached_meta
+            return self._apply_cache_trust(
+                [NormalizedPrice.model_validate(p) for p in cached_data],
+                fetched_at,
+                self._SOURCE_URL,
+            )
 
         index = await self._build_price_index(region)
 
@@ -1281,11 +1314,14 @@ class GCPProvider(ProviderBase):
         )
 
         await self._cache.set_prices(
-            "gcp", "storage", region, cache_key_extras,
+            "gcp",
+            "storage",
+            region,
+            cache_key_extras,
             [result.model_dump(mode="json")],
             ttl_hours=self._settings.cache_ttl_hours,
         )
-        return [result]
+        return self._annotate_fresh([result], self._SOURCE_URL)
 
     async def search_pricing(
         self,
@@ -1344,14 +1380,16 @@ class GCPProvider(ProviderBase):
             if min_memory_gb and mem_gb < min_memory_gb:
                 continue
 
-            results.append(InstanceTypeInfo(
-                provider=CloudProvider.GCP,
-                instance_type=itype,
-                vcpu=vcpus,
-                memory_gb=mem_gb,
-                gpu_count=1 if is_gpu else 0,
-                region=region,
-            ))
+            results.append(
+                InstanceTypeInfo(
+                    provider=CloudProvider.GCP,
+                    instance_type=itype,
+                    vcpu=vcpus,
+                    memory_gb=mem_gb,
+                    gpu_count=1 if is_gpu else 0,
+                    region=region,
+                )
+            )
 
         return results
 
@@ -1379,9 +1417,7 @@ class GCPProvider(ProviderBase):
     # Vertex AI pricing
     # ------------------------------------------------------------------
 
-    async def _build_vertex_price_index(
-        self, region: str
-    ) -> dict[tuple[str, str], Decimal]:
+    async def _build_vertex_price_index(self, region: str) -> dict[tuple[str, str], Decimal]:
         """Build a price index for Vertex AI SKUs in a given region."""
         cache_key = f"gcp:vertex_price_index:{region}"
         cached = await self._cache.get_metadata(cache_key)
@@ -1518,7 +1554,8 @@ class GCPProvider(ProviderBase):
         model_lower = model.lower()
         # Extract meaningful parts from slug like "gemini-1.5-flash" → ["1.5", "flash"]
         model_parts = [
-            p for p in model_lower.replace("gemini-", "").replace("gemini", "").split("-")
+            p
+            for p in model_lower.replace("gemini-", "").replace("gemini", "").split("-")
             if p and len(p) > 1
         ]
 
@@ -1571,9 +1608,7 @@ class GCPProvider(ProviderBase):
     # already-cached payload — no extra HTTP calls.
     # ------------------------------------------------------------------
 
-    async def _build_networking_price_index(
-        self, region: str
-    ) -> dict[str, Decimal]:
+    async def _build_networking_price_index(self, region: str) -> dict[str, Decimal]:
         """Build a price index for LB / CDN / NAT SKUs from Compute Engine catalog.
 
         Filters to descriptions that mention load balancing, CDN, or NAT so the
@@ -1587,7 +1622,16 @@ class GCPProvider(ProviderBase):
         # Reuses the already-cached Compute Engine SKU payload.
         skus = await self._fetch_skus(_COMPUTE_SERVICE_ID)
 
-        _NETWORKING_KEYWORDS = ("load bal", "tcp proxy", "ssl proxy", "network cdn", "cdn cache", "cloud nat", "nat gateway", "nat data")
+        _NETWORKING_KEYWORDS = (
+            "load bal",
+            "tcp proxy",
+            "ssl proxy",
+            "network cdn",
+            "cdn cache",
+            "cloud nat",
+            "nat gateway",
+            "nat data",
+        )
 
         index: dict[str, Decimal] = {}
         for sku in skus:
@@ -1648,7 +1692,9 @@ class GCPProvider(ProviderBase):
             # Match rule rate by lb_type
             if rule_rate is None:
                 if lb_type_lower in ("https", "http"):
-                    if ("external http" in desc or "https load balancing rule" in desc) and "rule" in desc:
+                    if (
+                        "external http" in desc or "https load balancing rule" in desc
+                    ) and "rule" in desc:
                         rule_rate = price
                 elif lb_type_lower in ("tcp",):
                     if "tcp proxy" in desc and "rule" in desc:
@@ -1693,7 +1739,9 @@ class GCPProvider(ProviderBase):
 
         if fallback:
             result["fallback"] = True
-            result["price_source"] = "GCP documentation (Cloud Load Balancing SKUs are not exposed by the public Cloud Billing Catalog API)"
+            result["price_source"] = (
+                "GCP documentation (Cloud Load Balancing SKUs are not exposed by the public Cloud Billing Catalog API)"
+            )
 
         result["note"] = (
             "Cloud Load Balancing: forwarding rules are billed per hour. "
@@ -1770,7 +1818,9 @@ class GCPProvider(ProviderBase):
 
         if fallback:
             result["fallback"] = True
-            result["price_source"] = "GCP documentation (live CDN egress SKU not matched in region; cache fill SKU pattern updated to match 'Network CDN Cache Fill from X to Y')"
+            result["price_source"] = (
+                "GCP documentation (live CDN egress SKU not matched in region; cache fill SKU pattern updated to match 'Network CDN Cache Fill from X to Y')"
+            )
 
         result["note"] = (
             "Cloud CDN egress rates vary by destination region (NA/EU cheapest, "
@@ -1808,8 +1858,10 @@ class GCPProvider(ProviderBase):
         for desc, price in index.items():
             if gateway_rate is None and "cloud nat gateway" in desc:
                 gateway_rate = price
-            if data_rate is None and "cloud nat" in desc and (
-                "data processed" in desc or "nat gateway data" in desc
+            if (
+                data_rate is None
+                and "cloud nat" in desc
+                and ("data processed" in desc or "nat gateway data" in desc)
             ):
                 data_rate = price
             if gateway_rate is not None and data_rate is not None:
@@ -1844,7 +1896,9 @@ class GCPProvider(ProviderBase):
 
         if fallback:
             result["fallback"] = True
-            result["price_source"] = "GCP documentation (Cloud NAT SKUs are not exposed by the public Cloud Billing Catalog API)"
+            result["price_source"] = (
+                "GCP documentation (Cloud NAT SKUs are not exposed by the public Cloud Billing Catalog API)"
+            )
 
         result["note"] = (
             "Cloud NAT gateway uptime is billed per hour regardless of traffic. "
@@ -1868,7 +1922,7 @@ class GCPProvider(ProviderBase):
             monthly_requests_millions: Millions of requests evaluated per month.
         """
         # Published GCP fallback rates (2024)
-        _FALLBACK_POLICY_RATE = Decimal("0.75")   # per policy per month
+        _FALLBACK_POLICY_RATE = Decimal("0.75")  # per policy per month
         _FALLBACK_REQUEST_RATE = Decimal("0.75")  # per million requests
 
         policy_rate: Decimal | None = None
@@ -1963,9 +2017,9 @@ class GCPProvider(ProviderBase):
         """
         # Published GCP fallback rates (2024) — tiered, per MiB
         _FREE_TIER_MIB = Decimal("150")
-        _TIER1_RATE = Decimal("0.258")   # 0 – 100,000 MiB/month
-        _TIER2_RATE = Decimal("0.151")   # 100,001 – 250,000 MiB/month
-        _TIER3_RATE = Decimal("0.062")   # above 250,000 MiB/month
+        _TIER1_RATE = Decimal("0.258")  # 0 – 100,000 MiB/month
+        _TIER2_RATE = Decimal("0.151")  # 100,001 – 250,000 MiB/month
+        _TIER3_RATE = Decimal("0.062")  # above 250,000 MiB/month
         _TIER1_LIMIT = Decimal("100000")
         _TIER2_LIMIT = Decimal("250000")
 
@@ -1986,7 +2040,9 @@ class GCPProvider(ProviderBase):
             for sku in skus:
                 desc = sku.get("description", "").lower()
                 # Real SKU description: "Workload Metrics Samples Ingested"
-                if ("monitoring" in desc or "workload metric" in desc) and ("metric" in desc or "ingest" in desc):
+                if ("monitoring" in desc or "workload metric" in desc) and (
+                    "metric" in desc or "ingest" in desc
+                ):
                     price = self._sku_price(sku)
                     if price > 0:
                         tier1_rate = price
@@ -2090,21 +2146,23 @@ class GCPProvider(ProviderBase):
                 return []
 
             effective_per_unit = (
-                Decimal(str(vcpus)) * cpu_contract
-                + Decimal(str(memory_gb)) * ram_contract
+                Decimal(str(vcpus)) * cpu_contract + Decimal(str(memory_gb)) * ram_contract
             )
             base = base_prices[0]
             discount_pct = (
                 float((base.price_per_unit - effective_per_unit) / base.price_per_unit * 100)
-                if base.price_per_unit > 0 else 0.0
+                if base.price_per_unit > 0
+                else 0.0
             )
-            return [EffectivePrice(
-                base_price=base,
-                effective_price_per_unit=effective_per_unit,
-                discount_type=f"GCP contract ({price_reason})",
-                discount_pct=round(discount_pct, 2),
-                source="billing_account_pricing_api",
-            )]
+            return [
+                EffectivePrice(
+                    base_price=base,
+                    effective_price_per_unit=effective_per_unit,
+                    discount_type=f"GCP contract ({price_reason})",
+                    discount_pct=round(discount_pct, 2),
+                    source="billing_account_pricing_api",
+                )
+            ]
         except Exception as exc:
             logger.warning("GCP: effective pricing lookup failed: %s", exc)
             return []
@@ -2118,7 +2176,8 @@ class GCPProvider(ProviderBase):
         """Build an EffectivePrice from a base NormalizedPrice and a contract rate."""
         discount_pct = (
             float((base.price_per_unit - contract_price) / base.price_per_unit * 100)
-            if base.price_per_unit > 0 else 0.0
+            if base.price_per_unit > 0
+            else 0.0
         )
         return EffectivePrice(
             base_price=base,
@@ -2128,9 +2187,7 @@ class GCPProvider(ProviderBase):
             source="billing_account_pricing_api",
         )
 
-    async def _effective_price_storage(
-        self, spec: StoragePricingSpec
-    ) -> list[EffectivePrice]:
+    async def _effective_price_storage(self, spec: StoragePricingSpec) -> list[EffectivePrice]:
         """Contract pricing for GCS and Persistent Disk storage."""
         if not self._settings.gcp_billing_account_id:
             return []
@@ -2164,9 +2221,7 @@ class GCPProvider(ProviderBase):
             logger.warning("GCP: effective storage pricing failed: %s", exc)
             return []
 
-    async def _effective_price_database(
-        self, spec: DatabasePricingSpec
-    ) -> list[EffectivePrice]:
+    async def _effective_price_database(self, spec: DatabasePricingSpec) -> list[EffectivePrice]:
         """Contract pricing for Cloud SQL and Memorystore."""
         if not self._settings.gcp_billing_account_id:
             return []
@@ -2202,7 +2257,9 @@ class GCPProvider(ProviderBase):
                 zone_type = "Regional" if ha else "Zonal"
                 vcpu_str = str(int(vcpus)) if vcpus == int(vcpus) else str(vcpus)
                 ram_str = str(int(memory_gb)) if memory_gb == int(memory_gb) else str(memory_gb)
-                desc_substring = f"Cloud SQL for {engine_norm}: {zone_type} - {vcpu_str} vCPU + {ram_str}GB RAM"
+                desc_substring = (
+                    f"Cloud SQL for {engine_norm}: {zone_type} - {vcpu_str} vCPU + {ram_str}GB RAM"
+                )
                 skus = await self._fetch_skus(_CLOUD_SQL_SERVICE_ID)
 
             sku_name = self._find_sku_name(skus, desc_substring, "OnDemand")
@@ -2219,9 +2276,7 @@ class GCPProvider(ProviderBase):
             logger.warning("GCP: effective database pricing failed: %s", exc)
             return []
 
-    async def _effective_price_network(
-        self, spec: NetworkPricingSpec
-    ) -> list[EffectivePrice]:
+    async def _effective_price_network(self, spec: NetworkPricingSpec) -> list[EffectivePrice]:
         """Contract pricing for Cloud LB, CDN, NAT, and Cloud Armor.
 
         Returns contract-priced EffectivePrice entries for each component of the
@@ -2242,7 +2297,9 @@ class GCPProvider(ProviderBase):
                 skus = await self._fetch_skus(_CLOUD_ARMOR_SERVICE_ID)
                 for base in public_prices:
                     if "policy" in base.description.lower():
-                        sku_name = self._find_sku_name(skus, "Cloud Armor Security Policy", "OnDemand")
+                        sku_name = self._find_sku_name(
+                            skus, "Cloud Armor Security Policy", "OnDemand"
+                        )
                     elif "request" in base.description.lower():
                         sku_name = self._find_sku_name(skus, "Request", "OnDemand")
                     else:
@@ -2316,9 +2373,7 @@ class GCPProvider(ProviderBase):
             logger.warning("GCP: effective network pricing failed: %s", exc)
             return []
 
-    async def _effective_price_egress(
-        self, spec: EgressPricingSpec
-    ) -> list[EffectivePrice]:
+    async def _effective_price_egress(self, spec: EgressPricingSpec) -> list[EffectivePrice]:
         """Contract pricing for GCP internet egress.
 
         Only covers internet egress (no dest_region). Intra-GCP inter-region
@@ -2375,13 +2430,27 @@ class GCPProvider(ProviderBase):
     ) -> list[PricingTerm]:
         dv = domain.value if hasattr(domain, "value") else domain
         if dv == PricingDomain.COMPUTE.value:
-            return [PricingTerm.ON_DEMAND, PricingTerm.SPOT, PricingTerm.CUD_1YR, PricingTerm.CUD_3YR]
+            return [
+                PricingTerm.ON_DEMAND,
+                PricingTerm.SPOT,
+                PricingTerm.CUD_1YR,
+                PricingTerm.CUD_3YR,
+            ]
         return [PricingTerm.ON_DEMAND]
 
     _MAJOR_REGIONS = [
-        "us-central1", "us-east1", "us-west1", "us-west2",
-        "europe-west1", "europe-west2", "europe-west3", "europe-west4",
-        "asia-east1", "asia-northeast1", "asia-southeast1", "australia-southeast1",
+        "us-central1",
+        "us-east1",
+        "us-west1",
+        "us-west2",
+        "europe-west1",
+        "europe-west2",
+        "europe-west3",
+        "europe-west4",
+        "asia-east1",
+        "asia-northeast1",
+        "asia-southeast1",
+        "australia-southeast1",
     ]
     _SOURCE_URL = "https://cloud.google.com/billing/v1/services"
 
@@ -2400,8 +2469,10 @@ class GCPProvider(ProviderBase):
                 reason=f"GCP does not support {spec.domain.value}/{spec.service}.",
                 alternatives=["Use describe_catalog(provider='gcp') to see supported services."],
                 example_invocation={
-                    "provider": "gcp", "domain": "compute",
-                    "resource_type": "n1-standard-4", "region": "us-central1",
+                    "provider": "gcp",
+                    "domain": "compute",
+                    "resource_type": "n1-standard-4",
+                    "region": "us-central1",
                 },
             )
         public_prices, breakdown = await self._dispatch_public(spec)
@@ -2440,9 +2511,7 @@ class GCPProvider(ProviderBase):
             source="catalog+billing_api" if effective_price else "catalog",
         )
 
-    async def _dispatch_public(
-        self, spec: PricingSpec
-    ) -> tuple[list[NormalizedPrice], dict]:
+    async def _dispatch_public(self, spec: PricingSpec) -> tuple[list[NormalizedPrice], dict]:
         if isinstance(spec, ComputePricingSpec):
             return await self._price_compute(spec), {}
         if isinstance(spec, StoragePricingSpec):
@@ -2500,20 +2569,27 @@ class GCPProvider(ProviderBase):
             rate: Decimal | None = None
             for (desc, utype), price in index.items():
                 dl = desc.lower()
-                if (utype == "OnDemand" and "kubernetes engine" in dl
-                        and "autopilot" not in dl and "committed" not in dl
-                        and "cost attribution" not in dl):
+                if (
+                    utype == "OnDemand"
+                    and "kubernetes engine" in dl
+                    and "autopilot" not in dl
+                    and "committed" not in dl
+                    and "cost attribution" not in dl
+                ):
                     rate = price
                     break
             rate = rate or Decimal("0.10")
 
             price_obj = NormalizedPrice(
-                provider=CloudProvider.GCP, service="container",
+                provider=CloudProvider.GCP,
+                service="container",
                 sku_id=f"gcp:gke:standard:{spec.region}:cluster_fee",
                 product_family="GKE Standard",
                 description="GKE Standard cluster management fee",
-                region=spec.region, pricing_term=PricingTerm.ON_DEMAND,
-                price_per_unit=rate, unit=PriceUnit.PER_HOUR,
+                region=spec.region,
+                pricing_term=PricingTerm.ON_DEMAND,
+                price_per_unit=rate,
+                unit=PriceUnit.PER_HOUR,
             )
             breakdown = {
                 "mode": "standard",
@@ -2523,7 +2599,7 @@ class GCPProvider(ProviderBase):
                     f"for each node type, multiply by {spec.node_count} nodes."
                 ),
             }
-            return [price_obj], breakdown
+            return self._annotate_fresh([price_obj], self._SOURCE_URL), breakdown
 
         # autopilot
         mcpu_rate: Decimal | None = None
@@ -2540,36 +2616,39 @@ class GCPProvider(ProviderBase):
 
         prices = [
             NormalizedPrice(
-                provider=CloudProvider.GCP, service="container",
+                provider=CloudProvider.GCP,
+                service="container",
                 sku_id=f"gcp:gke:autopilot:{spec.region}:vcpu",
                 product_family="GKE Autopilot",
                 description="GKE Autopilot vCPU rate",
-                region=spec.region, pricing_term=PricingTerm.ON_DEMAND,
-                price_per_unit=vcpu_rate, unit=PriceUnit.PER_HOUR,
+                region=spec.region,
+                pricing_term=PricingTerm.ON_DEMAND,
+                price_per_unit=vcpu_rate,
+                unit=PriceUnit.PER_HOUR,
             ),
             NormalizedPrice(
-                provider=CloudProvider.GCP, service="container",
+                provider=CloudProvider.GCP,
+                service="container",
                 sku_id=f"gcp:gke:autopilot:{spec.region}:memory",
                 product_family="GKE Autopilot",
                 description="GKE Autopilot memory rate per GiB/hr",
-                region=spec.region, pricing_term=PricingTerm.ON_DEMAND,
-                price_per_unit=mem_rate_val, unit=PriceUnit.PER_UNIT,
+                region=spec.region,
+                pricing_term=PricingTerm.ON_DEMAND,
+                price_per_unit=mem_rate_val,
+                unit=PriceUnit.PER_UNIT,
                 attributes={"billing_dimension": "per_gib_hr"},
             ),
         ]
         breakdown_ap: dict = {"mode": "autopilot"}
         if spec.vcpu and spec.memory_gb:
             hourly = (
-                Decimal(str(spec.vcpu)) * vcpu_rate
-                + Decimal(str(spec.memory_gb)) * mem_rate_val
+                Decimal(str(spec.vcpu)) * vcpu_rate + Decimal(str(spec.memory_gb)) * mem_rate_val
             )
             breakdown_ap["hourly_cost"] = float(hourly)
             breakdown_ap["monthly_cost"] = float(hourly * Decimal(str(spec.hours_per_month)))
-        return prices, breakdown_ap
+        return self._annotate_fresh(prices, self._SOURCE_URL), breakdown_ap
 
-    async def _price_ai(
-        self, spec: AiPricingSpec
-    ) -> tuple[list[NormalizedPrice], dict]:
+    async def _price_ai(self, spec: AiPricingSpec) -> tuple[list[NormalizedPrice], dict]:
         svc = (spec.service or "").lower()
         task = (spec.task or "inference").lower()
         model = spec.model or ""
@@ -2580,7 +2659,8 @@ class GCPProvider(ProviderBase):
             index = await self._build_vertex_price_index(spec.region)
             model_lower = model.lower() or "gemini-1.5-flash"
             model_parts = [
-                p for p in model_lower.replace("gemini-", "").replace("gemini", "").split("-")
+                p
+                for p in model_lower.replace("gemini-", "").replace("gemini", "").split("-")
                 if p and len(p) > 1
             ]
             prices = []
@@ -2590,18 +2670,21 @@ class GCPProvider(ProviderBase):
                     continue
                 if model_parts and not all(p in dl for p in model_parts):
                     continue
-                direction = (
-                    "input" if "input" in dl else ("output" if "output" in dl else "other")
+                direction = "input" if "input" in dl else ("output" if "output" in dl else "other")
+                prices.append(
+                    NormalizedPrice(
+                        provider=CloudProvider.GCP,
+                        service="ai",
+                        sku_id=f"gcp:gemini:{model_lower}:{direction}:{spec.region}",
+                        product_family="Vertex AI Gemini",
+                        description=desc,
+                        region=spec.region,
+                        pricing_term=PricingTerm.ON_DEMAND,
+                        price_per_unit=price,
+                        unit=PriceUnit.PER_UNIT,
+                        attributes={"model": model_lower, "direction": direction},
+                    )
                 )
-                prices.append(NormalizedPrice(
-                    provider=CloudProvider.GCP, service="ai",
-                    sku_id=f"gcp:gemini:{model_lower}:{direction}:{spec.region}",
-                    product_family="Vertex AI Gemini",
-                    description=desc,
-                    region=spec.region, pricing_term=PricingTerm.ON_DEMAND,
-                    price_per_unit=price, unit=PriceUnit.PER_UNIT,
-                    attributes={"model": model_lower, "direction": direction},
-                ))
             breakdown: dict = {"model": model or "gemini-1.5-flash", "service": "gemini"}
 
             # When token counts are provided, compute and prepend a total-cost NormalizedPrice.
@@ -2632,22 +2715,28 @@ class GCPProvider(ProviderBase):
                     )
                 if total > 0:
                     breakdown["monthly_total"] = float(total)
-                    prices.insert(0, NormalizedPrice(
-                        provider=CloudProvider.GCP, service="ai",
-                        sku_id=f"gcp:gemini:{model_lower}:total:{spec.region}",
-                        product_family="Vertex AI Gemini",
-                        description="Gemini total: " + "; ".join(components),
-                        region=spec.region, pricing_term=PricingTerm.ON_DEMAND,
-                        price_per_unit=total, unit=PriceUnit.PER_UNIT,
-                        attributes={
-                            "billing_dimension": "workload_total",
-                            "model": model_lower,
-                            "input_tokens": str(spec.input_tokens or 0),
-                            "output_tokens": str(spec.output_tokens or 0),
-                        },
-                    ))
+                    prices.insert(
+                        0,
+                        NormalizedPrice(
+                            provider=CloudProvider.GCP,
+                            service="ai",
+                            sku_id=f"gcp:gemini:{model_lower}:total:{spec.region}",
+                            product_family="Vertex AI Gemini",
+                            description="Gemini total: " + "; ".join(components),
+                            region=spec.region,
+                            pricing_term=PricingTerm.ON_DEMAND,
+                            price_per_unit=total,
+                            unit=PriceUnit.PER_UNIT,
+                            attributes={
+                                "billing_dimension": "workload_total",
+                                "model": model_lower,
+                                "input_tokens": str(spec.input_tokens or 0),
+                                "output_tokens": str(spec.output_tokens or 0),
+                            },
+                        ),
+                    )
 
-            return prices, breakdown
+            return self._annotate_fresh(prices, self._SOURCE_URL), breakdown
 
         # Vertex AI training / prediction
         machine_type = spec.machine_type or "n1-standard-4"
@@ -2670,27 +2759,41 @@ class GCPProvider(ProviderBase):
 
         vertex_prices = []
         if vcpu_rate:
-            vertex_prices.append(NormalizedPrice(
-                provider=CloudProvider.GCP, service="ai",
-                sku_id=f"gcp:vertex:{machine_type}:{task_kw}:{spec.region}:vcpu",
-                product_family="Vertex AI",
-                description=f"Vertex AI {task_kw} vCPU rate ({machine_type})",
-                region=spec.region, pricing_term=PricingTerm.ON_DEMAND,
-                price_per_unit=vcpu_rate, unit=PriceUnit.PER_HOUR,
-                attributes={"machine_type": machine_type, "task": task_kw, "component": "vcpu"},
-            ))
+            vertex_prices.append(
+                NormalizedPrice(
+                    provider=CloudProvider.GCP,
+                    service="ai",
+                    sku_id=f"gcp:vertex:{machine_type}:{task_kw}:{spec.region}:vcpu",
+                    product_family="Vertex AI",
+                    description=f"Vertex AI {task_kw} vCPU rate ({machine_type})",
+                    region=spec.region,
+                    pricing_term=PricingTerm.ON_DEMAND,
+                    price_per_unit=vcpu_rate,
+                    unit=PriceUnit.PER_HOUR,
+                    attributes={"machine_type": machine_type, "task": task_kw, "component": "vcpu"},
+                )
+            )
         if ram_rate:
-            vertex_prices.append(NormalizedPrice(
-                provider=CloudProvider.GCP, service="ai",
-                sku_id=f"gcp:vertex:{machine_type}:{task_kw}:{spec.region}:ram",
-                product_family="Vertex AI",
-                description=f"Vertex AI {task_kw} RAM rate per GiB/hr ({machine_type})",
-                region=spec.region, pricing_term=PricingTerm.ON_DEMAND,
-                price_per_unit=ram_rate, unit=PriceUnit.PER_UNIT,
-                attributes={"machine_type": machine_type, "task": task_kw, "component": "ram_per_gib_hr"},
-            ))
+            vertex_prices.append(
+                NormalizedPrice(
+                    provider=CloudProvider.GCP,
+                    service="ai",
+                    sku_id=f"gcp:vertex:{machine_type}:{task_kw}:{spec.region}:ram",
+                    product_family="Vertex AI",
+                    description=f"Vertex AI {task_kw} RAM rate per GiB/hr ({machine_type})",
+                    region=spec.region,
+                    pricing_term=PricingTerm.ON_DEMAND,
+                    price_per_unit=ram_rate,
+                    unit=PriceUnit.PER_UNIT,
+                    attributes={
+                        "machine_type": machine_type,
+                        "task": task_kw,
+                        "component": "ram_per_gib_hr",
+                    },
+                )
+            )
         vertex_breakdown = {"machine_type": machine_type, "task": task_kw}
-        return vertex_prices, vertex_breakdown
+        return self._annotate_fresh(vertex_prices, self._SOURCE_URL), vertex_breakdown
 
     async def _price_analytics(
         self, spec: AnalyticsPricingSpec
@@ -2727,45 +2830,65 @@ class GCPProvider(ProviderBase):
 
         prices = []
         if analysis_rate > 0:
-            prices.append(NormalizedPrice(
-                provider=CloudProvider.GCP, service="analytics",
-                sku_id=f"gcp:bigquery:{region}:analysis",
-                product_family="BigQuery",
-                description="BigQuery on-demand analysis per TiB",
-                region=region, pricing_term=PricingTerm.ON_DEMAND,
-                price_per_unit=analysis_rate, unit=PriceUnit.PER_UNIT,
-                attributes={"billing_dimension": "analysis_per_tib"},
-            ))
+            prices.append(
+                NormalizedPrice(
+                    provider=CloudProvider.GCP,
+                    service="analytics",
+                    sku_id=f"gcp:bigquery:{region}:analysis",
+                    product_family="BigQuery",
+                    description="BigQuery on-demand analysis per TiB",
+                    region=region,
+                    pricing_term=PricingTerm.ON_DEMAND,
+                    price_per_unit=analysis_rate,
+                    unit=PriceUnit.PER_UNIT,
+                    attributes={"billing_dimension": "analysis_per_tib"},
+                )
+            )
         if active_rate > 0:
-            prices.append(NormalizedPrice(
-                provider=CloudProvider.GCP, service="analytics",
-                sku_id=f"gcp:bigquery:{region}:active_storage",
-                product_family="BigQuery",
-                description="BigQuery active logical storage per GiB/month",
-                region=region, pricing_term=PricingTerm.ON_DEMAND,
-                price_per_unit=active_rate, unit=PriceUnit.PER_GB_MONTH,
-                attributes={"billing_dimension": "active_storage_gib_mo"},
-            ))
+            prices.append(
+                NormalizedPrice(
+                    provider=CloudProvider.GCP,
+                    service="analytics",
+                    sku_id=f"gcp:bigquery:{region}:active_storage",
+                    product_family="BigQuery",
+                    description="BigQuery active logical storage per GiB/month",
+                    region=region,
+                    pricing_term=PricingTerm.ON_DEMAND,
+                    price_per_unit=active_rate,
+                    unit=PriceUnit.PER_GB_MONTH,
+                    attributes={"billing_dimension": "active_storage_gib_mo"},
+                )
+            )
         if longterm_rate > 0:
-            prices.append(NormalizedPrice(
-                provider=CloudProvider.GCP, service="analytics",
-                sku_id=f"gcp:bigquery:{region}:longterm_storage",
-                product_family="BigQuery",
-                description="BigQuery long-term logical storage per GiB/month",
-                region=region, pricing_term=PricingTerm.ON_DEMAND,
-                price_per_unit=longterm_rate, unit=PriceUnit.PER_GB_MONTH,
-                attributes={"billing_dimension": "longterm_storage_gib_mo"},
-            ))
+            prices.append(
+                NormalizedPrice(
+                    provider=CloudProvider.GCP,
+                    service="analytics",
+                    sku_id=f"gcp:bigquery:{region}:longterm_storage",
+                    product_family="BigQuery",
+                    description="BigQuery long-term logical storage per GiB/month",
+                    region=region,
+                    pricing_term=PricingTerm.ON_DEMAND,
+                    price_per_unit=longterm_rate,
+                    unit=PriceUnit.PER_GB_MONTH,
+                    attributes={"billing_dimension": "longterm_storage_gib_mo"},
+                )
+            )
         if streaming_rate > 0:
-            prices.append(NormalizedPrice(
-                provider=CloudProvider.GCP, service="analytics",
-                sku_id=f"gcp:bigquery:{region}:streaming",
-                product_family="BigQuery",
-                description="BigQuery streaming insert per GiB",
-                region=region, pricing_term=PricingTerm.ON_DEMAND,
-                price_per_unit=streaming_rate, unit=PriceUnit.PER_GB,
-                attributes={"billing_dimension": "streaming_insert_per_gib"},
-            ))
+            prices.append(
+                NormalizedPrice(
+                    provider=CloudProvider.GCP,
+                    service="analytics",
+                    sku_id=f"gcp:bigquery:{region}:streaming",
+                    product_family="BigQuery",
+                    description="BigQuery streaming insert per GiB",
+                    region=region,
+                    pricing_term=PricingTerm.ON_DEMAND,
+                    price_per_unit=streaming_rate,
+                    unit=PriceUnit.PER_GB,
+                    attributes={"billing_dimension": "streaming_insert_per_gib"},
+                )
+            )
 
         breakdown: dict = {
             "analysis_rate_per_tib": float(analysis_rate),
@@ -2805,21 +2928,25 @@ class GCPProvider(ProviderBase):
         if total_cost > 0 and components:
             breakdown["monthly_total"] = float(total_cost)
             # Prepend composite price so estimate_bom picks it up as the unit cost
-            prices.insert(0, NormalizedPrice(
-                provider=CloudProvider.GCP, service="analytics",
-                sku_id=f"gcp:bigquery:{region}:workload_total",
-                product_family="BigQuery",
-                description="BigQuery workload total: " + ", ".join(components),
-                region=region, pricing_term=PricingTerm.ON_DEMAND,
-                price_per_unit=total_cost, unit=PriceUnit.PER_UNIT,
-                attributes={"billing_dimension": "workload_total"},
-            ))
+            prices.insert(
+                0,
+                NormalizedPrice(
+                    provider=CloudProvider.GCP,
+                    service="analytics",
+                    sku_id=f"gcp:bigquery:{region}:workload_total",
+                    product_family="BigQuery",
+                    description="BigQuery workload total: " + ", ".join(components),
+                    region=region,
+                    pricing_term=PricingTerm.ON_DEMAND,
+                    price_per_unit=total_cost,
+                    unit=PriceUnit.PER_UNIT,
+                    attributes={"billing_dimension": "workload_total"},
+                ),
+            )
 
-        return prices, breakdown
+        return self._annotate_fresh(prices, self._SOURCE_URL), breakdown
 
-    async def _price_network(
-        self, spec: NetworkPricingSpec
-    ) -> tuple[list[NormalizedPrice], dict]:
+    async def _price_network(self, spec: NetworkPricingSpec) -> tuple[list[NormalizedPrice], dict]:
         svc = (spec.service or "").lower()
         if svc == "cloud_cdn":
             index = await self._build_networking_price_index(spec.region)
@@ -2842,7 +2969,9 @@ class GCPProvider(ProviderBase):
         for desc, price in index.items():
             if rule_rate is None:
                 if lb_type in ("https", "http"):
-                    if ("external http" in desc or "https load balancing rule" in desc) and "rule" in desc:
+                    if (
+                        "external http" in desc or "https load balancing rule" in desc
+                    ) and "rule" in desc:
                         rule_rate = price
                 elif lb_type == "tcp":
                     if "tcp proxy" in desc and "rule" in desc:
@@ -2862,35 +2991,44 @@ class GCPProvider(ProviderBase):
 
         prices = [
             NormalizedPrice(
-                provider=CloudProvider.GCP, service="network",
+                provider=CloudProvider.GCP,
+                service="network",
                 sku_id=f"gcp:cloud_lb:{lb_type}:{spec.region}:rule",
                 product_family="Cloud Load Balancing",
                 description=f"Cloud LB ({lb_type}) forwarding rule per hour",
-                region=spec.region, pricing_term=PricingTerm.ON_DEMAND,
-                price_per_unit=rule_rate, unit=PriceUnit.PER_HOUR,
+                region=spec.region,
+                pricing_term=PricingTerm.ON_DEMAND,
+                price_per_unit=rule_rate,
+                unit=PriceUnit.PER_HOUR,
                 attributes={"lb_type": lb_type, "component": "forwarding_rule"},
             ),
             NormalizedPrice(
-                provider=CloudProvider.GCP, service="network",
+                provider=CloudProvider.GCP,
+                service="network",
                 sku_id=f"gcp:cloud_lb:{lb_type}:{spec.region}:data",
                 product_family="Cloud Load Balancing",
                 description="Cloud LB data processed per GB",
-                region=spec.region, pricing_term=PricingTerm.ON_DEMAND,
-                price_per_unit=data_rate, unit=PriceUnit.PER_GB,
+                region=spec.region,
+                pricing_term=PricingTerm.ON_DEMAND,
+                price_per_unit=data_rate,
+                unit=PriceUnit.PER_GB,
                 attributes={"lb_type": lb_type, "component": "data_processed"},
             ),
         ]
-        rule_monthly = rule_rate * Decimal(str(spec.rule_count)) * Decimal(str(spec.hours_per_month))
+        rule_monthly = (
+            rule_rate * Decimal(str(spec.rule_count)) * Decimal(str(spec.hours_per_month))
+        )
         data_cost = data_rate * Decimal(str(spec.data_gb))
         breakdown: dict = {
-            "lb_type": lb_type, "rule_count": spec.rule_count,
+            "lb_type": lb_type,
+            "rule_count": spec.rule_count,
             "monthly_rule_cost": float(rule_monthly),
             "monthly_data_cost": float(data_cost),
             "monthly_total": float(rule_monthly + data_cost),
         }
         if fallback:
             breakdown["fallback"] = True
-        return prices, breakdown
+        return self._annotate_fresh(prices, self._SOURCE_URL), breakdown
 
     async def _price_network_cdn(
         self, spec: NetworkPricingSpec, index: dict[str, Decimal]
@@ -2909,20 +3047,26 @@ class GCPProvider(ProviderBase):
 
         prices = [
             NormalizedPrice(
-                provider=CloudProvider.GCP, service="network",
+                provider=CloudProvider.GCP,
+                service="network",
                 sku_id=f"gcp:cloud_cdn:{spec.region}:egress",
                 product_family="Cloud CDN",
                 description="Cloud CDN cache egress per GB",
-                region=spec.region, pricing_term=PricingTerm.ON_DEMAND,
-                price_per_unit=egress_rate, unit=PriceUnit.PER_GB,
+                region=spec.region,
+                pricing_term=PricingTerm.ON_DEMAND,
+                price_per_unit=egress_rate,
+                unit=PriceUnit.PER_GB,
             ),
             NormalizedPrice(
-                provider=CloudProvider.GCP, service="network",
+                provider=CloudProvider.GCP,
+                service="network",
                 sku_id=f"gcp:cloud_cdn:{spec.region}:cache_fill",
                 product_family="Cloud CDN",
                 description="Cloud CDN cache fill per GB",
-                region=spec.region, pricing_term=PricingTerm.ON_DEMAND,
-                price_per_unit=fill_rate, unit=PriceUnit.PER_GB,
+                region=spec.region,
+                pricing_term=PricingTerm.ON_DEMAND,
+                price_per_unit=fill_rate,
+                unit=PriceUnit.PER_GB,
             ),
         ]
         breakdown: dict = {
@@ -2935,7 +3079,7 @@ class GCPProvider(ProviderBase):
         }
         if fallback:
             breakdown["fallback"] = True
-        return prices, breakdown
+        return self._annotate_fresh(prices, self._SOURCE_URL), breakdown
 
     async def _price_network_nat(
         self, spec: NetworkPricingSpec, index: dict[str, Decimal]
@@ -2945,8 +3089,10 @@ class GCPProvider(ProviderBase):
         for desc, price in index.items():
             if gateway_rate is None and "cloud nat gateway" in desc:
                 gateway_rate = price
-            if data_rate is None and "cloud nat" in desc and (
-                "data processed" in desc or "nat gateway data" in desc
+            if (
+                data_rate is None
+                and "cloud nat" in desc
+                and ("data processed" in desc or "nat gateway data" in desc)
             ):
                 data_rate = price
 
@@ -2956,23 +3102,31 @@ class GCPProvider(ProviderBase):
 
         prices = [
             NormalizedPrice(
-                provider=CloudProvider.GCP, service="network",
+                provider=CloudProvider.GCP,
+                service="network",
                 sku_id=f"gcp:cloud_nat:{spec.region}:gateway",
                 product_family="Cloud NAT",
                 description="Cloud NAT gateway per hour",
-                region=spec.region, pricing_term=PricingTerm.ON_DEMAND,
-                price_per_unit=gateway_rate, unit=PriceUnit.PER_HOUR,
+                region=spec.region,
+                pricing_term=PricingTerm.ON_DEMAND,
+                price_per_unit=gateway_rate,
+                unit=PriceUnit.PER_HOUR,
             ),
             NormalizedPrice(
-                provider=CloudProvider.GCP, service="network",
+                provider=CloudProvider.GCP,
+                service="network",
                 sku_id=f"gcp:cloud_nat:{spec.region}:data",
                 product_family="Cloud NAT",
                 description="Cloud NAT data processed per GB",
-                region=spec.region, pricing_term=PricingTerm.ON_DEMAND,
-                price_per_unit=data_rate, unit=PriceUnit.PER_GB,
+                region=spec.region,
+                pricing_term=PricingTerm.ON_DEMAND,
+                price_per_unit=data_rate,
+                unit=PriceUnit.PER_GB,
             ),
         ]
-        gw_monthly = gateway_rate * Decimal(str(spec.gateway_count)) * Decimal(str(spec.hours_per_month))
+        gw_monthly = (
+            gateway_rate * Decimal(str(spec.gateway_count)) * Decimal(str(spec.hours_per_month))
+        )
         data_cost = data_rate * Decimal(str(spec.data_gb))
         breakdown: dict = {
             "gateway_count": spec.gateway_count,
@@ -2982,7 +3136,7 @@ class GCPProvider(ProviderBase):
         }
         if fallback:
             breakdown["fallback"] = True
-        return prices, breakdown
+        return self._annotate_fresh(prices, self._SOURCE_URL), breakdown
 
     async def _price_network_armor(
         self, spec: NetworkPricingSpec
@@ -3013,20 +3167,26 @@ class GCPProvider(ProviderBase):
 
         prices = [
             NormalizedPrice(
-                provider=CloudProvider.GCP, service="network",
+                provider=CloudProvider.GCP,
+                service="network",
                 sku_id="gcp:cloud_armor:policy",
                 product_family="Cloud Armor",
                 description="Cloud Armor security policy per month",
-                region=spec.region, pricing_term=PricingTerm.ON_DEMAND,
-                price_per_unit=policy_rate, unit=PriceUnit.PER_MONTH,
+                region=spec.region,
+                pricing_term=PricingTerm.ON_DEMAND,
+                price_per_unit=policy_rate,
+                unit=PriceUnit.PER_MONTH,
             ),
             NormalizedPrice(
-                provider=CloudProvider.GCP, service="network",
+                provider=CloudProvider.GCP,
+                service="network",
                 sku_id="gcp:cloud_armor:requests",
                 product_family="Cloud Armor",
                 description="Cloud Armor request evaluation per million requests",
-                region=spec.region, pricing_term=PricingTerm.ON_DEMAND,
-                price_per_unit=request_rate, unit=PriceUnit.PER_UNIT,
+                region=spec.region,
+                pricing_term=PricingTerm.ON_DEMAND,
+                price_per_unit=request_rate,
+                unit=PriceUnit.PER_UNIT,
                 attributes={"billing_dimension": "per_million_requests"},
             ),
         ]
@@ -3053,7 +3213,7 @@ class GCPProvider(ProviderBase):
             )
         if fallback:
             breakdown["fallback"] = True
-        return prices, breakdown
+        return self._annotate_fresh(prices, self._SOURCE_URL), breakdown
 
     @staticmethod
     def _gcp_egress_continent(region: str) -> str:
@@ -3096,7 +3256,8 @@ class GCPProvider(ProviderBase):
         if rate is None:
             rate = _GCP_INTERNET_EGRESS_RATE.get(continent, Decimal("0.08"))
         await self._cache.set_metadata(
-            cache_key, {"rate": str(rate)},
+            cache_key,
+            {"rate": str(rate)},
             ttl_hours=self._settings.cache_ttl_hours,
         )
         return rate
@@ -3132,7 +3293,11 @@ class GCPProvider(ProviderBase):
             desc = f"GCP inter-region egress from {source_region} to {dest_region}"
             note = (
                 f"GCP VPC inter-region egress: {src_continent.upper()} → {dst_continent.upper()}. "
-                + ("Same-continent rate ($0.01/GB)." if same else "Cross-continent rate ($0.08/GB).")
+                + (
+                    "Same-continent rate ($0.01/GB)."
+                    if same
+                    else "Cross-continent rate ($0.08/GB)."
+                )
             )
             sku_suffix = f"intraregion:{src_continent}:{dst_continent}"
 
@@ -3149,11 +3314,9 @@ class GCPProvider(ProviderBase):
         if dest_region:
             attrs["dest_region"] = dest_region
         if data_gb > 0:
-            attrs["monthly_estimate"] = (
-                f"${float(monthly):.4f} for {data_gb:.1f} GB"
-            )
+            attrs["monthly_estimate"] = f"${float(monthly):.4f} for {data_gb:.1f} GB"
 
-        return [NormalizedPrice(
+        price = NormalizedPrice(
             provider=CloudProvider.GCP,
             service="inter_region_egress",
             sku_id=f"gcp:egress:{source_region}:{sku_suffix}",
@@ -3164,11 +3327,10 @@ class GCPProvider(ProviderBase):
             pricing_term=PricingTerm.ON_DEMAND,
             price_per_unit=rate,
             unit=PriceUnit.PER_GB_MONTH,
-        )]
+        )
+        return self._annotate_fresh([price], self._SOURCE_URL)
 
-    async def _price_egress(
-        self, spec: EgressPricingSpec
-    ) -> tuple[list[NormalizedPrice], dict]:
+    async def _price_egress(self, spec: EgressPricingSpec) -> tuple[list[NormalizedPrice], dict]:
         src = spec.source_region or spec.region or "us-central1"
         prices = await self.get_egress_price(src, spec.dest_region, spec.data_gb)
         breakdown: dict = dict(prices[0].attributes or {}) if prices else {}
@@ -3212,12 +3374,15 @@ class GCPProvider(ProviderBase):
 
         prices = [
             NormalizedPrice(
-                provider=CloudProvider.GCP, service="observability",
+                provider=CloudProvider.GCP,
+                service="observability",
                 sku_id="gcp:cloud_monitoring:ingestion",
                 product_family="Cloud Monitoring",
                 description="Cloud Monitoring custom metric ingestion per MiB (tier 1: 0–100K MiB/mo)",
-                region=spec.region, pricing_term=PricingTerm.ON_DEMAND,
-                price_per_unit=tier1_rate, unit=PriceUnit.PER_UNIT,
+                region=spec.region,
+                pricing_term=PricingTerm.ON_DEMAND,
+                price_per_unit=tier1_rate,
+                unit=PriceUnit.PER_UNIT,
                 attributes={
                     "billing_dimension": "per_mib",
                     "tier2_rate": str(_T2_RATE),
@@ -3259,15 +3424,20 @@ class GCPProvider(ProviderBase):
             )
         if fallback:
             breakdown["fallback"] = True
-        return prices, breakdown
+        return self._annotate_fresh(prices, self._SOURCE_URL), breakdown
 
     async def describe_catalog(self) -> ProviderCatalog:
         return ProviderCatalog(
             provider=CloudProvider.GCP,
             domains=[
-                PricingDomain.COMPUTE, PricingDomain.STORAGE, PricingDomain.DATABASE,
-                PricingDomain.CONTAINER, PricingDomain.AI, PricingDomain.ANALYTICS,
-                PricingDomain.NETWORK, PricingDomain.OBSERVABILITY,
+                PricingDomain.COMPUTE,
+                PricingDomain.STORAGE,
+                PricingDomain.DATABASE,
+                PricingDomain.CONTAINER,
+                PricingDomain.AI,
+                PricingDomain.ANALYTICS,
+                PricingDomain.NETWORK,
+                PricingDomain.OBSERVABILITY,
                 PricingDomain.INTER_REGION_EGRESS,
             ],
             services={
@@ -3378,60 +3548,107 @@ class GCPProvider(ProviderBase):
             },
             example_invocations={
                 "compute/compute_engine": {
-                    "provider": "gcp", "domain": "compute",
-                    "resource_type": "n1-standard-4", "region": "us-central1",
-                    "os": "Linux", "term": "on_demand",
+                    "provider": "gcp",
+                    "domain": "compute",
+                    "resource_type": "n1-standard-4",
+                    "region": "us-central1",
+                    "os": "Linux",
+                    "term": "on_demand",
                 },
                 "storage/gcs": {
-                    "provider": "gcp", "domain": "storage",
-                    "storage_type": "standard", "region": "us-central1",
+                    "provider": "gcp",
+                    "domain": "storage",
+                    "storage_type": "standard",
+                    "region": "us-central1",
                 },
                 "storage/persistent_disk": {
-                    "provider": "gcp", "domain": "storage", "service": "persistent_disk",
-                    "storage_type": "pd-ssd", "size_gb": 500, "region": "us-central1",
+                    "provider": "gcp",
+                    "domain": "storage",
+                    "service": "persistent_disk",
+                    "storage_type": "pd-ssd",
+                    "size_gb": 500,
+                    "region": "us-central1",
                 },
                 "database/cloud_sql": {
-                    "provider": "gcp", "domain": "database", "service": "cloud_sql",
-                    "resource_type": "db-n1-standard-4", "engine": "MySQL",
-                    "deployment": "single-az", "region": "us-central1",
+                    "provider": "gcp",
+                    "domain": "database",
+                    "service": "cloud_sql",
+                    "resource_type": "db-n1-standard-4",
+                    "engine": "MySQL",
+                    "deployment": "single-az",
+                    "region": "us-central1",
                 },
                 "database/memorystore": {
-                    "provider": "gcp", "domain": "database", "service": "memorystore",
-                    "capacity_gb": 10.0, "deployment": "standard", "region": "us-central1",
+                    "provider": "gcp",
+                    "domain": "database",
+                    "service": "memorystore",
+                    "capacity_gb": 10.0,
+                    "deployment": "standard",
+                    "region": "us-central1",
                 },
                 "container/gke": {
-                    "provider": "gcp", "domain": "container", "service": "gke",
-                    "mode": "standard", "node_count": 3, "region": "us-central1",
+                    "provider": "gcp",
+                    "domain": "container",
+                    "service": "gke",
+                    "mode": "standard",
+                    "node_count": 3,
+                    "region": "us-central1",
                 },
                 "ai/gemini": {
-                    "provider": "gcp", "domain": "ai", "service": "gemini",
-                    "model": "gemini-1.5-flash", "region": "us-central1",
-                    "input_tokens": 1000000, "output_tokens": 1000000,
+                    "provider": "gcp",
+                    "domain": "ai",
+                    "service": "gemini",
+                    "model": "gemini-1.5-flash",
+                    "region": "us-central1",
+                    "input_tokens": 1000000,
+                    "output_tokens": 1000000,
                 },
                 "ai/vertex": {
-                    "provider": "gcp", "domain": "ai", "service": "vertex",
-                    "machine_type": "n1-standard-8", "task": "training",
-                    "training_hours": 10.0, "region": "us-central1",
+                    "provider": "gcp",
+                    "domain": "ai",
+                    "service": "vertex",
+                    "machine_type": "n1-standard-8",
+                    "task": "training",
+                    "training_hours": 10.0,
+                    "region": "us-central1",
                 },
                 "analytics/bigquery": {
-                    "provider": "gcp", "domain": "analytics", "service": "bigquery",
-                    "query_tb": 10.0, "active_storage_gb": 100.0, "region": "us",
+                    "provider": "gcp",
+                    "domain": "analytics",
+                    "service": "bigquery",
+                    "query_tb": 10.0,
+                    "active_storage_gb": 100.0,
+                    "region": "us",
                 },
                 "network/cloud_lb": {
-                    "provider": "gcp", "domain": "network", "service": "cloud_lb",
-                    "lb_type": "https", "rule_count": 1, "data_gb": 100.0, "region": "us-central1",
+                    "provider": "gcp",
+                    "domain": "network",
+                    "service": "cloud_lb",
+                    "lb_type": "https",
+                    "rule_count": 1,
+                    "data_gb": 100.0,
+                    "region": "us-central1",
                 },
                 "network/cloud_cdn": {
-                    "provider": "gcp", "domain": "network", "service": "cloud_cdn",
-                    "egress_gb": 1000.0, "cache_fill_gb": 100.0, "region": "us-central1",
+                    "provider": "gcp",
+                    "domain": "network",
+                    "service": "cloud_cdn",
+                    "egress_gb": 1000.0,
+                    "cache_fill_gb": 100.0,
+                    "region": "us-central1",
                 },
                 "observability/cloud_monitoring": {
-                    "provider": "gcp", "domain": "observability", "service": "cloud_monitoring",
-                    "ingestion_mib": 1000.0, "region": "us-central1",
+                    "provider": "gcp",
+                    "domain": "observability",
+                    "service": "cloud_monitoring",
+                    "ingestion_mib": 1000.0,
+                    "region": "us-central1",
                 },
                 "inter_region_egress": {
-                    "provider": "gcp", "domain": "inter_region_egress",
-                    "source_region": "us-central1", "data_gb": 1000.0,
+                    "provider": "gcp",
+                    "domain": "inter_region_egress",
+                    "source_region": "us-central1",
+                    "data_gb": 1000.0,
                 },
             },
             decision_matrix={
