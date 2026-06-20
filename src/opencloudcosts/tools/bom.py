@@ -1,4 +1,5 @@
 """Bill of Materials (BoM) and unit-economics MCP tools — v0.8.0."""
+
 from __future__ import annotations
 
 import logging
@@ -75,8 +76,11 @@ def register_bom_tools(mcp: Any) -> None:
                 description = item.get("description")
 
                 # Build a clean spec dict (remove BoM-only fields)
-                spec_dict = {k: v for k, v in item.items()
-                             if k not in ("quantity", "hours_per_month", "description")}
+                spec_dict = {
+                    k: v
+                    for k, v in item.items()
+                    if k not in ("quantity", "hours_per_month", "description")
+                }
                 # Fill hours_per_month into spec for compute
                 enriched = fill_domain(spec_dict)
                 if enriched.get("domain") == "compute" and "hours_per_month" not in enriched:
@@ -173,7 +177,9 @@ def register_bom_tools(mcp: Any) -> None:
                 "REQUIRED: for each item in not_included, call get_price using the "
                 "exact command in that item's how_to_price field before writing your "
                 "final answer. Do NOT estimate or guess these costs."
-            ) if not_included else None,
+            )
+            if not_included
+            else None,
             "errors": errors or None,
         }
 
@@ -206,8 +212,11 @@ def register_bom_tools(mcp: Any) -> None:
                 size_gb = float(item.get("size_gb", 100.0))
                 description = item.get("description")
 
-                spec_dict = {k: v for k, v in item.items()
-                             if k not in ("quantity", "hours_per_month", "description")}
+                spec_dict = {
+                    k: v
+                    for k, v in item.items()
+                    if k not in ("quantity", "hours_per_month", "description")
+                }
                 enriched = fill_domain(spec_dict)
                 if enriched.get("domain") == "compute" and "hours_per_month" not in enriched:
                     enriched = {**enriched, "hours_per_month": hours_per_month}
@@ -243,13 +252,15 @@ def register_bom_tools(mcp: Any) -> None:
                     )
                     description = f"{resource_id} ({parsed.region})"
 
-                line_items.append(BomLineItem.from_price(
-                    description=description,
-                    price=result.public_prices[0],
-                    quantity=quantity,
-                    hours_per_month=hours_per_month,
-                    size_gb=size_gb,
-                ))
+                line_items.append(
+                    BomLineItem.from_price(
+                        description=description,
+                        price=result.public_prices[0],
+                        quantity=quantity,
+                        hours_per_month=hours_per_month,
+                        size_gb=size_gb,
+                    )
+                )
 
             except NotSupportedError as e:
                 errors.append(f"{label}: {e.reason}")
@@ -262,7 +273,8 @@ def register_bom_tools(mcp: Any) -> None:
         estimate = BomEstimate.from_items(line_items)
         cost_per_unit = (
             estimate.total_monthly / Decimal(str(units_per_month))
-            if units_per_month > 0 else Decimal("0")
+            if units_per_month > 0
+            else Decimal("0")
         )
         sample_region = estimate.items[0].region if estimate.items else "us-east-1"
 

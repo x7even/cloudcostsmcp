@@ -11,6 +11,7 @@ This module provides:
 - parse_instance_type(): derive specs from naming convention for unlisted types
 - GCP_FAMILY_SKU: machine family -> Catalog API SKU description substrings
 """
+
 from __future__ import annotations
 
 # ---------------------------------------------------------------------------
@@ -215,11 +216,11 @@ GCP_INSTANCE_SPECS: dict[str, tuple[int, float]] = {
 # Memory ratio per series (GB/vCPU) for pattern-based fallback
 # ---------------------------------------------------------------------------
 _SERIES_RAM_RATIO: dict[str, float] = {
-    "standard": 4.0,   # N2, E2, C2, T2D standard
-    "highmem": 8.0,    # N2, E2 highmem
-    "highcpu": 2.0,    # N2, E2 highcpu
+    "standard": 4.0,  # N2, E2, C2, T2D standard
+    "highmem": 8.0,  # N2, E2 highmem
+    "highcpu": 2.0,  # N2, E2 highcpu
     "ultramem": 24.0,  # M1
-    "megamem": 14.9,   # M1 megamem (96 vCPUs, 1433.6 GB ≈ 14.93 GB/vCPU)
+    "megamem": 14.9,  # M1 megamem (96 vCPUs, 1433.6 GB ≈ 14.93 GB/vCPU)
 }
 
 # Override memory ratios that differ from 4.0 for 'standard' by family
@@ -387,34 +388,34 @@ GCP_FAMILY_SKU: dict[str, dict[str, str]] = {
 # ---------------------------------------------------------------------------
 CLOUD_SQL_INSTANCE_SPECS: dict[str, tuple[float, float]] = {
     # Shared core (special pricing - different SKU)
-    "db-f1-micro":   (0.2, 0.614),
-    "db-g1-small":   (0.5, 1.700),
+    "db-f1-micro": (0.2, 0.614),
+    "db-g1-small": (0.5, 1.700),
     # Standard (n1-style)
-    "db-n1-standard-1":  (1,  3.75),
-    "db-n1-standard-2":  (2,  7.5),
-    "db-n1-standard-4":  (4,  15.0),
-    "db-n1-standard-8":  (8,  30.0),
+    "db-n1-standard-1": (1, 3.75),
+    "db-n1-standard-2": (2, 7.5),
+    "db-n1-standard-4": (4, 15.0),
+    "db-n1-standard-8": (8, 30.0),
     "db-n1-standard-16": (16, 60.0),
     "db-n1-standard-32": (32, 120.0),
     "db-n1-standard-64": (64, 240.0),
     # High memory (n1-style)
-    "db-n1-highmem-2":  (2,  13.0),
-    "db-n1-highmem-4":  (4,  26.0),
-    "db-n1-highmem-8":  (8,  52.0),
+    "db-n1-highmem-2": (2, 13.0),
+    "db-n1-highmem-4": (4, 26.0),
+    "db-n1-highmem-8": (8, 52.0),
     "db-n1-highmem-16": (16, 104.0),
     "db-n1-highmem-32": (32, 208.0),
     "db-n1-highmem-64": (64, 416.0),
     # Custom / newer standard tiers
-    "db-standard-1":   (1,  3.75),
-    "db-standard-2":   (2,  7.5),
-    "db-standard-4":   (4,  15.0),
-    "db-standard-8":   (8,  30.0),
-    "db-standard-16":  (16, 60.0),
-    "db-standard-32":  (32, 120.0),
+    "db-standard-1": (1, 3.75),
+    "db-standard-2": (2, 7.5),
+    "db-standard-4": (4, 15.0),
+    "db-standard-8": (8, 30.0),
+    "db-standard-16": (16, 60.0),
+    "db-standard-32": (32, 120.0),
     # High memory custom tiers
-    "db-highmem-2":  (2,  13.0),
-    "db-highmem-4":  (4,  26.0),
-    "db-highmem-8":  (8,  52.0),
+    "db-highmem-2": (2, 13.0),
+    "db-highmem-4": (4, 26.0),
+    "db-highmem-8": (8, 52.0),
     "db-highmem-16": (16, 104.0),
 }
 

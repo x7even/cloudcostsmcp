@@ -1,4 +1,5 @@
 """Tests for GCP BigQuery pricing provider methods."""
+
 from __future__ import annotations
 
 from decimal import Decimal
@@ -60,8 +61,8 @@ _ACTIVE_STORAGE_SKU = _make_sku(
     "BigQuery Active Logical Storage",
     ["us"],
     [
-        {"start": 0, "units": "0", "nanos": 0},             # $0 free-quota tier
-        {"start": 10, "units": "0", "nanos": 23_000_000},   # $0.023/GiB-mo actual rate
+        {"start": 0, "units": "0", "nanos": 0},  # $0 free-quota tier
+        {"start": 10, "units": "0", "nanos": 23_000_000},  # $0.023/GiB-mo actual rate
     ],
 )
 
@@ -70,8 +71,8 @@ _LONGTERM_STORAGE_SKU = _make_sku(
     "BigQuery Long Term Logical Storage",
     ["us"],
     [
-        {"start": 0, "units": "0", "nanos": 0},             # $0 free-quota tier
-        {"start": 10, "units": "0", "nanos": 10_000_000},   # $0.010/GiB-mo actual rate
+        {"start": 0, "units": "0", "nanos": 0},  # $0 free-quota tier
+        {"start": 10, "units": "0", "nanos": 10_000_000},  # $0.010/GiB-mo actual rate
     ],
 )
 

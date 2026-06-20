@@ -1,4 +1,5 @@
 """Tests for estimate_bom and estimate_unit_economics os/spec handling (v0.8.0)."""
+
 from __future__ import annotations
 
 from decimal import Decimal
@@ -45,6 +46,7 @@ def _make_ctx(pvdr):
 # ------------------------------------------------------------------
 # estimate_bom — os field passed through in spec
 # ------------------------------------------------------------------
+
 
 async def test_estimate_bom_windows_os():
     """Windows BoM item should include os='Windows' in the ComputePricingSpec passed to get_price."""
@@ -114,6 +116,7 @@ async def test_estimate_bom_os_defaults_to_linux():
 # ------------------------------------------------------------------
 # estimate_unit_economics — os field passed through in spec
 # ------------------------------------------------------------------
+
 
 async def test_estimate_unit_economics_windows_os():
     """estimate_unit_economics Windows item should pass os='Windows' in spec to get_price."""

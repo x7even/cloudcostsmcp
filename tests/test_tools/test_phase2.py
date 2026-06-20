@@ -1,4 +1,5 @@
 """Tests for Phase 2 tools: get_discount_summary, find_cheapest_region."""
+
 from __future__ import annotations
 
 from decimal import Decimal
@@ -55,6 +56,7 @@ async def aws_provider(tmp_path: Path):
 # ------------------------------------------------------------------
 # get_discount_summary
 # ------------------------------------------------------------------
+
 
 async def test_get_discount_summary_with_sp_and_ri(aws_provider: AWSProvider):
     aws_provider._sp.describe_savings_plans.return_value = {
@@ -132,7 +134,9 @@ async def test_get_discount_summary_no_auth(tmp_path: Path):
 async def test_get_discount_summary_empty(aws_provider: AWSProvider):
     aws_provider._sp.describe_savings_plans.return_value = {"savingsPlans": []}
     aws_provider._ec2.describe_reserved_instances.return_value = {"ReservedInstances": []}
-    aws_provider._ce.get_savings_plans_utilization.return_value = {"Total": {"Utilization": {}, "Savings": {}}}
+    aws_provider._ce.get_savings_plans_utilization.return_value = {
+        "Total": {"Utilization": {}, "Savings": {}}
+    }
     aws_provider._ce.get_reservation_utilization.return_value = {"Total": {}}
 
     summary = await aws_provider.get_discount_summary()
@@ -143,6 +147,7 @@ async def test_get_discount_summary_empty(aws_provider: AWSProvider):
 # ------------------------------------------------------------------
 # find_cheapest_region (tests provider method directly)
 # ------------------------------------------------------------------
+
 
 async def test_find_cheapest_region_ordering(aws_provider: AWSProvider):
     """Verify that prices are returned sorted cheapest-first."""
@@ -178,13 +183,13 @@ async def test_find_cheapest_region_ordering(aws_provider: AWSProvider):
 
 async def test_find_cheapest_region_filters_unavailable(aws_provider: AWSProvider):
     """Regions with no pricing should be excluded from comparison, not cause errors."""
+
     async def mock_get_compute_price(instance_type, region, os="Linux", term=PricingTerm.ON_DEMAND):
         if region == "us-east-1":
             return [_make_price("us-east-1", "0.192")]
         return []  # unavailable in other regions
 
     aws_provider.get_compute_price = mock_get_compute_price
-
 
     regions = ["us-east-1", "fake-region-1", "fake-region-2"]
     all_prices = []

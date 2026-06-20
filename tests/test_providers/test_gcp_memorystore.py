@@ -1,4 +1,5 @@
 """Tests for GCP Memorystore for Redis pricing."""
+
 from __future__ import annotations
 
 from decimal import Decimal
@@ -16,33 +17,50 @@ from opencloudcosts.providers.gcp import GCPProvider
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_redis_sku(description: str, regions: list[str], price_nanos: int) -> dict:
     return {
         "description": description,
         "serviceRegions": regions,
         "category": {"usageType": "OnDemand"},
-        "pricingInfo": [{"pricingExpression": {"tieredRates": [
-            {"startUsageAmount": 0, "unitPrice": {"units": "0", "nanos": price_nanos}}
-        ]}}],
+        "pricingInfo": [
+            {
+                "pricingExpression": {
+                    "tieredRates": [
+                        {"startUsageAmount": 0, "unitPrice": {"units": "0", "nanos": price_nanos}}
+                    ]
+                }
+            }
+        ],
     }
 
 
 # Realistic Memorystore SKUs for us-central1 / europe-west1
 MEMORYSTORE_FAKE_SKUS = [
     # Basic tier, various M-tiers in us-central1 (Iowa)
-    _make_redis_sku("Redis Capacity Basic M2 Iowa", ["us-central1"], 16_000_000),   # $0.016/GiB-hr
-    _make_redis_sku("Redis Capacity Basic M3 Iowa", ["us-central1"], 18_000_000),   # $0.018/GiB-hr
-    _make_redis_sku("Redis Capacity Basic M4 Iowa", ["us-central1"], 20_000_000),   # $0.020/GiB-hr
-    _make_redis_sku("Redis Capacity Basic M5 Iowa", ["us-central1"], 22_000_000),   # $0.022/GiB-hr
+    _make_redis_sku("Redis Capacity Basic M2 Iowa", ["us-central1"], 16_000_000),  # $0.016/GiB-hr
+    _make_redis_sku("Redis Capacity Basic M3 Iowa", ["us-central1"], 18_000_000),  # $0.018/GiB-hr
+    _make_redis_sku("Redis Capacity Basic M4 Iowa", ["us-central1"], 20_000_000),  # $0.020/GiB-hr
+    _make_redis_sku("Redis Capacity Basic M5 Iowa", ["us-central1"], 22_000_000),  # $0.022/GiB-hr
     # Standard (new naming), various M-tiers in us-central1
-    _make_redis_sku("Redis Standard Node Capacity M2 Iowa", ["us-central1"], 24_000_000),  # $0.024/GiB-hr
-    _make_redis_sku("Redis Standard Node Capacity M3 Iowa", ["us-central1"], 26_000_000),  # $0.026/GiB-hr
-    _make_redis_sku("Redis Standard Node Capacity M4 Iowa", ["us-central1"], 28_000_000),  # $0.028/GiB-hr
-    _make_redis_sku("Redis Standard Node Capacity M5 Iowa", ["us-central1"], 30_000_000),  # $0.030/GiB-hr
+    _make_redis_sku(
+        "Redis Standard Node Capacity M2 Iowa", ["us-central1"], 24_000_000
+    ),  # $0.024/GiB-hr
+    _make_redis_sku(
+        "Redis Standard Node Capacity M3 Iowa", ["us-central1"], 26_000_000
+    ),  # $0.026/GiB-hr
+    _make_redis_sku(
+        "Redis Standard Node Capacity M4 Iowa", ["us-central1"], 28_000_000
+    ),  # $0.028/GiB-hr
+    _make_redis_sku(
+        "Redis Standard Node Capacity M5 Iowa", ["us-central1"], 30_000_000
+    ),  # $0.030/GiB-hr
     # Standard (old naming alias)
     _make_redis_sku("Redis Capacity Standard M2 Iowa", ["us-central1"], 24_000_000),
     # Only M4 available in europe-west1 (for fallback test)
-    _make_redis_sku("Redis Capacity Basic M4 Netherlands", ["europe-west1"], 21_000_000),  # $0.021/GiB-hr
+    _make_redis_sku(
+        "Redis Capacity Basic M4 Netherlands", ["europe-west1"], 21_000_000
+    ),  # $0.021/GiB-hr
     _make_redis_sku("Redis Standard Node Capacity M4 Netherlands", ["europe-west1"], 31_000_000),
 ]
 
@@ -50,6 +68,7 @@ MEMORYSTORE_FAKE_SKUS = [
 # ---------------------------------------------------------------------------
 # Fixture
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 async def gcp_provider(tmp_path: Path):
@@ -70,9 +89,12 @@ async def gcp_provider(tmp_path: Path):
 # Provider tests
 # ---------------------------------------------------------------------------
 
+
 async def test_memorystore_basic_price(gcp_provider):
     """Basic tier returns correct price with service='database'."""
-    with patch.object(gcp_provider, "_fetch_skus", new=AsyncMock(return_value=MEMORYSTORE_FAKE_SKUS)):
+    with patch.object(
+        gcp_provider, "_fetch_skus", new=AsyncMock(return_value=MEMORYSTORE_FAKE_SKUS)
+    ):
         prices = await gcp_provider.get_memorystore_price(5.0, "us-central1", tier="basic")
 
     assert len(prices) == 1
@@ -89,7 +111,9 @@ async def test_memorystore_basic_price(gcp_provider):
 
 async def test_memorystore_standard_price(gcp_provider):
     """Standard tier returns correct price."""
-    with patch.object(gcp_provider, "_fetch_skus", new=AsyncMock(return_value=MEMORYSTORE_FAKE_SKUS)):
+    with patch.object(
+        gcp_provider, "_fetch_skus", new=AsyncMock(return_value=MEMORYSTORE_FAKE_SKUS)
+    ):
         prices = await gcp_provider.get_memorystore_price(5.0, "us-central1", tier="standard")
 
     assert len(prices) == 1
@@ -101,7 +125,9 @@ async def test_memorystore_standard_price(gcp_provider):
 
 async def test_memorystore_standard_more_expensive_than_basic(gcp_provider):
     """Standard tier is more expensive than Basic for same capacity and region."""
-    with patch.object(gcp_provider, "_fetch_skus", new=AsyncMock(return_value=MEMORYSTORE_FAKE_SKUS)):
+    with patch.object(
+        gcp_provider, "_fetch_skus", new=AsyncMock(return_value=MEMORYSTORE_FAKE_SKUS)
+    ):
         basic = await gcp_provider.get_memorystore_price(5.0, "us-central1", tier="basic")
         standard = await gcp_provider.get_memorystore_price(5.0, "us-central1", tier="standard")
 
@@ -112,7 +138,9 @@ async def test_memorystore_standard_more_expensive_than_basic(gcp_provider):
 
 async def test_memorystore_monthly_cost_math(gcp_provider):
     """hourly_rate = capacity × rate_per_gib_hr; monthly = hourly × 730."""
-    with patch.object(gcp_provider, "_fetch_skus", new=AsyncMock(return_value=MEMORYSTORE_FAKE_SKUS)):
+    with patch.object(
+        gcp_provider, "_fetch_skus", new=AsyncMock(return_value=MEMORYSTORE_FAKE_SKUS)
+    ):
         # 5 GB in us-central1 basic — M3 tier: $0.018/GiB-hr
         prices = await gcp_provider.get_memorystore_price(5.0, "us-central1", tier="basic")
 
@@ -128,7 +156,9 @@ async def test_memorystore_monthly_cost_math(gcp_provider):
 async def test_memorystore_mtier_fallback(gcp_provider):
     """When preferred M-tier not available, falls back to another available tier."""
     # europe-west1 only has M4 SKUs; capacity=5 (prefers M3) should fall back to M4
-    with patch.object(gcp_provider, "_fetch_skus", new=AsyncMock(return_value=MEMORYSTORE_FAKE_SKUS)):
+    with patch.object(
+        gcp_provider, "_fetch_skus", new=AsyncMock(return_value=MEMORYSTORE_FAKE_SKUS)
+    ):
         prices = await gcp_provider.get_memorystore_price(5.0, "europe-west1", tier="basic")
 
     assert len(prices) == 1

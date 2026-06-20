@@ -1,4 +1,5 @@
 """Tests for the SQLite cache manager."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -18,7 +19,9 @@ async def cache(tmp_path: Path):
 
 async def test_prices_round_trip(cache: CacheManager):
     data = [{"sku": "ABC", "price": "0.192", "unit": "per_hour"}]
-    await cache.set_prices("aws", "compute", "us-east-1", {"instance": "m5.xlarge"}, data, ttl_hours=1)
+    await cache.set_prices(
+        "aws", "compute", "us-east-1", {"instance": "m5.xlarge"}, data, ttl_hours=1
+    )
     result = await cache.get_prices("aws", "compute", "us-east-1", {"instance": "m5.xlarge"})
     assert result == data
 

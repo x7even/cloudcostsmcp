@@ -7,6 +7,7 @@ Run via:
     uv run opencloudcosts --transport http --host 0.0.0.0 --port 9000
     uv run opencloudcosts --help
 """
+
 from __future__ import annotations
 
 import argparse
@@ -40,8 +41,11 @@ async def _lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
     # AWS provider — always available (public pricing requires no credentials)
     try:
         from opencloudcosts.providers.aws import AWSProvider
+
         providers["aws"] = AWSProvider(settings, cache)
-        logger.info("AWS provider initialised (Cost Explorer: %s)", settings.aws_enable_cost_explorer)
+        logger.info(
+            "AWS provider initialised (Cost Explorer: %s)", settings.aws_enable_cost_explorer
+        )
     except Exception as e:
         logger.warning("Could not initialise AWS provider: %s", e)
 
@@ -49,6 +53,7 @@ async def _lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
     gcp_provider = None
     try:
         from opencloudcosts.providers.gcp import GCPProvider
+
         gcp_provider = GCPProvider(settings, cache)
         providers["gcp"] = gcp_provider
         auth_method = "API key" if settings.gcp_api_key else "ADC"
@@ -59,6 +64,7 @@ async def _lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
     # Azure provider — always available (public pricing requires no credentials)
     try:
         from opencloudcosts.providers.azure import AzureProvider
+
         providers["azure"] = AzureProvider(settings, cache)
         logger.info("Azure provider initialised (public pricing, no credentials needed)")
     except Exception as e:

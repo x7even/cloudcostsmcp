@@ -8,6 +8,7 @@ Invariants enforced:
   4. Example roundtrip — describe_catalog() example_invocation passes back to get_price() successfully
   5. Breakdown arithmetic — where breakdown.monthly_total exists, it equals sum of prices ×qty within $0.01
 """
+
 from __future__ import annotations
 
 from decimal import Decimal
@@ -35,16 +36,20 @@ from opencloudcosts.providers.base import NotSupportedError, ProviderBase
 # Invariant: PRICING_SCHEMAS registry is self-consistent
 # ---------------------------------------------------------------------------
 
+
 def test_pricing_schemas_all_domains_represented() -> None:
     """Every PricingDomain must appear in PRICING_SCHEMAS."""
     registered_domains = {domain for domain, _ in PRICING_SCHEMAS}
     for domain in PricingDomain:
-        assert domain in registered_domains, f"PricingDomain.{domain.name} missing from PRICING_SCHEMAS"
+        assert domain in registered_domains, (
+            f"PricingDomain.{domain.name} missing from PRICING_SCHEMAS"
+        )
 
 
 def test_pricing_schemas_all_spec_classes_are_base_subclasses() -> None:
     """Every spec class in PRICING_SCHEMAS must be a subclass of BasePricingSpec."""
     from opencloudcosts.models import BasePricingSpec
+
     for key, spec_cls in PRICING_SCHEMAS.items():
         assert issubclass(spec_cls, BasePricingSpec), (
             f"PRICING_SCHEMAS[{key}] = {spec_cls} is not a BasePricingSpec subclass"
@@ -64,6 +69,7 @@ def test_pricing_schemas_domain_matches_spec_class() -> None:
 # ---------------------------------------------------------------------------
 # Invariant: NotSupportedError.to_response() shape
 # ---------------------------------------------------------------------------
+
 
 def test_not_supported_error_to_response_shape() -> None:
     err = NotSupportedError(
@@ -101,13 +107,16 @@ def test_not_supported_error_minimal_response() -> None:
 # Invariant: ProviderBase mixin raises NotSupportedError for all optional methods
 # ---------------------------------------------------------------------------
 
+
 class _StubProvider(ProviderBase):
     provider = CloudProvider.AWS
 
 
 @pytest.mark.asyncio
 async def test_provider_base_get_price_raises() -> None:
-    spec = ComputePricingSpec(provider=CloudProvider.AWS, region="us-east-1", resource_type="m5.xlarge")
+    spec = ComputePricingSpec(
+        provider=CloudProvider.AWS, region="us-east-1", resource_type="m5.xlarge"
+    )
     with pytest.raises(NotSupportedError):
         await _StubProvider().get_price(spec)
 
@@ -126,7 +135,9 @@ async def test_provider_base_get_discount_summary_raises() -> None:
 
 @pytest.mark.asyncio
 async def test_provider_base_applicable_commitments_returns_empty() -> None:
-    spec = ComputePricingSpec(provider=CloudProvider.AWS, region="us-east-1", resource_type="m5.xlarge")
+    spec = ComputePricingSpec(
+        provider=CloudProvider.AWS, region="us-east-1", resource_type="m5.xlarge"
+    )
     result = await _StubProvider()._applicable_commitments(spec)
     assert result == []
 
@@ -134,6 +145,7 @@ async def test_provider_base_applicable_commitments_returns_empty() -> None:
 # ---------------------------------------------------------------------------
 # Invariant: PricingResult.summary() is LLM-safe
 # ---------------------------------------------------------------------------
+
 
 def test_pricing_result_summary_with_no_auth() -> None:
     price = NormalizedPrice(
@@ -258,6 +270,7 @@ _AZURE_VM_ITEM = {
 @pytest.fixture
 async def aws_provider(tmp_path: Path):
     from opencloudcosts.providers.aws import AWSProvider
+
     settings = Settings(cache_dir=tmp_path / "cache_aws")
     cache = CacheManager(settings.cache_dir)
     await cache.initialize()
@@ -269,6 +282,7 @@ async def aws_provider(tmp_path: Path):
 @pytest.fixture
 async def gcp_provider(tmp_path: Path):
     from opencloudcosts.providers.gcp import GCPProvider
+
     settings = Settings(cache_dir=tmp_path / "cache_gcp", gcp_api_key="fake-key-for-tests")
     cache = CacheManager(settings.cache_dir)
     await cache.initialize()
@@ -280,6 +294,7 @@ async def gcp_provider(tmp_path: Path):
 @pytest.fixture
 async def azure_provider(tmp_path: Path):
     from opencloudcosts.providers.azure import AzureProvider
+
     settings = Settings(cache_dir=tmp_path / "cache_azure")
     cache = CacheManager(settings.cache_dir)
     await cache.initialize()
@@ -292,32 +307,36 @@ async def azure_provider(tmp_path: Path):
 # Invariant 1: supports() / dispatch agreement
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize("provider_name,domain,service,should_support", [
-    # AWS supported
-    ("aws", PricingDomain.COMPUTE, None, True),
-    ("aws", PricingDomain.STORAGE, None, True),
-    ("aws", PricingDomain.DATABASE, "rds", True),
-    ("aws", PricingDomain.AI, "bedrock", True),
-    ("aws", PricingDomain.SERVERLESS, "lambda", True),
-    # AWS not supported (GCP-only services)
-    ("aws", PricingDomain.AI, "gemini", False),
-    ("aws", PricingDomain.AI, "vertex", False),
-    ("aws", PricingDomain.CONTAINER, "gke", False),
-    # GCP supported
-    ("gcp", PricingDomain.COMPUTE, None, True),
-    ("gcp", PricingDomain.ANALYTICS, "bigquery", True),
-    ("gcp", PricingDomain.AI, "gemini", True),
-    # GCP not supported (AWS-only services)
-    ("gcp", PricingDomain.AI, "bedrock", False),
-    ("gcp", PricingDomain.CONTAINER, "eks", False),
-    # Azure supported
-    ("azure", PricingDomain.COMPUTE, None, True),
-    ("azure", PricingDomain.STORAGE, None, True),
-    # Azure not yet supported
-    ("azure", PricingDomain.AI, "azure_openai", False),
-    ("azure", PricingDomain.ANALYTICS, "bigquery", False),
-])
+@pytest.mark.parametrize(
+    "provider_name,domain,service,should_support",
+    [
+        # AWS supported
+        ("aws", PricingDomain.COMPUTE, None, True),
+        ("aws", PricingDomain.STORAGE, None, True),
+        ("aws", PricingDomain.DATABASE, "rds", True),
+        ("aws", PricingDomain.AI, "bedrock", True),
+        ("aws", PricingDomain.SERVERLESS, "lambda", True),
+        # AWS not supported (GCP-only services)
+        ("aws", PricingDomain.AI, "gemini", False),
+        ("aws", PricingDomain.AI, "vertex", False),
+        ("aws", PricingDomain.CONTAINER, "gke", False),
+        # GCP supported
+        ("gcp", PricingDomain.COMPUTE, None, True),
+        ("gcp", PricingDomain.ANALYTICS, "bigquery", True),
+        ("gcp", PricingDomain.AI, "gemini", True),
+        # GCP not supported (AWS-only services)
+        ("gcp", PricingDomain.AI, "bedrock", False),
+        ("gcp", PricingDomain.CONTAINER, "eks", False),
+        # Azure supported
+        ("azure", PricingDomain.COMPUTE, None, True),
+        ("azure", PricingDomain.STORAGE, None, True),
+        # Azure not yet supported
+        ("azure", PricingDomain.AI, "azure_openai", False),
+        ("azure", PricingDomain.ANALYTICS, "bigquery", False),
+    ],
+)
 async def test_supports_dispatch_agreement(
     provider_name: str,
     domain: PricingDomain,
@@ -341,6 +360,7 @@ async def test_supports_dispatch_agreement(
         from pydantic import TypeAdapter
 
         from opencloudcosts.models import PricingSpec as _PS
+
         _SPEC_ADAPTER = TypeAdapter(_PS)
         spec_dict: dict = {
             "provider": provider_name,
@@ -361,10 +381,12 @@ async def test_supports_dispatch_agreement(
 # Invariant 2 & 3: Shape invariant + region echo
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_shape_invariant_aws_compute(aws_provider: object) -> None:
     """AWS compute result: all prices have price_per_unit > 0, non-empty region, valid PriceUnit."""
     from opencloudcosts.providers.aws import AWSProvider
+
     provider: AWSProvider = aws_provider  # type: ignore[assignment]
     spec = ComputePricingSpec(
         provider=CloudProvider.AWS, region="us-east-1", resource_type="m5.xlarge"
@@ -384,6 +406,7 @@ async def test_shape_invariant_aws_compute(aws_provider: object) -> None:
 async def test_shape_invariant_azure_compute(azure_provider: object) -> None:
     """Azure compute result: all prices have price_per_unit > 0, non-empty region, valid PriceUnit."""
     from opencloudcosts.providers.azure import AzureProvider
+
     provider: AzureProvider = azure_provider  # type: ignore[assignment]
     spec = ComputePricingSpec(
         provider=CloudProvider.AZURE, region="eastus", resource_type="Standard_D4s_v3"
@@ -406,6 +429,7 @@ async def test_shape_invariant_azure_compute(azure_provider: object) -> None:
 async def test_region_echo_aws(aws_provider: object) -> None:
     """AWS compute result: every price.region matches the spec.region."""
     from opencloudcosts.providers.aws import AWSProvider
+
     provider: AWSProvider = aws_provider  # type: ignore[assignment]
     spec = ComputePricingSpec(
         provider=CloudProvider.AWS, region="us-east-1", resource_type="m5.xlarge"
@@ -423,6 +447,7 @@ async def test_region_echo_aws(aws_provider: object) -> None:
 async def test_region_echo_azure(azure_provider: object) -> None:
     """Azure compute result: every price.region matches the spec.region."""
     from opencloudcosts.providers.azure import AzureProvider
+
     provider: AzureProvider = azure_provider  # type: ignore[assignment]
     spec = ComputePricingSpec(
         provider=CloudProvider.AZURE, region="eastus", resource_type="Standard_D4s_v3"
@@ -443,24 +468,31 @@ async def test_region_echo_azure(azure_provider: object) -> None:
 # Invariant 4: describe_catalog example_invocation roundtrip
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_describe_catalog_example_roundtrip_azure(azure_provider: object) -> None:
     """describe_catalog() example_invocations pass back to get_price() without error."""
     from pydantic import TypeAdapter
 
     from opencloudcosts.models import PricingSpec as _PS
+
     _SPEC_ADAPTER = TypeAdapter(_PS)
     from opencloudcosts.providers.azure import AzureProvider
+
     provider: AzureProvider = azure_provider  # type: ignore[assignment]
 
     catalog = await provider.describe_catalog()
-    assert catalog.example_invocations, "describe_catalog must return at least one example_invocation"
+    assert catalog.example_invocations, (
+        "describe_catalog must return at least one example_invocation"
+    )
 
     for key, example in catalog.example_invocations.items():
         try:
             spec = _SPEC_ADAPTER.validate_python(example)
         except Exception as exc:
-            pytest.fail(f"example_invocations[{key!r}] failed to parse as PricingSpec: {exc}\n{example}")
+            pytest.fail(
+                f"example_invocations[{key!r}] failed to parse as PricingSpec: {exc}\n{example}"
+            )
 
         mock_resp = MagicMock()
         mock_resp.raise_for_status = MagicMock()
@@ -484,8 +516,10 @@ async def test_describe_catalog_example_roundtrip_aws(aws_provider: object) -> N
     from pydantic import TypeAdapter
 
     from opencloudcosts.models import PricingSpec as _PS
+
     _SPEC_ADAPTER = TypeAdapter(_PS)
     from opencloudcosts.providers.aws import AWSProvider
+
     provider: AWSProvider = aws_provider  # type: ignore[assignment]
 
     catalog = await provider.describe_catalog()
@@ -502,9 +536,7 @@ async def test_describe_catalog_example_roundtrip_aws(aws_provider: object) -> N
                 result = await provider.get_price(spec)
                 assert isinstance(result, PricingResult)
             except NotSupportedError as exc:
-                pytest.fail(
-                    f"AWS example_invocations[{key!r}] raised NotSupportedError: {exc}"
-                )
+                pytest.fail(f"AWS example_invocations[{key!r}] raised NotSupportedError: {exc}")
             except Exception:
                 pass  # other errors (e.g. wrong mock data shape) are acceptable in spot-check
 
@@ -513,11 +545,13 @@ async def test_describe_catalog_example_roundtrip_aws(aws_provider: object) -> N
 # Invariant 5: Breakdown arithmetic
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_breakdown_arithmetic_gke_standard(gcp_provider: object) -> None:
     """GKE Standard breakdown.cluster_management_monthly must equal price * hours_per_month."""
     from opencloudcosts.models import ContainerPricingSpec
     from opencloudcosts.providers.gcp import GCPProvider
+
     provider: GCPProvider = gcp_provider  # type: ignore[assignment]
     spec = ContainerPricingSpec(
         provider=CloudProvider.GCP, region="us-central1", service="gke", mode="standard"
@@ -534,15 +568,19 @@ async def test_breakdown_arithmetic_gke_standard(gcp_provider: object) -> None:
             "usageType": "OnDemand",
         },
         "serviceRegions": ["us-central1"],
-        "pricingInfo": [{
-            "pricingExpression": {
-                "usageUnit": "h",
-                "tieredRates": [{
-                    "startUsageAmount": 0,
-                    "unitPrice": {"currencyCode": "USD", "units": "0", "nanos": 100000000},
-                }],
+        "pricingInfo": [
+            {
+                "pricingExpression": {
+                    "usageUnit": "h",
+                    "tieredRates": [
+                        {
+                            "startUsageAmount": 0,
+                            "unitPrice": {"currencyCode": "USD", "units": "0", "nanos": 100000000},
+                        }
+                    ],
+                }
             }
-        }],
+        ],
     }
 
     with patch.object(provider, "_fetch_skus", return_value=[gke_sku]):

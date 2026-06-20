@@ -7,6 +7,7 @@ needed) via httpx. All public pricing tools work credential-free.
 
 Effective pricing uses Cost Explorer (`ce` client) — opt-in only due to $0.01/call cost.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -70,12 +71,18 @@ _TERM_KEY: dict[PricingTerm, str] = {
 
 # Reserved term qualifiers (LeaseContractLength + PurchaseOption)
 _RESERVED_FILTERS: dict[PricingTerm, dict[str, str]] = {
-    PricingTerm.RESERVED_1YR:         {"LeaseContractLength": "1yr", "PurchaseOption": "No Upfront"},
-    PricingTerm.RESERVED_3YR:         {"LeaseContractLength": "3yr", "PurchaseOption": "No Upfront"},
-    PricingTerm.RESERVED_1YR_PARTIAL: {"LeaseContractLength": "1yr", "PurchaseOption": "Partial Upfront"},
-    PricingTerm.RESERVED_1YR_ALL:     {"LeaseContractLength": "1yr", "PurchaseOption": "All Upfront"},
-    PricingTerm.RESERVED_3YR_PARTIAL: {"LeaseContractLength": "3yr", "PurchaseOption": "Partial Upfront"},
-    PricingTerm.RESERVED_3YR_ALL:     {"LeaseContractLength": "3yr", "PurchaseOption": "All Upfront"},
+    PricingTerm.RESERVED_1YR: {"LeaseContractLength": "1yr", "PurchaseOption": "No Upfront"},
+    PricingTerm.RESERVED_3YR: {"LeaseContractLength": "3yr", "PurchaseOption": "No Upfront"},
+    PricingTerm.RESERVED_1YR_PARTIAL: {
+        "LeaseContractLength": "1yr",
+        "PurchaseOption": "Partial Upfront",
+    },
+    PricingTerm.RESERVED_1YR_ALL: {"LeaseContractLength": "1yr", "PurchaseOption": "All Upfront"},
+    PricingTerm.RESERVED_3YR_PARTIAL: {
+        "LeaseContractLength": "3yr",
+        "PurchaseOption": "Partial Upfront",
+    },
+    PricingTerm.RESERVED_3YR_ALL: {"LeaseContractLength": "3yr", "PurchaseOption": "All Upfront"},
 }
 
 
@@ -90,7 +97,7 @@ _BULK_URL = "{base}/{service}/current/{region}/index.json"
 _SERVICE_ALIASES: dict[str, str] = {
     # compute / infra
     "ec2": "AmazonEC2",
-    "ebs": "AmazonEC2",   # EBS pricing lives under AmazonEC2 service
+    "ebs": "AmazonEC2",  # EBS pricing lives under AmazonEC2 service
     "s3": "AmazonS3",
     "rds": "AmazonRDS",
     "cloudwatch": "AmazonCloudWatch",
@@ -187,12 +194,12 @@ _AWS_CAPABILITIES: dict[tuple[str, str | None], bool] = {
     (PricingDomain.ANALYTICS.value, "athena"): True,
     (PricingDomain.NETWORK.value, None): True,
     (PricingDomain.NETWORK.value, "lb"): True,
-    (PricingDomain.NETWORK.value, "cloud_lb"): True,    # GCP-style alias
+    (PricingDomain.NETWORK.value, "cloud_lb"): True,  # GCP-style alias
     (PricingDomain.NETWORK.value, "cdn"): True,
-    (PricingDomain.NETWORK.value, "cloud_cdn"): True,   # GCP-style alias
+    (PricingDomain.NETWORK.value, "cloud_cdn"): True,  # GCP-style alias
     (PricingDomain.NETWORK.value, "cloudfront"): True,  # direct service name
     (PricingDomain.NETWORK.value, "nat"): True,
-    (PricingDomain.NETWORK.value, "cloud_nat"): True,   # GCP-style alias
+    (PricingDomain.NETWORK.value, "cloud_nat"): True,  # GCP-style alias
     (PricingDomain.NETWORK.value, "waf"): True,
     (PricingDomain.NETWORK.value, "data_transfer"): True,
     (PricingDomain.NETWORK.value, "egress"): True,
@@ -226,15 +233,17 @@ class AWSProvider(ProviderBase):
         # Pricing client — only used when credentials are present.
         # Falls back to httpx bulk API automatically on NoCredentialsError.
         self._pricing = session.client("pricing", region_name=_PRICING_REGION)
-        self._ce: Any = None          # lazy — only create if Cost Explorer enabled
-        self._sp: Any = None          # Savings Plans API client
-        self._ec2: Any = None         # EC2 client for Reserved Instance queries
+        self._ce: Any = None  # lazy — only create if Cost Explorer enabled
+        self._sp: Any = None  # Savings Plans API client
+        self._ec2: Any = None  # EC2 client for Reserved Instance queries
         if settings.aws_enable_cost_explorer:
             self._ce = session.client("ce", region_name="us-east-1")
             self._sp = session.client("savingsplans", region_name="us-east-1")
             self._ec2 = session.client("ec2", region_name=settings.aws_region)
         # Must stay in sync with _AWS_CAPABILITIES — one entry per supported spec type.
-        self._dispatch_registry: dict[type[BasePricingSpec], Callable[..., Awaitable[list[NormalizedPrice]]]] = {
+        self._dispatch_registry: dict[
+            type[BasePricingSpec], Callable[..., Awaitable[list[NormalizedPrice]]]
+        ] = {
             ComputePricingSpec: self._price_compute,
             StoragePricingSpec: self._price_storage,
             DatabasePricingSpec: self._price_database,
@@ -279,13 +288,12 @@ class AWSProvider(ProviderBase):
                 service_code,
             )
             # Extract region from filters for the bulk URL
-            region = next(
-                (f["Value"] for f in filters if f["Field"] == "location"), None
-            )
+            region = next((f["Value"] for f in filters if f["Field"] == "location"), None)
             if region is None:
                 return []
             # Bulk API uses region codes, not display names
             from opencloudcosts.utils.regions import AWS_DISPLAY_REGION
+
             region_code = AWS_DISPLAY_REGION.get(region, region)
             return await asyncio.to_thread(
                 self._get_products_bulk, service_code, region_code, filters, max_results
@@ -300,8 +308,7 @@ class AWSProvider(ProviderBase):
         """Fetch via boto3 pricing client (requires credentials)."""
         paginator = self._pricing.get_paginator("get_products")
         boto_filters = [
-            {"Type": "TERM_MATCH", "Field": f["Field"], "Value": f["Value"]}
-            for f in filters
+            {"Type": "TERM_MATCH", "Field": f["Field"], "Value": f["Value"]} for f in filters
         ]
         results: list[dict[str, Any]] = []
         for page in paginator.paginate(
@@ -348,11 +355,7 @@ class AWSProvider(ProviderBase):
         terms_data = data.get("terms", {})
 
         # Build filter map from non-location fields (location is implicit from URL)
-        field_filters = {
-            f["Field"]: f["Value"]
-            for f in filters
-            if f["Field"] != "location"
-        }
+        field_filters = {f["Field"]: f["Value"] for f in filters if f["Field"] != "location"}
 
         results: list[dict[str, Any]] = []
         for sku, product in products.items():
@@ -409,10 +412,9 @@ class AWSProvider(ProviderBase):
         terms = item.get("terms", {}).get("Reserved", {})
         for offer_term in terms.values():
             attrs = offer_term.get("termAttributes", {})
-            if (
-                attrs.get("LeaseContractLength") == qualifiers.get("LeaseContractLength")
-                and attrs.get("PurchaseOption") == qualifiers.get("PurchaseOption")
-            ):
+            if attrs.get("LeaseContractLength") == qualifiers.get(
+                "LeaseContractLength"
+            ) and attrs.get("PurchaseOption") == qualifiers.get("PurchaseOption"):
                 price_dims = offer_term.get("priceDimensions", {})
                 hourly = Decimal("0")
                 upfront = Decimal("0")
@@ -464,8 +466,12 @@ class AWSProvider(ProviderBase):
         # Build a meaningful description from whichever attribute is most specific.
         # Fallback chain covers compute, storage, database, and generic services.
         _desc_keys = (
-            "instanceType", "databaseEngine", "groupDescription",
-            "group", "transferType", "volumeType",
+            "instanceType",
+            "databaseEngine",
+            "groupDescription",
+            "group",
+            "transferType",
+            "volumeType",
         )
         description = next(
             (attrs[k] for k in _desc_keys if k in attrs),
@@ -474,8 +480,14 @@ class AWSProvider(ProviderBase):
 
         # Pass all attributes through, stripping only the high-noise keys that
         # duplicate information already present at the response level.
-        _noise = {"location", "locationType", "servicecode", "servicename",
-                  "regionCode", "usagetype"}
+        _noise = {
+            "location",
+            "locationType",
+            "servicecode",
+            "servicename",
+            "regionCode",
+            "usagetype",
+        }
 
         return NormalizedPrice(
             provider=CloudProvider.AWS,
@@ -529,23 +541,28 @@ class AWSProvider(ProviderBase):
         cheapest_az = min(by_az, key=lambda az: by_az[az])
         price = by_az[cheapest_az]
 
-        return [NormalizedPrice(
-            provider=CloudProvider.AWS,
-            service="compute",
-            sku_id=f"{instance_type}-spot",
-            product_family="Compute Instance",
-            region=region,
-            pricing_term=PricingTerm.SPOT,
-            price_per_unit=price,
-            unit=PriceUnit.PER_HOUR,
-            description=f"{instance_type} spot ({cheapest_az})",
-            attributes={
-                "instanceType": instance_type,
-                "availabilityZone": cheapest_az,
-                "allAZPrices": json.dumps({az: str(p) for az, p in by_az.items()}),
-                "operatingSystem": os,
-            },
-        )]
+        return self._annotate_fresh(
+            [
+                NormalizedPrice(
+                    provider=CloudProvider.AWS,
+                    service="compute",
+                    sku_id=f"{instance_type}-spot",
+                    product_family="Compute Instance",
+                    region=region,
+                    pricing_term=PricingTerm.SPOT,
+                    price_per_unit=price,
+                    unit=PriceUnit.PER_HOUR,
+                    description=f"{instance_type} spot ({cheapest_az})",
+                    attributes={
+                        "instanceType": instance_type,
+                        "availabilityZone": cheapest_az,
+                        "allAZPrices": json.dumps({az: str(p) for az, p in by_az.items()}),
+                        "operatingSystem": os,
+                    },
+                )
+            ],
+            self._SOURCE_URL,
+        )
 
     async def _get_spot_history(
         self,
@@ -581,8 +598,7 @@ class AWSProvider(ProviderBase):
             botocore.exceptions.PartialCredentialsError,
         ):
             raise ValueError(
-                "Spot price history requires AWS credentials. "
-                "Set AWS_PROFILE or AWS_ACCESS_KEY_ID."
+                "Spot price history requires AWS credentials. Set AWS_PROFILE or AWS_ACCESS_KEY_ID."
             )
 
         if not items:
@@ -608,19 +624,25 @@ class AWSProvider(ProviderBase):
 
         if volatility_ratio < Decimal("0.05"):
             stability = "stable"
-            recommendation = "Low interruption risk. Good candidate for fault-tolerant batch workloads."
+            recommendation = (
+                "Low interruption risk. Good candidate for fault-tolerant batch workloads."
+            )
         elif volatility_ratio < Decimal("0.15"):
             stability = "moderate"
-            recommendation = "Moderate price variation. Use with checkpointing for long-running jobs."
+            recommendation = (
+                "Moderate price variation. Use with checkpointing for long-running jobs."
+            )
         else:
             stability = "volatile"
-            recommendation = "High volatility. Consider on-demand or reserved instances for reliable workloads."
+            recommendation = (
+                "High volatility. Consider on-demand or reserved instances for reliable workloads."
+            )
 
         az_stats = {}
         for az, prices in sorted(by_az.items()):
             az_avg = sum(prices) / len(prices)
             az_stats[az] = {
-                "current": f"${prices[0]:.6f}",   # most recent (API returns newest first)
+                "current": f"${prices[0]:.6f}",  # most recent (API returns newest first)
                 "min": f"${min(prices):.6f}",
                 "max": f"${max(prices):.6f}",
                 "avg": f"${az_avg:.6f}",
@@ -660,7 +682,8 @@ class AWSProvider(ProviderBase):
             cached_data, fetched_at = cached_meta
             return self._apply_cache_trust(
                 [NormalizedPrice.model_validate(p) for p in cached_data],
-                fetched_at, self._SOURCE_URL,
+                fetched_at,
+                self._SOURCE_URL,
             )
 
         try:
@@ -690,11 +713,14 @@ class AWSProvider(ProviderBase):
                 prices.append(p)
 
         await self._cache.set_prices(
-            "aws", "compute", region, cache_extras,
+            "aws",
+            "compute",
+            region,
+            cache_extras,
             [p.model_dump(mode="json") for p in prices],
             ttl_hours=self._settings.cache_ttl_hours,
         )
-        return prices
+        return self._annotate_fresh(prices, self._SOURCE_URL)
 
     async def get_storage_price(
         self,
@@ -709,7 +735,8 @@ class AWSProvider(ProviderBase):
             cached_data, fetched_at = cached_meta
             return self._apply_cache_trust(
                 [NormalizedPrice.model_validate(p) for p in cached_data],
-                fetched_at, self._SOURCE_URL,
+                fetched_at,
+                self._SOURCE_URL,
             )
 
         display_name = aws_region_to_display(region)
@@ -798,11 +825,14 @@ class AWSProvider(ProviderBase):
         # or a bug (like the productFamily filter issue) that we don't want to bake in.
         if prices:
             await self._cache.set_prices(
-                "aws", "storage", region, cache_extras,
+                "aws",
+                "storage",
+                region,
+                cache_extras,
                 [p.model_dump(mode="json") for p in prices],
                 ttl_hours=self._settings.cache_ttl_hours,
             )
-        return prices
+        return self._annotate_fresh(prices, self._SOURCE_URL)
 
     @staticmethod
     def _map_ebs_type(storage_type: str) -> str:
@@ -849,9 +879,7 @@ class AWSProvider(ProviderBase):
         except ValueError:
             display_name = region  # pass through unknown regions
 
-        filter_list: list[dict[str, str]] = [
-            {"Field": "location", "Value": display_name}
-        ]
+        filter_list: list[dict[str, str]] = [{"Field": "location", "Value": display_name}]
         for k, v in product_filters.items():
             filter_list.append({"Field": k, "Value": v})
 
@@ -861,7 +889,7 @@ class AWSProvider(ProviderBase):
             p = self._item_to_price(item, region, term, service.lower())
             if p:
                 prices.append(p)
-        return prices
+        return self._annotate_fresh(prices, self._SOURCE_URL)
 
     async def list_services(self) -> list[dict[str, str]]:
         """Return all available AWS pricing services with their offer codes and aliases."""
@@ -937,7 +965,9 @@ class AWSProvider(ProviderBase):
             raw = await self._get_products(resolved, filters, max_results=max_results)
             prices = []
             for item in raw:
-                p = self._item_to_price(item, region or "us-east-1", PricingTerm.ON_DEMAND, "storage")
+                p = self._item_to_price(
+                    item, region or "us-east-1", PricingTerm.ON_DEMAND, "storage"
+                )
                 if p:
                     if p.unit == PriceUnit.PER_UNIT:
                         p = p.model_copy(update={"unit": PriceUnit.PER_GB_MONTH})
@@ -952,7 +982,9 @@ class AWSProvider(ProviderBase):
             raw = await self._get_products(resolved, filters, max_results=max_results)
             prices = []
             for item in raw:
-                p = self._item_to_price(item, region or "us-east-1", PricingTerm.ON_DEMAND, "nat_gateway")
+                p = self._item_to_price(
+                    item, region or "us-east-1", PricingTerm.ON_DEMAND, "nat_gateway"
+                )
                 if p:
                     prices.append(p)
                 if len(prices) >= max_results:
@@ -980,7 +1012,9 @@ class AWSProvider(ProviderBase):
                         continue
                 elif query_lower not in instance_type.lower():
                     continue
-                p = self._item_to_price(item, region or "us-east-1", PricingTerm.ON_DEMAND, "compute")
+                p = self._item_to_price(
+                    item, region or "us-east-1", PricingTerm.ON_DEMAND, "compute"
+                )
                 if p:
                     prices.append(p)
                 if len(prices) >= max_results:
@@ -999,13 +1033,14 @@ class AWSProvider(ProviderBase):
                 attrs = product.get("attributes", {})
                 # Include top-level product fields (productFamily, productGroup) in haystack
                 top_level = " ".join(
-                    str(product.get(k, ""))
-                    for k in ("productFamily", "productGroup")
+                    str(product.get(k, "")) for k in ("productFamily", "productGroup")
                 )
                 haystack = (top_level + " " + " ".join(str(v) for v in attrs.values())).lower()
                 if query_lower not in haystack:
                     continue
-                p = self._item_to_price(item, region or "us-east-1", PricingTerm.ON_DEMAND, svc_label)
+                p = self._item_to_price(
+                    item, region or "us-east-1", PricingTerm.ON_DEMAND, svc_label
+                )
                 if p:
                     prices.append(p)
                 if len(prices) >= max_results:
@@ -1080,17 +1115,19 @@ class AWSProvider(ProviderBase):
             if gpu and gpu_count == 0:
                 continue
 
-            instances.append(InstanceTypeInfo(
-                provider=CloudProvider.AWS,
-                instance_type=itype,
-                vcpu=vcpu,
-                memory_gb=mem_gb,
-                gpu_count=gpu_count,
-                gpu_type=attrs.get("gpuMemory"),
-                network_performance=attrs.get("networkPerformance"),
-                storage=attrs.get("storage"),
-                region=region,
-            ))
+            instances.append(
+                InstanceTypeInfo(
+                    provider=CloudProvider.AWS,
+                    instance_type=itype,
+                    vcpu=vcpu,
+                    memory_gb=mem_gb,
+                    gpu_count=gpu_count,
+                    gpu_type=attrs.get("gpuMemory"),
+                    network_performance=attrs.get("networkPerformance"),
+                    storage=attrs.get("storage"),
+                    region=region,
+                )
+            )
 
         await self._cache.set_metadata(
             cache_key,
@@ -1126,6 +1163,7 @@ class AWSProvider(ProviderBase):
             )
 
         from datetime import date, timedelta
+
         end = date.today().replace(day=1)
         start = (end - timedelta(days=1)).replace(day=1)
 
@@ -1136,7 +1174,12 @@ class AWSProvider(ProviderBase):
                 Metrics=["NetAmortizedCost", "UsageQuantity"],
                 Filter={
                     "And": [
-                        {"Dimensions": {"Key": "SERVICE", "Values": [self._service_to_ce(service)]}},
+                        {
+                            "Dimensions": {
+                                "Key": "SERVICE",
+                                "Values": [self._service_to_ce(service)],
+                            }
+                        },
                         {"Dimensions": {"Key": "REGION", "Values": [region]}},
                         {"Dimensions": {"Key": "INSTANCE_TYPE", "Values": [instance_type]}},
                     ]
@@ -1158,16 +1201,20 @@ class AWSProvider(ProviderBase):
             usage = Decimal(total.get("UsageQuantity", {}).get("Amount", "1") or "1")
             if usage > 0:
                 effective_rate = net_cost / usage
-                discount_pct = float(
-                    (base.price_per_unit - effective_rate) / base.price_per_unit * 100
-                ) if base.price_per_unit > 0 else 0.0
-                results.append(EffectivePrice(
-                    base_price=base,
-                    effective_price_per_unit=effective_rate,
-                    discount_type="Blended (RI/SP/EDP)",
-                    discount_pct=round(discount_pct, 2),
-                    source="cost_explorer",
-                ))
+                discount_pct = (
+                    float((base.price_per_unit - effective_rate) / base.price_per_unit * 100)
+                    if base.price_per_unit > 0
+                    else 0.0
+                )
+                results.append(
+                    EffectivePrice(
+                        base_price=base,
+                        effective_price_per_unit=effective_rate,
+                        discount_type="Blended (RI/SP/EDP)",
+                        discount_pct=round(discount_pct, 2),
+                        source="cost_explorer",
+                    )
+                )
         return results
 
     @staticmethod
@@ -1228,24 +1275,39 @@ class AWSProvider(ProviderBase):
         if domain == PricingDomain.COMPUTE:
             base += [
                 PricingTerm.SPOT,
-                PricingTerm.RESERVED_1YR, PricingTerm.RESERVED_1YR_PARTIAL,
-                PricingTerm.RESERVED_1YR_ALL, PricingTerm.RESERVED_3YR,
-                PricingTerm.RESERVED_3YR_PARTIAL, PricingTerm.RESERVED_3YR_ALL,
-                PricingTerm.COMPUTE_SP, PricingTerm.EC2_INSTANCE_SP,
+                PricingTerm.RESERVED_1YR,
+                PricingTerm.RESERVED_1YR_PARTIAL,
+                PricingTerm.RESERVED_1YR_ALL,
+                PricingTerm.RESERVED_3YR,
+                PricingTerm.RESERVED_3YR_PARTIAL,
+                PricingTerm.RESERVED_3YR_ALL,
+                PricingTerm.COMPUTE_SP,
+                PricingTerm.EC2_INSTANCE_SP,
             ]
         elif domain == PricingDomain.DATABASE:
             base += [
-                PricingTerm.RESERVED_1YR, PricingTerm.RESERVED_3YR,
-                PricingTerm.RESERVED_1YR_PARTIAL, PricingTerm.RESERVED_1YR_ALL,
+                PricingTerm.RESERVED_1YR,
+                PricingTerm.RESERVED_3YR,
+                PricingTerm.RESERVED_1YR_PARTIAL,
+                PricingTerm.RESERVED_1YR_ALL,
             ]
         elif domain == PricingDomain.AI and service == "bedrock":
             base = [PricingTerm.ON_DEMAND, PricingTerm.SAVINGS_PLAN]
         return base
 
     _MAJOR_REGIONS = [
-        "us-east-1", "us-east-2", "us-west-1", "us-west-2",
-        "ca-central-1", "eu-west-1", "eu-west-2", "eu-central-1",
-        "ap-southeast-1", "ap-southeast-2", "ap-northeast-1", "ap-south-1",
+        "us-east-1",
+        "us-east-2",
+        "us-west-1",
+        "us-west-2",
+        "ca-central-1",
+        "eu-west-1",
+        "eu-west-2",
+        "eu-central-1",
+        "ap-southeast-1",
+        "ap-southeast-2",
+        "ap-northeast-1",
+        "ap-south-1",
     ]
     _SOURCE_URL = "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/index.json"
 
@@ -1255,73 +1317,85 @@ class AWSProvider(ProviderBase):
     def default_region(self) -> str:
         return "us-east-1"
 
-    def bom_advisories(
-        self, services: set[str], sample_region: str
-    ) -> list[dict[str, str]]:
+    def bom_advisories(self, services: set[str], sample_region: str) -> list[dict[str, str]]:
         advisories: list[dict[str, str]] = []
         if "compute" in services or "database" in services:
-            advisories.append({
-                "item": "Data transfer (egress)",
-                "why": "Outbound traffic to the internet or cross-region — varies by workload",
+            advisories.append(
+                {
+                    "item": "Data transfer (egress)",
+                    "why": "Outbound traffic to the internet or cross-region — varies by workload",
+                    "how_to_price": (
+                        f'get_price(spec={{"provider": "aws", "domain": "network", "service": "data_transfer", '
+                        f'"region": "{sample_region}"}})'
+                    ),
+                    "price": "NOT FETCHED — call get_price using the how_to_price command before including this in your answer",
+                }
+            )
+            advisories.append(
+                {
+                    "item": "Load balancer (ALB/NLB)",
+                    "why": "Typically needed in front of compute clusters",
+                    "how_to_price": (
+                        f'get_price(spec={{"provider": "aws", "domain": "network", "service": "lb", '
+                        f'"region": "{sample_region}"}})'
+                    ),
+                    "price": "NOT FETCHED — call get_price using the how_to_price command before including this in your answer",
+                }
+            )
+            advisories.append(
+                {
+                    "item": "NAT Gateway",
+                    "why": "Required if EC2 instances are in private subnets",
+                    "how_to_price": (
+                        f'get_price(spec={{"provider": "aws", "domain": "network", "service": "nat", '
+                        f'"region": "{sample_region}"}})'
+                    ),
+                    "price": "NOT FETCHED — call get_price using the how_to_price command before including this in your answer",
+                }
+            )
+        advisories.append(
+            {
+                "item": "CloudWatch monitoring",
+                "why": "Logs, metrics, alarms — scales with number of instances and log volume",
                 "how_to_price": (
-                    f'get_price(spec={{"provider": "aws", "domain": "network", "service": "data_transfer", '
+                    f'get_price(spec={{"provider": "aws", "domain": "observability", "service": "cloudwatch", '
                     f'"region": "{sample_region}"}})'
                 ),
-                "price": "NOT FETCHED — call get_price using the how_to_price command before including this in your answer",
-            })
-            advisories.append({
-                "item": "Load balancer (ALB/NLB)",
-                "why": "Typically needed in front of compute clusters",
-                "how_to_price": (
-                    f'get_price(spec={{"provider": "aws", "domain": "network", "service": "lb", '
-                    f'"region": "{sample_region}"}})'
-                ),
-                "price": "NOT FETCHED — call get_price using the how_to_price command before including this in your answer",
-            })
-            advisories.append({
-                "item": "NAT Gateway",
-                "why": "Required if EC2 instances are in private subnets",
-                "how_to_price": (
-                    f'get_price(spec={{"provider": "aws", "domain": "network", "service": "nat", '
-                    f'"region": "{sample_region}"}})'
-                ),
-                "price": "NOT FETCHED — call get_price using the how_to_price command before including this in your answer",
-            })
-        advisories.append({
-            "item": "CloudWatch monitoring",
-            "why": "Logs, metrics, alarms — scales with number of instances and log volume",
-            "how_to_price": (
-                f'get_price(spec={{"provider": "aws", "domain": "observability", "service": "cloudwatch", '
-                f'"region": "{sample_region}"}})'
-            ),
-            "price": "unknown — use the how_to_price call above to get the real figure",
-        })
+                "price": "unknown — use the how_to_price call above to get the real figure",
+            }
+        )
         if "database" in services:
-            advisories.append({
-                "item": "RDS automated backups",
-                "why": "Free for storage equal to DB size; extra storage charged beyond that",
-                "how_to_price": (
-                    f'search_pricing(provider="aws", query="RDS Storage Snapshot", region="{sample_region}")'
-                ),
-                "price": "NOT FETCHED — call get_price using the how_to_price command before including this in your answer",
-            })
+            advisories.append(
+                {
+                    "item": "RDS automated backups",
+                    "why": "Free for storage equal to DB size; extra storage charged beyond that",
+                    "how_to_price": (
+                        f'search_pricing(provider="aws", query="RDS Storage Snapshot", region="{sample_region}")'
+                    ),
+                    "price": "NOT FETCHED — call get_price using the how_to_price command before including this in your answer",
+                }
+            )
         if "storage" in services:
-            advisories.append({
-                "item": "EBS snapshots",
-                "why": "Point-in-time backups stored in S3 — charged per GB-month",
-                "how_to_price": (
-                    f'search_pricing(provider="aws", query="EBS Storage Snapshot", region="{sample_region}")'
-                ),
-                "price": "NOT FETCHED — call get_price using the how_to_price command before including this in your answer",
-            })
+            advisories.append(
+                {
+                    "item": "EBS snapshots",
+                    "why": "Point-in-time backups stored in S3 — charged per GB-month",
+                    "how_to_price": (
+                        f'search_pricing(provider="aws", query="EBS Storage Snapshot", region="{sample_region}")'
+                    ),
+                    "price": "NOT FETCHED — call get_price using the how_to_price command before including this in your answer",
+                }
+            )
         return advisories
 
     async def get_spot_history(
         self, spec: PricingSpec, hours: int = 24, availability_zone: str = ""
     ) -> dict:
         from opencloudcosts.models import ComputePricingSpec
+
         if not isinstance(spec, ComputePricingSpec):
             from opencloudcosts.providers.base import NotSupportedError
+
             raise NotSupportedError(
                 provider=self.provider,
                 domain=spec.domain,
@@ -1344,7 +1418,9 @@ class AWSProvider(ProviderBase):
                 domain=spec.domain,
                 service=spec.service,
                 reason=f"AWS does not support domain='{spec.domain.value}', service='{spec.service}'.",
-                alternatives=["Use describe_catalog(provider='aws') to see supported combinations."],
+                alternatives=[
+                    "Use describe_catalog(provider='aws') to see supported combinations."
+                ],
             )
 
         public_prices = await self._dispatch_public(spec)
@@ -1395,17 +1471,21 @@ class AWSProvider(ProviderBase):
             # If caller specified dest_region, filter to exact match; otherwise accept all
             if dst and to_region and to_region != dst:
                 continue
-            p = self._item_to_price(item, src or "us-east-1", PricingTerm.ON_DEMAND, "inter_region_egress")
+            p = self._item_to_price(
+                item, src or "us-east-1", PricingTerm.ON_DEMAND, "inter_region_egress"
+            )
             if p:
-                p = p.model_copy(update={
-                    "source_url": self._SOURCE_URL,
-                    "attributes": {
-                        **p.attributes,
-                        "fromRegionCode": attrs.get("fromRegionCode", src),
-                        "toRegionCode": to_region,
-                        "transferType": attrs.get("transferType", ""),
-                    },
-                })
+                p = p.model_copy(
+                    update={
+                        "source_url": self._SOURCE_URL,
+                        "attributes": {
+                            **p.attributes,
+                            "fromRegionCode": attrs.get("fromRegionCode", src),
+                            "toRegionCode": to_region,
+                            "transferType": attrs.get("transferType", ""),
+                        },
+                    }
+                )
                 prices.append(p)
             if len(prices) >= 10:
                 break
@@ -1413,7 +1493,7 @@ class AWSProvider(ProviderBase):
         if not prices:
             prices = self._egress_static_fallback(src or "us-east-1", dst)
 
-        return prices
+        return self._annotate_fresh(prices, self._SOURCE_URL)
 
     # Published AWS inter-region egress rates (source: aws.amazon.com/ec2/pricing/on-demand/#Data_Transfer).
     # Used as a static fallback when the Pricing API returns no results.
@@ -1483,9 +1563,7 @@ class AWSProvider(ProviderBase):
             return "af"
         return "us"
 
-    def _egress_static_fallback(
-        self, src: str, dst: str | None
-    ) -> list[NormalizedPrice]:
+    def _egress_static_fallback(self, src: str, dst: str | None) -> list[NormalizedPrice]:
         """Return static inter-region egress prices when the Pricing API returns empty."""
         src_c = self._region_continent(src)
         note = "static published rate; Pricing API returned no match for this route"
@@ -1493,20 +1571,25 @@ class AWSProvider(ProviderBase):
             dst_c = self._region_continent(dst)
             # Default $0.16/GB for any unknown pair (conservative / covers most cross-continent routes)
             rate = self._EGRESS_RATES.get((src_c, dst_c), Decimal("0.16"))
-            return [NormalizedPrice(
-                provider=CloudProvider.AWS, service="inter_region_egress",
-                sku_id=f"aws:data_transfer:{src}:{dst}:fallback",
-                product_family="Data Transfer",
-                description=f"AWS inter-region data transfer {src} → {dst} ({note})",
-                region=src, pricing_term=PricingTerm.ON_DEMAND,
-                price_per_unit=rate, unit=PriceUnit.PER_GB,
-                attributes={
-                    "fromRegionCode": src,
-                    "toRegionCode": dst,
-                    "transferType": "InterRegion Outbound",
-                    "fallback": "true",
-                },
-            )]
+            return [
+                NormalizedPrice(
+                    provider=CloudProvider.AWS,
+                    service="inter_region_egress",
+                    sku_id=f"aws:data_transfer:{src}:{dst}:fallback",
+                    product_family="Data Transfer",
+                    description=f"AWS inter-region data transfer {src} → {dst} ({note})",
+                    region=src,
+                    pricing_term=PricingTerm.ON_DEMAND,
+                    price_per_unit=rate,
+                    unit=PriceUnit.PER_GB,
+                    attributes={
+                        "fromRegionCode": src,
+                        "toRegionCode": dst,
+                        "transferType": "InterRegion Outbound",
+                        "fallback": "true",
+                    },
+                )
+            ]
         # No dest — return one entry per destination continent from src
         results = []
         seen: set[str] = set()
@@ -1514,30 +1597,44 @@ class AWSProvider(ProviderBase):
             if s_c != src_c or d_c in seen:
                 continue
             seen.add(d_c)
-            results.append(NormalizedPrice(
-                provider=CloudProvider.AWS, service="inter_region_egress",
-                sku_id=f"aws:data_transfer:{src}:{d_c}-star:fallback",
-                product_family="Data Transfer",
-                description=f"AWS inter-region data transfer {src} → {d_c} regions ({note})",
-                region=src, pricing_term=PricingTerm.ON_DEMAND,
-                price_per_unit=rate, unit=PriceUnit.PER_GB,
-                attributes={
-                    "fromRegionCode": src,
-                    "toRegionCode": f"{d_c}-*",
-                    "transferType": "InterRegion Outbound",
-                    "fallback": "true",
-                },
-            ))
+            results.append(
+                NormalizedPrice(
+                    provider=CloudProvider.AWS,
+                    service="inter_region_egress",
+                    sku_id=f"aws:data_transfer:{src}:{d_c}-star:fallback",
+                    product_family="Data Transfer",
+                    description=f"AWS inter-region data transfer {src} → {d_c} regions ({note})",
+                    region=src,
+                    pricing_term=PricingTerm.ON_DEMAND,
+                    price_per_unit=rate,
+                    unit=PriceUnit.PER_GB,
+                    attributes={
+                        "fromRegionCode": src,
+                        "toRegionCode": f"{d_c}-*",
+                        "transferType": "InterRegion Outbound",
+                        "fallback": "true",
+                    },
+                )
+            )
         return results
 
     async def _price_compute(self, spec: ComputePricingSpec) -> list[NormalizedPrice]:
-        if spec.service == "fargate" or (spec.vcpu is not None and spec.memory_gb is not None and not spec.resource_type):
+        if spec.service == "fargate" or (
+            spec.vcpu is not None and spec.memory_gb is not None and not spec.resource_type
+        ):
             return await self._price_fargate(spec)
         if not spec.resource_type:
             raise NotSupportedError(
-                provider=self.provider, domain=spec.domain, service=spec.service,
+                provider=self.provider,
+                domain=spec.domain,
+                service=spec.service,
                 reason="ComputePricingSpec requires resource_type (instance type) or vcpu+memory_gb (Fargate).",
-                example_invocation={"provider": "aws", "domain": "compute", "resource_type": "m5.xlarge", "region": spec.region},
+                example_invocation={
+                    "provider": "aws",
+                    "domain": "compute",
+                    "resource_type": "m5.xlarge",
+                    "region": spec.region,
+                },
             )
         return await self.get_compute_price(spec.resource_type, spec.region, spec.os, spec.term)
 
@@ -1548,48 +1645,75 @@ class AWSProvider(ProviderBase):
         mem_filters: dict[str, str] = {"memorytype": "perGB"}
         if spec.os.lower() == "windows":
             vcpu_filters["operatingSystem"] = "Windows"
-        vcpu_prices = await self.get_service_price("fargate", spec.region, vcpu_filters, max_results=5)
-        mem_prices = await self.get_service_price("fargate", spec.region, mem_filters, max_results=5)
+        vcpu_prices = await self.get_service_price(
+            "fargate", spec.region, vcpu_filters, max_results=5
+        )
+        mem_prices = await self.get_service_price(
+            "fargate", spec.region, mem_filters, max_results=5
+        )
         prices = []
         if vcpu_prices:
-            prices.append(vcpu_prices[0].model_copy(update={
-                "description": f"Fargate vCPU ({vcpu} vCPU × ${vcpu_prices[0].price_per_unit:.6f}/hr)",
-                "attributes": {**vcpu_prices[0].attributes, "vcpu": str(vcpu), "os": spec.os},
-            }))
+            prices.append(
+                vcpu_prices[0].model_copy(
+                    update={
+                        "description": f"Fargate vCPU ({vcpu} vCPU × ${vcpu_prices[0].price_per_unit:.6f}/hr)",
+                        "attributes": {
+                            **vcpu_prices[0].attributes,
+                            "vcpu": str(vcpu),
+                            "os": spec.os,
+                        },
+                    }
+                )
+            )
         if mem_prices:
-            prices.append(mem_prices[0].model_copy(update={
-                "description": f"Fargate memory ({memory_gb} GB × ${mem_prices[0].price_per_unit:.6f}/GB-hr)",
-                "attributes": {**mem_prices[0].attributes, "memory_gb": str(memory_gb)},
-            }))
+            prices.append(
+                mem_prices[0].model_copy(
+                    update={
+                        "description": f"Fargate memory ({memory_gb} GB × ${mem_prices[0].price_per_unit:.6f}/GB-hr)",
+                        "attributes": {**mem_prices[0].attributes, "memory_gb": str(memory_gb)},
+                    }
+                )
+            )
         return prices
 
     async def _price_storage(self, spec: StoragePricingSpec) -> list[NormalizedPrice]:
-        return await self.get_storage_price(
-            spec.storage_type, spec.region, spec.size_gb, spec.iops
-        )
+        return await self.get_storage_price(spec.storage_type, spec.region, spec.size_gb, spec.iops)
 
     async def _price_database(self, spec: DatabasePricingSpec) -> list[NormalizedPrice]:
         svc = spec.service or "rds"
         if svc in ("rds", "database", None):
             _RDS_ENGINE_MAP = {
-                "mysql": "MySQL", "postgresql": "PostgreSQL", "postgres": "PostgreSQL",
-                "mariadb": "MariaDB", "oracle": "Oracle", "sqlserver": "SQL Server",
-                "aurora-mysql": "Aurora MySQL", "aurora-postgresql": "Aurora PostgreSQL",
+                "mysql": "MySQL",
+                "postgresql": "PostgreSQL",
+                "postgres": "PostgreSQL",
+                "mariadb": "MariaDB",
+                "oracle": "Oracle",
+                "sqlserver": "SQL Server",
+                "aurora-mysql": "Aurora MySQL",
+                "aurora-postgresql": "Aurora PostgreSQL",
                 "aurora-postgres": "Aurora PostgreSQL",
             }
             engine_normalized = _RDS_ENGINE_MAP.get(spec.engine.lower(), spec.engine)
-            deployment_option = "Multi-AZ" if spec.deployment.lower() in ("multi-az", "ha", "multi-zone") else "Single-AZ"
+            deployment_option = (
+                "Multi-AZ"
+                if spec.deployment.lower() in ("multi-az", "ha", "multi-zone")
+                else "Single-AZ"
+            )
             filters: dict[str, str] = {
                 "instanceType": spec.resource_type,
                 "databaseEngine": engine_normalized,
                 "deploymentOption": deployment_option,
             }
-            return await self.get_service_price("rds", spec.region, filters, max_results=5, term=spec.term)
+            return await self.get_service_price(
+                "rds", spec.region, filters, max_results=5, term=spec.term
+            )
         if svc == "elasticache":
             filters = {"instanceType": spec.resource_type}
             return await self.get_service_price("elasticache", spec.region, filters, max_results=5)
         raise NotSupportedError(
-            provider=self.provider, domain=spec.domain, service=svc,
+            provider=self.provider,
+            domain=spec.domain,
+            service=svc,
             reason=f"AWS database service '{svc}' not recognised. Use 'rds' or 'elasticache'.",
             alternatives=["service='rds'", "service='elasticache'"],
         )
@@ -1604,18 +1728,28 @@ class AWSProvider(ProviderBase):
             else:
                 in_type, out_type = "Input tokens", "Output tokens"
             in_prices = await self.get_service_price(
-                "bedrock", spec.region, {"model": catalog_name, "inferenceType": in_type}, max_results=5
+                "bedrock",
+                spec.region,
+                {"model": catalog_name, "inferenceType": in_type},
+                max_results=5,
             )
             out_prices = await self.get_service_price(
-                "bedrock", spec.region, {"model": catalog_name, "inferenceType": out_type}, max_results=5
+                "bedrock",
+                spec.region,
+                {"model": catalog_name, "inferenceType": out_type},
+                max_results=5,
             )
             prices = [p for p in in_prices + out_prices if p]
 
             # When token counts are provided, compute and prepend a total-cost NormalizedPrice.
             # Bedrock prices are per individual token; expose per-million-token rates too.
             if prices and (spec.input_tokens or spec.output_tokens):
-                in_rate = next((p.price_per_unit for p in prices if "input" in p.description.lower()), None)
-                out_rate = next((p.price_per_unit for p in prices if "output" in p.description.lower()), None)
+                in_rate = next(
+                    (p.price_per_unit for p in prices if "input" in p.description.lower()), None
+                )
+                out_rate = next(
+                    (p.price_per_unit for p in prices if "output" in p.description.lower()), None
+                )
                 total = Decimal("0")
                 components: list[str] = []
                 if in_rate is not None and spec.input_tokens:
@@ -1633,7 +1767,7 @@ class AWSProvider(ProviderBase):
                         f"{spec.output_tokens:,} output tokens × ${per_m:.4f}/1M = ${out_cost:.4f}"
                     )
                 if total > 0:
-                    prices.insert(0, NormalizedPrice(
+                    synthetic = NormalizedPrice(
                         provider=CloudProvider.AWS,
                         service="bedrock",
                         sku_id=f"aws:bedrock:{catalog_name}:total",
@@ -1649,7 +1783,16 @@ class AWSProvider(ProviderBase):
                             "input_tokens": str(spec.input_tokens or 0),
                             "output_tokens": str(spec.output_tokens or 0),
                         },
-                    ))
+                    )
+                    # Inherit trust metadata from first component price
+                    if prices:
+                        ref = prices[0]
+                        synthetic = synthetic.model_copy(update={
+                            "fetched_at": ref.fetched_at,
+                            "source_url": ref.source_url,
+                            "cache_age_seconds": ref.cache_age_seconds,
+                        })
+                    prices.insert(0, synthetic)
             return prices
         if svc == "sagemaker":
             filters: dict[str, str] = {}
@@ -1657,7 +1800,9 @@ class AWSProvider(ProviderBase):
                 filters["instanceType"] = spec.machine_type
             return await self.get_service_price("sagemaker", spec.region, filters, max_results=10)
         raise NotSupportedError(
-            provider=self.provider, domain=spec.domain, service=svc,
+            provider=self.provider,
+            domain=spec.domain,
+            service=svc,
             reason=f"AWS AI service '{svc}' not recognised. Use 'bedrock' or 'sagemaker'.",
             alternatives=["service='bedrock'", "service='sagemaker'"],
         )
@@ -1671,12 +1816,15 @@ class AWSProvider(ProviderBase):
     async def _price_lambda(self, spec: ServerlessPricingSpec) -> list[NormalizedPrice]:
         region = spec.region or "us-east-1"
         cache_key_extras = {"service": "lambda"}
-        cached_meta = await self._cache.get_prices_with_meta("aws", "lambda", region, cache_key_extras)
+        cached_meta = await self._cache.get_prices_with_meta(
+            "aws", "lambda", region, cache_key_extras
+        )
         if cached_meta is not None:
             cached_data, fetched_at = cached_meta
             return self._apply_cache_trust(
                 [NormalizedPrice.model_validate(p) for p in cached_data],
-                fetched_at, self._SOURCE_URL,
+                fetched_at,
+                self._SOURCE_URL,
             )
 
         try:
@@ -1686,7 +1834,8 @@ class AWSProvider(ProviderBase):
 
         raw = await asyncio.to_thread(
             self._get_products_bulk,
-            "AWSLambda", region,
+            "AWSLambda",
+            region,
             [{"Field": "location", "Value": display_name}],
             max_results=500,
         )
@@ -1702,45 +1851,67 @@ class AWSProvider(ProviderBase):
                 continue
             price_val, unit_str = extracted
             # Standard x86 request rate (not ARM, not Edge, not managed instances)
-            if (group == "AWS-Lambda-Requests" and "ARM" not in usagetype
-                    and "Edge" not in usagetype and request_price is None):
+            if (
+                group == "AWS-Lambda-Requests"
+                and "ARM" not in usagetype
+                and "Edge" not in usagetype
+                and request_price is None
+            ):
                 request_price = price_val
             # Standard x86 duration rate (first/highest tier at startUsageAmount=0)
-            elif (group == "AWS-Lambda-Duration" and usagetype == "Lambda-GB-Second"
-                  and duration_price is None):
+            elif (
+                group == "AWS-Lambda-Duration"
+                and usagetype == "Lambda-GB-Second"
+                and duration_price is None
+            ):
                 duration_price = price_val
 
         prices = []
         if request_price:
             per_million = request_price * 1_000_000
-            prices.append(NormalizedPrice(
-                provider=CloudProvider.AWS, service="serverless",
-                sku_id=f"aws:lambda:{region}:requests",
-                product_family="AWS Lambda",
-                description=f"Lambda requests — ${per_million:.2f} per 1M requests",
-                region=region, pricing_term=PricingTerm.ON_DEMAND,
-                price_per_unit=request_price, unit=PriceUnit.PER_REQUEST,
-                attributes={"billing_dimension": "requests",
-                            "per_million_requests": f"${per_million:.4f}"},
-            ))
+            prices.append(
+                NormalizedPrice(
+                    provider=CloudProvider.AWS,
+                    service="serverless",
+                    sku_id=f"aws:lambda:{region}:requests",
+                    product_family="AWS Lambda",
+                    description=f"Lambda requests — ${per_million:.2f} per 1M requests",
+                    region=region,
+                    pricing_term=PricingTerm.ON_DEMAND,
+                    price_per_unit=request_price,
+                    unit=PriceUnit.PER_REQUEST,
+                    attributes={
+                        "billing_dimension": "requests",
+                        "per_million_requests": f"${per_million:.4f}",
+                    },
+                )
+            )
         if duration_price:
-            prices.append(NormalizedPrice(
-                provider=CloudProvider.AWS, service="serverless",
-                sku_id=f"aws:lambda:{region}:duration",
-                product_family="AWS Lambda",
-                description="Lambda duration (per GB-second)",
-                region=region, pricing_term=PricingTerm.ON_DEMAND,
-                price_per_unit=duration_price, unit=PriceUnit.PER_GB_SECOND,
-                attributes={"billing_dimension": "gb_second"},
-            ))
+            prices.append(
+                NormalizedPrice(
+                    provider=CloudProvider.AWS,
+                    service="serverless",
+                    sku_id=f"aws:lambda:{region}:duration",
+                    product_family="AWS Lambda",
+                    description="Lambda duration (per GB-second)",
+                    region=region,
+                    pricing_term=PricingTerm.ON_DEMAND,
+                    price_per_unit=duration_price,
+                    unit=PriceUnit.PER_GB_SECOND,
+                    attributes={"billing_dimension": "gb_second"},
+                )
+            )
 
         if prices:
             await self._cache.set_prices(
-                "aws", "lambda", region, cache_key_extras,
+                "aws",
+                "lambda",
+                region,
+                cache_key_extras,
                 [p.model_dump(mode="json") for p in prices],
                 ttl_hours=self._settings.cache_ttl_hours,
             )
-        return prices
+        return self._annotate_fresh(prices, self._SOURCE_URL)
 
     async def _price_analytics(self, spec: AnalyticsPricingSpec) -> list[NormalizedPrice]:
         svc = spec.service or "redshift"
@@ -1748,13 +1919,19 @@ class AWSProvider(ProviderBase):
 
     async def _price_network(self, spec: NetworkPricingSpec) -> list[NormalizedPrice]:
         _NET_SERVICE_MAP = {
-            "lb": "elb", "load_balancer": "elb", "elb": "elb",
-            "cloud_lb": "elb",                              # GCP-style alias
-            "cdn": "cloudfront", "cloudfront": "cloudfront", "cloud_cdn": "cloudfront",
-            "nat": "nat_gateway", "nat_gateway": "nat_gateway",
-            "cloud_nat": "nat_gateway",                     # GCP-style alias
+            "lb": "elb",
+            "load_balancer": "elb",
+            "elb": "elb",
+            "cloud_lb": "elb",  # GCP-style alias
+            "cdn": "cloudfront",
+            "cloudfront": "cloudfront",
+            "cloud_cdn": "cloudfront",
+            "nat": "nat_gateway",
+            "nat_gateway": "nat_gateway",
+            "cloud_nat": "nat_gateway",  # GCP-style alias
             "waf": "waf",
-            "data_transfer": "data_transfer", "egress": "data_transfer",
+            "data_transfer": "data_transfer",
+            "egress": "data_transfer",
         }
         svc = _NET_SERVICE_MAP.get(spec.service or "lb", spec.service or "elb")
         return await self.get_service_price(svc, spec.region, {}, max_results=10)
@@ -1800,12 +1977,33 @@ class AWSProvider(ProviderBase):
                 "ai/bedrock": [t.value for t in self.supported_terms(PricingDomain.AI, "bedrock")],
             },
             filter_hints={
-                "compute": {"resource_type": "EC2 instance type, e.g. 'm5.xlarge'", "os": "'Linux' or 'Windows'", "term": "pricing term"},
-                "compute/fargate": {"vcpu": "vCPU count (0.25–16)", "memory_gb": "memory in GB", "os": "'Linux' or 'Windows'"},
-                "storage": {"storage_type": "'gp3', 'io1', 'st1', 'sc1', 's3-standard'", "size_gb": "size for monthly estimate"},
-                "database/rds": {"resource_type": "DB instance type e.g. 'db.r5.large'", "engine": "MySQL/PostgreSQL/MariaDB/Oracle/SQLServer", "deployment": "'single-az' or 'multi-az'"},
-                "database/elasticache": {"resource_type": "cache.r6g.large", "service": "elasticache"},
-                "ai/bedrock": {"model": "e.g. 'claude-3-5-sonnet', 'nova-pro', 'llama-3-1-70b'", "mode": "'on_demand' or 'batch'"},
+                "compute": {
+                    "resource_type": "EC2 instance type, e.g. 'm5.xlarge'",
+                    "os": "'Linux' or 'Windows'",
+                    "term": "pricing term",
+                },
+                "compute/fargate": {
+                    "vcpu": "vCPU count (0.25–16)",
+                    "memory_gb": "memory in GB",
+                    "os": "'Linux' or 'Windows'",
+                },
+                "storage": {
+                    "storage_type": "'gp3', 'io1', 'st1', 'sc1', 's3-standard'",
+                    "size_gb": "size for monthly estimate",
+                },
+                "database/rds": {
+                    "resource_type": "DB instance type e.g. 'db.r5.large'",
+                    "engine": "MySQL/PostgreSQL/MariaDB/Oracle/SQLServer",
+                    "deployment": "'single-az' or 'multi-az'",
+                },
+                "database/elasticache": {
+                    "resource_type": "cache.r6g.large",
+                    "service": "elasticache",
+                },
+                "ai/bedrock": {
+                    "model": "e.g. 'claude-3-5-sonnet', 'nova-pro', 'llama-3-1-70b'",
+                    "mode": "'on_demand' or 'batch'",
+                },
                 "ai/sagemaker": {"machine_type": "ml instance type e.g. 'ml.g5.xlarge'"},
                 "serverless/lambda": {"service": "lambda"},
                 "analytics/redshift": {"service": "redshift"},
@@ -1816,18 +2014,77 @@ class AWSProvider(ProviderBase):
                 "network/data_transfer": {"service": "data_transfer"},
                 "observability/cloudwatch": {"service": "cloudwatch"},
                 "container/eks": {"service": "eks"},
-                "inter_region_egress": {"source_region": "origin region e.g. 'us-east-1'", "dest_region": "destination region e.g. 'eu-west-1'; empty = internet egress"},
+                "inter_region_egress": {
+                    "source_region": "origin region e.g. 'us-east-1'",
+                    "dest_region": "destination region e.g. 'eu-west-1'; empty = internet egress",
+                },
             },
             example_invocations={
-                "compute": {"provider": "aws", "domain": "compute", "resource_type": "m5.xlarge", "region": "us-east-1", "os": "Linux", "term": "on_demand"},
-                "compute/fargate": {"provider": "aws", "domain": "compute", "service": "fargate", "vcpu": 2.0, "memory_gb": 4.0, "region": "us-east-1"},
-                "storage": {"provider": "aws", "domain": "storage", "storage_type": "gp3", "region": "us-east-1", "size_gb": 100},
-                "database/rds": {"provider": "aws", "domain": "database", "service": "rds", "resource_type": "db.r5.large", "engine": "MySQL", "deployment": "single-az", "region": "us-east-1"},
-                "ai/bedrock": {"provider": "aws", "domain": "ai", "service": "bedrock", "model": "claude-3-5-sonnet", "region": "us-east-1", "input_tokens": 1000000, "output_tokens": 1000000},
-                "serverless/lambda": {"provider": "aws", "domain": "serverless", "service": "lambda", "region": "us-east-1"},
-                "observability/cloudwatch": {"provider": "aws", "domain": "observability", "service": "cloudwatch", "region": "us-east-1"},
-                "container/eks": {"provider": "aws", "domain": "container", "service": "eks", "region": "us-east-1"},
-                "inter_region_egress": {"provider": "aws", "domain": "inter_region_egress", "source_region": "us-east-1", "dest_region": "eu-west-1"},
+                "compute": {
+                    "provider": "aws",
+                    "domain": "compute",
+                    "resource_type": "m5.xlarge",
+                    "region": "us-east-1",
+                    "os": "Linux",
+                    "term": "on_demand",
+                },
+                "compute/fargate": {
+                    "provider": "aws",
+                    "domain": "compute",
+                    "service": "fargate",
+                    "vcpu": 2.0,
+                    "memory_gb": 4.0,
+                    "region": "us-east-1",
+                },
+                "storage": {
+                    "provider": "aws",
+                    "domain": "storage",
+                    "storage_type": "gp3",
+                    "region": "us-east-1",
+                    "size_gb": 100,
+                },
+                "database/rds": {
+                    "provider": "aws",
+                    "domain": "database",
+                    "service": "rds",
+                    "resource_type": "db.r5.large",
+                    "engine": "MySQL",
+                    "deployment": "single-az",
+                    "region": "us-east-1",
+                },
+                "ai/bedrock": {
+                    "provider": "aws",
+                    "domain": "ai",
+                    "service": "bedrock",
+                    "model": "claude-3-5-sonnet",
+                    "region": "us-east-1",
+                    "input_tokens": 1000000,
+                    "output_tokens": 1000000,
+                },
+                "serverless/lambda": {
+                    "provider": "aws",
+                    "domain": "serverless",
+                    "service": "lambda",
+                    "region": "us-east-1",
+                },
+                "observability/cloudwatch": {
+                    "provider": "aws",
+                    "domain": "observability",
+                    "service": "cloudwatch",
+                    "region": "us-east-1",
+                },
+                "container/eks": {
+                    "provider": "aws",
+                    "domain": "container",
+                    "service": "eks",
+                    "region": "us-east-1",
+                },
+                "inter_region_egress": {
+                    "provider": "aws",
+                    "domain": "inter_region_egress",
+                    "source_region": "us-east-1",
+                    "dest_region": "eu-west-1",
+                },
             },
             decision_matrix={
                 "ECS on Fargate": "compute/fargate — use vcpu + memory_gb params",
@@ -1862,17 +2119,19 @@ class AWSProvider(ProviderBase):
         sp_list = self.get_active_savings_plans()
         savings_plans_summary = []
         for sp in sp_list:
-            savings_plans_summary.append({
-                "id": sp.get("savingsPlanId", ""),
-                "type": sp.get("savingsPlanType", ""),       # Compute, EC2Instance, SageMaker
-                "payment_option": sp.get("paymentOption", ""),
-                "commitment_usd_per_hour": sp.get("commitment", ""),
-                "term_years": "3" if sp.get("termDurationInSeconds", 0) > 94_000_000 else "1",
-                "start": sp.get("start", ""),
-                "end": sp.get("end", ""),
-                "state": sp.get("state", ""),
-                "utilization_pct": sp.get("utilizationPercentage", "N/A"),
-            })
+            savings_plans_summary.append(
+                {
+                    "id": sp.get("savingsPlanId", ""),
+                    "type": sp.get("savingsPlanType", ""),  # Compute, EC2Instance, SageMaker
+                    "payment_option": sp.get("paymentOption", ""),
+                    "commitment_usd_per_hour": sp.get("commitment", ""),
+                    "term_years": "3" if sp.get("termDurationInSeconds", 0) > 94_000_000 else "1",
+                    "start": sp.get("start", ""),
+                    "end": sp.get("end", ""),
+                    "state": sp.get("state", ""),
+                    "utilization_pct": sp.get("utilizationPercentage", "N/A"),
+                }
+            )
 
         # Reserved Instances
         ri_list = self.get_active_reserved_instances()
@@ -1882,26 +2141,30 @@ class AWSProvider(ProviderBase):
             days_remaining = None
             if end_dt:
                 from datetime import datetime
+
                 now = datetime.now(UTC)
                 end_aware = end_dt if end_dt.tzinfo else end_dt.replace(tzinfo=UTC)
                 days_remaining = max(0, (end_aware - now).days)
-            ri_summary.append({
-                "instance_type": ri.get("InstanceType", ""),
-                "region": self._settings.aws_region,
-                "count": ri.get("InstanceCount", 0),
-                "offering_type": ri.get("OfferingType", ""),  # No Upfront, Partial, All
-                "duration_years": "3" if ri.get("Duration", 0) > 94_000_000 else "1",
-                "days_remaining": days_remaining,
-                "fixed_price": ri.get("FixedPrice", 0),
-                "usage_price": ri.get("UsagePrice", 0),
-                "product_description": ri.get("ProductDescription", ""),
-                "state": ri.get("State", ""),
-            })
+            ri_summary.append(
+                {
+                    "instance_type": ri.get("InstanceType", ""),
+                    "region": self._settings.aws_region,
+                    "count": ri.get("InstanceCount", 0),
+                    "offering_type": ri.get("OfferingType", ""),  # No Upfront, Partial, All
+                    "duration_years": "3" if ri.get("Duration", 0) > 94_000_000 else "1",
+                    "days_remaining": days_remaining,
+                    "fixed_price": ri.get("FixedPrice", 0),
+                    "usage_price": ri.get("UsagePrice", 0),
+                    "product_description": ri.get("ProductDescription", ""),
+                    "state": ri.get("State", ""),
+                }
+            )
 
         # Cost Explorer: get SP + RI utilization for last full month
         utilization: dict[str, Any] = {}
         try:
             from datetime import date, timedelta
+
             end = date.today().replace(day=1)
             start = (end - timedelta(days=1)).replace(day=1)
             period = {"Start": str(start), "End": str(end)}
@@ -1915,14 +2178,14 @@ class AWSProvider(ProviderBase):
                 "net_savings": sp_util.get("Total", {}).get("Savings", {}).get("NetSavings", ""),
             }
 
-            ri_util = self._ce.get_reservation_utilization(
-                TimePeriod=period, Granularity="MONTHLY"
-            )
+            ri_util = self._ce.get_reservation_utilization(TimePeriod=period, Granularity="MONTHLY")
             total_ri = ri_util.get("Total", {}).get("UtilizationsByTime", [{}])
             if total_ri:
                 utilization["reserved_instances"] = {
                     "utilization_pct": ri_util.get("Total", {}).get("UtilizationPercentage", ""),
-                    "on_demand_cost_covered": ri_util.get("Total", {}).get("OnDemandCostOfRIHoursUsed", ""),
+                    "on_demand_cost_covered": ri_util.get("Total", {}).get(
+                        "OnDemandCostOfRIHoursUsed", ""
+                    ),
                     "unrealized_savings": ri_util.get("Total", {}).get("UnrealizedSavings", ""),
                 }
         except botocore.exceptions.ClientError as e:

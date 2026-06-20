@@ -1,4 +1,5 @@
 """Tests for opencloudcosts.utils.http_retry."""
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock

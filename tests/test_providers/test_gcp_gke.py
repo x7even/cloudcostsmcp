@@ -1,4 +1,5 @@
 """Tests for GCP GKE (Google Kubernetes Engine) pricing."""
+
 from __future__ import annotations
 
 from decimal import Decimal
@@ -16,6 +17,7 @@ from opencloudcosts.utils.units import gcp_money_to_decimal
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_gke_sku(
     description: str,
     regions: list[str],
@@ -27,9 +29,18 @@ def _make_gke_sku(
         "description": description,
         "serviceRegions": regions,
         "category": {"usageType": usage_type},
-        "pricingInfo": [{"pricingExpression": {"tieredRates": [
-            {"startUsageAmount": 0, "unitPrice": {"units": price_units, "nanos": price_nanos}}
-        ]}}],
+        "pricingInfo": [
+            {
+                "pricingExpression": {
+                    "tieredRates": [
+                        {
+                            "startUsageAmount": 0,
+                            "unitPrice": {"units": price_units, "nanos": price_nanos},
+                        }
+                    ]
+                }
+            }
+        ],
     }
 
 
@@ -52,6 +63,7 @@ async def provider(tmp_path: Path):
 # Standard mode tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_gke_standard_management_fee(provider):
     """Standard mode: SKU with 'Kubernetes Engine' in desc should be used as management fee."""
@@ -59,7 +71,8 @@ async def test_gke_standard_management_fee(provider):
         _make_gke_sku(
             "Kubernetes Engine Cluster Management Fee",
             ["us-central1"],
-            price_units="0", price_nanos=100_000_000,  # $0.10
+            price_units="0",
+            price_nanos=100_000_000,  # $0.10
         ),
     ]
     with patch.object(provider, "_fetch_skus", new=AsyncMock(return_value=fake_skus)):
@@ -79,7 +92,8 @@ async def test_gke_standard_fallback_rate(provider):
         _make_gke_sku(
             "Autopilot Balanced Pod mCPU Requests (us-central1)",
             ["us-central1"],
-            price_units="0", price_nanos=64_000,
+            price_units="0",
+            price_nanos=64_000,
         ),
     ]
     with patch.object(provider, "_fetch_skus", new=AsyncMock(return_value=fake_skus)):
@@ -114,7 +128,8 @@ async def test_gke_standard_excludes_autopilot_sku(provider):
         _make_gke_sku(
             "Kubernetes Engine Autopilot Balanced Pod mCPU Requests",
             ["us-central1"],
-            price_units="0", price_nanos=64_000,
+            price_units="0",
+            price_nanos=64_000,
         ),
     ]
     with patch.object(provider, "_fetch_skus", new=AsyncMock(return_value=fake_skus)):
@@ -128,6 +143,7 @@ async def test_gke_standard_excludes_autopilot_sku(provider):
 # Autopilot mode tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_gke_autopilot_rates(provider):
     """Autopilot mode: correct rate extraction from SKUs."""
@@ -137,12 +153,14 @@ async def test_gke_autopilot_rates(provider):
         _make_gke_sku(
             "Autopilot Balanced Pod mCPU Requests (us-east1)",
             ["us-east1"],
-            price_units="0", price_nanos=64_000,
+            price_units="0",
+            price_nanos=64_000,
         ),
         _make_gke_sku(
             "Autopilot Balanced Pod Memory Requests (us-east1)",
             ["us-east1"],
-            price_units="0", price_nanos=9_982_000,
+            price_units="0",
+            price_nanos=9_982_000,
         ),
     ]
     with patch.object(provider, "_fetch_skus", new=AsyncMock(return_value=fake_skus)):
@@ -165,18 +183,18 @@ async def test_gke_autopilot_mcpu_to_vcpu_conversion(provider):
         _make_gke_sku(
             "Autopilot Balanced Pod mCPU Requests (us-central1)",
             ["us-central1"],
-            price_units="0", price_nanos=64,  # very small value to test math precisely
+            price_units="0",
+            price_nanos=64,  # very small value to test math precisely
         ),
         _make_gke_sku(
             "Autopilot Balanced Pod Memory Requests (us-central1)",
             ["us-central1"],
-            price_units="0", price_nanos=1_000_000,
+            price_units="0",
+            price_nanos=1_000_000,
         ),
     ]
     with patch.object(provider, "_fetch_skus", new=AsyncMock(return_value=fake_skus)):
-        result = await provider.get_gke_price(
-            region="us-central1", mode="autopilot"
-        )
+        result = await provider.get_gke_price(region="us-central1", mode="autopilot")
 
     # mCPU_rate = 64 nanos = 0.000000064
     # vcpu_rate = 0.000000064 * 1000 = 0.000064
@@ -198,12 +216,14 @@ async def test_gke_autopilot_cost_math(provider):
         _make_gke_sku(
             "Autopilot Balanced Pod mCPU Requests (us-central1)",
             ["us-central1"],
-            price_units="0", price_nanos=64_000,
+            price_units="0",
+            price_nanos=64_000,
         ),
         _make_gke_sku(
             "Autopilot Balanced Pod Memory Requests (us-central1)",
             ["us-central1"],
-            price_units="0", price_nanos=9_982_000,
+            price_units="0",
+            price_nanos=9_982_000,
         ),
     ]
     with patch.object(provider, "_fetch_skus", new=AsyncMock(return_value=fake_skus)):
@@ -242,12 +262,14 @@ async def test_gke_autopilot_zero_vcpu_memory_no_cost(provider):
         _make_gke_sku(
             "Autopilot Balanced Pod mCPU Requests (us-central1)",
             ["us-central1"],
-            price_units="0", price_nanos=64_000,
+            price_units="0",
+            price_nanos=64_000,
         ),
         _make_gke_sku(
             "Autopilot Balanced Pod Memory Requests (us-central1)",
             ["us-central1"],
-            price_units="0", price_nanos=9_982_000,
+            price_units="0",
+            price_nanos=9_982_000,
         ),
     ]
     with patch.object(provider, "_fetch_skus", new=AsyncMock(return_value=fake_skus)):
@@ -265,23 +287,25 @@ async def test_gke_autopilot_zero_vcpu_memory_no_cost(provider):
 async def test_gke_autopilot_negative_vcpu_raises(provider):
     """Autopilot mode: negative vcpu raises ValueError."""
     with pytest.raises(ValueError, match="non-negative"):
-        await provider.get_gke_price(region="us-central1", mode="autopilot", vcpu=-1.0, memory_gb=4.0)
+        await provider.get_gke_price(
+            region="us-central1", mode="autopilot", vcpu=-1.0, memory_gb=4.0
+        )
 
 
 @pytest.mark.asyncio
 async def test_gke_autopilot_negative_memory_raises(provider):
     """Autopilot mode: negative memory_gb raises ValueError."""
     with pytest.raises(ValueError, match="non-negative"):
-        await provider.get_gke_price(region="us-central1", mode="autopilot", vcpu=2.0, memory_gb=-1.0)
+        await provider.get_gke_price(
+            region="us-central1", mode="autopilot", vcpu=2.0, memory_gb=-1.0
+        )
 
 
 @pytest.mark.asyncio
 async def test_gke_invalid_mode(provider):
     """Invalid mode falls through to autopilot path — provider does not validate mode."""
     with patch.object(provider, "_fetch_skus", new=AsyncMock(return_value=[])):
-        result = await provider.get_gke_price(
-            region="us-central1", mode="unknown_mode"
-        )
+        result = await provider.get_gke_price(region="us-central1", mode="unknown_mode")
     # Falls through to autopilot else-branch — returns a dict with autopilot-like keys
     # (the tool layer validates mode before calling the provider)
     assert isinstance(result, dict)

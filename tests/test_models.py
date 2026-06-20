@@ -1,4 +1,5 @@
 """Tests for normalized pricing models."""
+
 from __future__ import annotations
 
 from decimal import Decimal
@@ -81,3 +82,51 @@ def test_bom_estimate():
     estimate = BomEstimate.from_items([item])
     assert estimate.total_monthly == item.monthly_cost
     assert estimate.total_annual == item.monthly_cost * 12
+
+
+def test_normalized_price_trust_fields_in_summary():
+    from datetime import UTC, datetime
+
+    now = datetime(2025, 6, 20, 14, 30, 0, tzinfo=UTC)
+    p = make_price()
+    p = p.model_copy(
+        update={
+            "fetched_at": now,
+            "cache_age_seconds": 3600,
+            "source_url": "https://aws.amazon.com/ec2/pricing/on-demand/",
+        }
+    )
+    s = p.summary()
+    assert s["as_of"] == "2025-06-20T14:30:00+00:00"
+    assert s["cache_age_seconds"] == 3600
+    assert s["source_url"] == "https://aws.amazon.com/ec2/pricing/on-demand/"
+
+
+def test_normalized_price_no_trust_fields_in_summary():
+    p = make_price()  # fetched_at=None, cache_age_seconds=None, source_url=None
+    s = p.summary()
+    assert "as_of" not in s
+    assert "cache_age_seconds" not in s
+    assert "source_url" not in s
+    # Core fields still present
+    assert s["provider"] == "aws"
+    assert s["region"] == "us-east-1"
+
+
+def test_cache_age_seconds_non_negative():
+    from datetime import UTC, datetime, timedelta
+
+    one_hour_ago = datetime.now(UTC) - timedelta(hours=1)
+    p = make_price()
+    p = p.model_copy(update={"fetched_at": one_hour_ago, "cache_age_seconds": 3600})
+    s = p.summary()
+    assert s["cache_age_seconds"] >= 0
+    assert isinstance(s["cache_age_seconds"], int)
+
+
+def test_source_url_roundtrip():
+    url = "https://aws.amazon.com/ec2/pricing/on-demand/"
+    p = make_price()
+    p = p.model_copy(update={"source_url": url})
+    s = p.summary()
+    assert s["source_url"] == url

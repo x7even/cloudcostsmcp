@@ -1,4 +1,5 @@
 """Shared retry helpers for upstream cloud-pricing HTTP calls."""
+
 from __future__ import annotations
 
 import httpx

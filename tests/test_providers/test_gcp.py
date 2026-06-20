@@ -1,4 +1,5 @@
 """Tests for the GCP provider — mocks httpx to avoid live API calls."""
+
 from __future__ import annotations
 
 from decimal import Decimal
@@ -17,6 +18,7 @@ from opencloudcosts.utils.gcp_specs import get_machine_family, parse_instance_ty
 # Minimal SKU data matching what the Catalog API returns
 # ---------------------------------------------------------------------------
 
+
 def _make_sku(description: str, usage_type: str, regions: list[str], price_nanos: int) -> dict:
     return {
         "name": f"services/6F81-5844-456A/skus/FAKE-{description[:4]}",
@@ -29,47 +31,104 @@ def _make_sku(description: str, usage_type: str, regions: list[str], price_nanos
             "usageType": usage_type,
         },
         "serviceRegions": regions,
-        "pricingInfo": [{
-            "pricingExpression": {
-                "usageUnit": "h",
-                "tieredRates": [{
-                    "startUsageAmount": 0,
-                    "unitPrice": {
-                        "currencyCode": "USD",
-                        "units": "0",
-                        "nanos": price_nanos,
-                    },
-                }],
+        "pricingInfo": [
+            {
+                "pricingExpression": {
+                    "usageUnit": "h",
+                    "tieredRates": [
+                        {
+                            "startUsageAmount": 0,
+                            "unitPrice": {
+                                "currencyCode": "USD",
+                                "units": "0",
+                                "nanos": price_nanos,
+                            },
+                        }
+                    ],
+                }
             }
-        }],
+        ],
     }
 
 
 FAKE_SKUS = [
     # A2 on-demand (GPU, A100)
-    _make_sku("A2 Instance Core running in Americas", "OnDemand", ["us-central1", "us-east1"], 1116757000),  # $1.116757/core-hr
-    _make_sku("A2 Instance Ram running in Americas",  "OnDemand", ["us-central1", "us-east1"], 149688000),   # $0.149688/GB-hr
+    _make_sku(
+        "A2 Instance Core running in Americas", "OnDemand", ["us-central1", "us-east1"], 1116757000
+    ),  # $1.116757/core-hr
+    _make_sku(
+        "A2 Instance Ram running in Americas", "OnDemand", ["us-central1", "us-east1"], 149688000
+    ),  # $0.149688/GB-hr
     # A2 preemptible
-    _make_sku("Preemptible A2 Instance Core running in Americas", "Preemptible", ["us-central1"], 334958000),  # $0.334958/core-hr
-    _make_sku("Preemptible A2 Instance Ram running in Americas",  "Preemptible", ["us-central1"], 44906000),   # $0.044906/GB-hr
+    _make_sku(
+        "Preemptible A2 Instance Core running in Americas",
+        "Preemptible",
+        ["us-central1"],
+        334958000,
+    ),  # $0.334958/core-hr
+    _make_sku(
+        "Preemptible A2 Instance Ram running in Americas", "Preemptible", ["us-central1"], 44906000
+    ),  # $0.044906/GB-hr
     # N2 on-demand
-    _make_sku("N2 Instance Core running in Americas", "OnDemand", ["us-central1", "us-east1", "us-east4"], 31611000),    # $0.031611/core-hr
-    _make_sku("N2 Instance Ram running in Americas",  "OnDemand", ["us-central1", "us-east1", "us-east4"], 4237000),     # $0.004237/GB-hr
+    _make_sku(
+        "N2 Instance Core running in Americas",
+        "OnDemand",
+        ["us-central1", "us-east1", "us-east4"],
+        31611000,
+    ),  # $0.031611/core-hr
+    _make_sku(
+        "N2 Instance Ram running in Americas",
+        "OnDemand",
+        ["us-central1", "us-east1", "us-east4"],
+        4237000,
+    ),  # $0.004237/GB-hr
     # N2 preemptible
-    _make_sku("Preemptible N2 Instance Core running in Americas", "Preemptible", ["us-central1", "us-east1"], 7610000),  # $0.007610/core-hr
-    _make_sku("Preemptible N2 Instance Ram running in Americas",  "Preemptible", ["us-central1", "us-east1"], 1020000),  # $0.001020/GB-hr
+    _make_sku(
+        "Preemptible N2 Instance Core running in Americas",
+        "Preemptible",
+        ["us-central1", "us-east1"],
+        7610000,
+    ),  # $0.007610/core-hr
+    _make_sku(
+        "Preemptible N2 Instance Ram running in Americas",
+        "Preemptible",
+        ["us-central1", "us-east1"],
+        1020000,
+    ),  # $0.001020/GB-hr
     # N2 CUD 1yr (actual GCP API format: "Commitment v1: N2 Cpu in Americas for 1 Year")
-    _make_sku("Commitment v1: N2 Cpu in Americas for 1 Year", "Commit1Yr", ["us-central1", "us-east1"], 19560000),     # $0.019560/core-hr
-    _make_sku("Commitment v1: N2 Ram in Americas for 1 Year", "Commit1Yr", ["us-central1", "us-east1"], 2626000),      # $0.002626/GB-hr
+    _make_sku(
+        "Commitment v1: N2 Cpu in Americas for 1 Year",
+        "Commit1Yr",
+        ["us-central1", "us-east1"],
+        19560000,
+    ),  # $0.019560/core-hr
+    _make_sku(
+        "Commitment v1: N2 Ram in Americas for 1 Year",
+        "Commit1Yr",
+        ["us-central1", "us-east1"],
+        2626000,
+    ),  # $0.002626/GB-hr
     # N2 Windows license SKUs (T31: per-vCPU and per-GB-RAM on top of base Linux)
-    _make_sku("N2 Instance Core running Windows", "OnDemand", ["us-central1", "us-east1"], 45000000),                    # $0.045/core-hr
-    _make_sku("N2 Instance Ram running Windows",  "OnDemand", ["us-central1", "us-east1"], 6000000),                     # $0.006/GB-hr
+    _make_sku(
+        "N2 Instance Core running Windows", "OnDemand", ["us-central1", "us-east1"], 45000000
+    ),  # $0.045/core-hr
+    _make_sku(
+        "N2 Instance Ram running Windows", "OnDemand", ["us-central1", "us-east1"], 6000000
+    ),  # $0.006/GB-hr
     # E2 on-demand
-    _make_sku("E2 Instance Core running in Americas", "OnDemand", ["us-central1", "us-east1"], 21840000),                # $0.021840/core-hr
-    _make_sku("E2 Instance Ram running in Americas",  "OnDemand", ["us-central1", "us-east1"], 2923000),                 # $0.002923/GB-hr
+    _make_sku(
+        "E2 Instance Core running in Americas", "OnDemand", ["us-central1", "us-east1"], 21840000
+    ),  # $0.021840/core-hr
+    _make_sku(
+        "E2 Instance Ram running in Americas", "OnDemand", ["us-central1", "us-east1"], 2923000
+    ),  # $0.002923/GB-hr
     # PD storage
-    _make_sku("Storage PD Capacity", "OnDemand", ["us-central1", "us-east1"], 40000000),                                 # $0.04/GB-mo
-    _make_sku("SSD backed PD Capacity", "OnDemand", ["us-central1", "us-east1"], 170000000),                             # $0.17/GB-mo
+    _make_sku(
+        "Storage PD Capacity", "OnDemand", ["us-central1", "us-east1"], 40000000
+    ),  # $0.04/GB-mo
+    _make_sku(
+        "SSD backed PD Capacity", "OnDemand", ["us-central1", "us-east1"], 170000000
+    ),  # $0.17/GB-mo
 ]
 
 
@@ -91,6 +150,7 @@ async def gcp_provider(tmp_path: Path):
 # ---------------------------------------------------------------------------
 # gcp_specs unit tests
 # ---------------------------------------------------------------------------
+
 
 def test_parse_instance_type_exact():
     assert parse_instance_type("n2-standard-4") == (4, 16.0)
@@ -121,6 +181,7 @@ def test_get_machine_family():
 # ---------------------------------------------------------------------------
 # GCPProvider tests (httpx mocked)
 # ---------------------------------------------------------------------------
+
 
 async def test_get_compute_price_n2_standard_4(gcp_provider: GCPProvider):
     """n2-standard-4: 4 vCPU * $0.031611 + 16 GB * $0.004237 = $0.194236/hr"""
@@ -271,6 +332,7 @@ async def test_effective_price_requires_billing_account_id(gcp_provider: GCPProv
 # T31: Windows pricing tests
 # ---------------------------------------------------------------------------
 
+
 async def test_get_compute_price_gcp_windows_higher_than_linux(gcp_provider: GCPProvider):
     """Windows price should be higher than Linux for a supported family (N2)."""
     with patch.object(gcp_provider, "_fetch_skus", AsyncMock(return_value=FAKE_SKUS)):
@@ -303,12 +365,8 @@ async def test_get_compute_price_gcp_windows_higher_than_linux(gcp_provider: GCP
 async def test_get_compute_price_gcp_windows_e2_not_supported(gcp_provider: GCPProvider):
     """E2 instances don't support Windows — should return [] not Linux price."""
     with patch.object(gcp_provider, "_fetch_skus", AsyncMock(return_value=FAKE_SKUS)):
-        prices = await gcp_provider.get_compute_price(
-            "e2-standard-4", "us-central1", os="Windows"
-        )
-    assert prices == [], (
-        "E2 + Windows should return empty list, not silently return Linux price"
-    )
+        prices = await gcp_provider.get_compute_price("e2-standard-4", "us-central1", os="Windows")
+    assert prices == [], "E2 + Windows should return empty list, not silently return Linux price"
 
 
 async def test_get_compute_price_gcp_linux_unchanged(gcp_provider: GCPProvider):
@@ -333,9 +391,7 @@ async def test_get_compute_price_gcp_windows_sku_not_found_returns_empty(gcp_pro
     # Use a SKU set that has no Windows SKUs (just the base Linux ones)
     skus_without_windows = [s for s in FAKE_SKUS if "running Windows" not in s["description"]]
     with patch.object(gcp_provider, "_fetch_skus", AsyncMock(return_value=skus_without_windows)):
-        prices = await gcp_provider.get_compute_price(
-            "n2-standard-4", "us-central1", os="Windows"
-        )
+        prices = await gcp_provider.get_compute_price("n2-standard-4", "us-central1", os="Windows")
     assert prices == [], "Missing Windows SKU should return [] not raise an exception"
 
 
@@ -357,6 +413,7 @@ async def test_gcp_cheaper_than_aws_for_equivalent(gcp_provider: GCPProvider):
 # ---------------------------------------------------------------------------
 # A2 GPU instance family tests
 # ---------------------------------------------------------------------------
+
 
 async def test_get_compute_price_a2_highgpu_1g(gcp_provider: GCPProvider):
     """
@@ -388,9 +445,7 @@ async def test_get_compute_price_a2_spot(gcp_provider: GCPProvider):
         spot_prices = await gcp_provider.get_compute_price(
             "a2-highgpu-1g", "us-central1", term=PricingTerm.SPOT
         )
-        od_prices = await gcp_provider.get_compute_price(
-            "a2-highgpu-1g", "us-central1"
-        )
+        od_prices = await gcp_provider.get_compute_price("a2-highgpu-1g", "us-central1")
 
     assert len(spot_prices) == 1
     assert spot_prices[0].pricing_term == PricingTerm.SPOT
@@ -409,9 +464,7 @@ async def test_get_compute_price_a2_no_longer_unsupported(gcp_provider: GCPProvi
 async def test_get_compute_price_a2_windows_not_supported(gcp_provider: GCPProvider):
     """A2 does not support Windows — should return []."""
     with patch.object(gcp_provider, "_fetch_skus", AsyncMock(return_value=FAKE_SKUS)):
-        prices = await gcp_provider.get_compute_price(
-            "a2-highgpu-1g", "us-central1", os="Windows"
-        )
+        prices = await gcp_provider.get_compute_price("a2-highgpu-1g", "us-central1", os="Windows")
     assert prices == [], "A2 + Windows should return empty list (no Windows support)"
 
 
@@ -419,20 +472,24 @@ async def test_get_compute_price_a2_windows_not_supported(gcp_provider: GCPProvi
 # Contract / effective pricing (v1beta Billing API)
 # ---------------------------------------------------------------------------
 
+
 async def test_effective_price_parses_contract_response(tmp_path: Path):
     """_fetch_contract_price returns (Decimal, reason) when API returns a discount."""
     settings = Settings(gcp_api_key="AIzaFAKE", gcp_billing_account_id="012345-ABCDEF")
     from opencloudcosts.cache import CacheManager
+
     cache = CacheManager(tmp_path / "test.db")
     await cache.initialize()
     provider = GCPProvider(settings, cache)
 
     contract_resp = {
         "rate": {
-            "tiers": [{
-                "listPrice": {"units": "7", "nanos": 523600000},
-                "contractPrice": {"units": "4", "nanos": 514160000},
-            }],
+            "tiers": [
+                {
+                    "listPrice": {"units": "7", "nanos": 523600000},
+                    "contractPrice": {"units": "4", "nanos": 514160000},
+                }
+            ],
             "unitInfo": {"unit": "h"},
         },
         "priceReason": {"type": "floating-discount"},
@@ -450,8 +507,11 @@ async def test_effective_price_parses_contract_response(tmp_path: Path):
     mock_client.aclose = AsyncMock()
 
     with (
-        patch("opencloudcosts.providers.gcp.GCPProvider._get_billing_http",
-              new_callable=AsyncMock, return_value=mock_client),
+        patch(
+            "opencloudcosts.providers.gcp.GCPProvider._get_billing_http",
+            new_callable=AsyncMock,
+            return_value=mock_client,
+        ),
     ):
         result = await provider._fetch_contract_price("services/6F81-5844-456A/skus/ABCD-1234")
 
@@ -466,11 +526,13 @@ async def test_effective_price_403_falls_back_gracefully(tmp_path: Path):
     """403 from billing API returns None (no crash) and public prices still work."""
     settings = Settings(gcp_api_key="AIzaFAKE", gcp_billing_account_id="012345-ABCDEF")
     from opencloudcosts.cache import CacheManager
+
     cache = CacheManager(tmp_path / "test.db")
     await cache.initialize()
     provider = GCPProvider(settings, cache)
 
     import httpx as _httpx
+
     mock_403 = MagicMock(spec=_httpx.Response)
     mock_403.status_code = 403
     error_403 = _httpx.HTTPStatusError("403", request=MagicMock(), response=mock_403)
@@ -483,8 +545,11 @@ async def test_effective_price_403_falls_back_gracefully(tmp_path: Path):
     mock_client.aclose = AsyncMock()
 
     with (
-        patch("opencloudcosts.providers.gcp.GCPProvider._get_billing_http",
-              new_callable=AsyncMock, return_value=mock_client),
+        patch(
+            "opencloudcosts.providers.gcp.GCPProvider._get_billing_http",
+            new_callable=AsyncMock,
+            return_value=mock_client,
+        ),
     ):
         result = await provider._fetch_contract_price("services/6F81-5844-456A/skus/ABCD-1234")
 
@@ -494,12 +559,14 @@ async def test_effective_price_403_falls_back_gracefully(tmp_path: Path):
 def test_a2_in_supported_families():
     """a2 must appear in the GCP_FAMILY_SKU dict so supported family errors name it."""
     from opencloudcosts.utils.gcp_specs import GCP_FAMILY_SKU
+
     assert "a2" in GCP_FAMILY_SKU, "a2 must be a supported GCP machine family"
 
 
 def test_a2_instance_specs_present():
     """All A2 instance types must be in GCP_INSTANCE_SPECS with correct vCPU/RAM."""
     from opencloudcosts.utils.gcp_specs import GCP_INSTANCE_SPECS
+
     expected = {
         "a2-highgpu-1g": (12, 85.0),
         "a2-highgpu-2g": (24, 170.0),
@@ -518,16 +585,23 @@ def test_a2_instance_specs_present():
 # v0.8.11 — GCP storage/database contract pricing tests
 # ---------------------------------------------------------------------------
 
-def _contract_resp(list_units: str, list_nanos: int,
-                   contract_units: str, contract_nanos: int,
-                   reason: str = "floating-discount") -> dict:
+
+def _contract_resp(
+    list_units: str,
+    list_nanos: int,
+    contract_units: str,
+    contract_nanos: int,
+    reason: str = "floating-discount",
+) -> dict:
     """Build a minimal v1beta price response with a discount."""
     return {
         "rate": {
-            "tiers": [{
-                "listPrice": {"units": list_units, "nanos": list_nanos},
-                "contractPrice": {"units": contract_units, "nanos": contract_nanos},
-            }],
+            "tiers": [
+                {
+                    "listPrice": {"units": list_units, "nanos": list_nanos},
+                    "contractPrice": {"units": contract_units, "nanos": contract_nanos},
+                }
+            ],
             "unitInfo": {"unit": "gibibyte month"},
         },
         "priceReason": {"type": reason},
@@ -548,9 +622,12 @@ def _make_billing_client(resp_body: dict) -> AsyncMock:
 async def test_effective_price_storage_no_billing_account(gcp_provider: GCPProvider):
     """_effective_price_storage returns [] when billing account not configured."""
     from opencloudcosts.models import PricingDomain, StoragePricingSpec
+
     spec = StoragePricingSpec(
-        provider="gcp", domain=PricingDomain.STORAGE,
-        storage_type="standard", region="us-central1",
+        provider="gcp",
+        domain=PricingDomain.STORAGE,
+        storage_type="standard",
+        region="us-central1",
     )
     result = await gcp_provider._effective_price_storage(spec)
     assert result == []
@@ -570,16 +647,25 @@ async def test_effective_price_gcs_contract(tmp_path: Path):
         PricingDomain,
         StoragePricingSpec,
     )
+
     base = NormalizedPrice(
-        provider="gcp", service="storage", sku_id="gcp:gcs:standard:us-central1",
-        product_family="Cloud Storage", description="GCS standard storage in us-central1",
-        region="us-central1", attributes={}, pricing_term=PricingTerm.ON_DEMAND,
-        price_per_unit=Decimal("0.020"), unit=PriceUnit.PER_GB_MONTH,
+        provider="gcp",
+        service="storage",
+        sku_id="gcp:gcs:standard:us-central1",
+        product_family="Cloud Storage",
+        description="GCS standard storage in us-central1",
+        region="us-central1",
+        attributes={},
+        pricing_term=PricingTerm.ON_DEMAND,
+        price_per_unit=Decimal("0.020"),
+        unit=PriceUnit.PER_GB_MONTH,
     )
 
     spec = StoragePricingSpec(
-        provider="gcp", domain=PricingDomain.STORAGE,
-        storage_type="standard", region="us-central1",
+        provider="gcp",
+        domain=PricingDomain.STORAGE,
+        storage_type="standard",
+        region="us-central1",
     )
 
     contract_body = _contract_resp("0", 16000000, "0", 12000000, "floating-discount")
@@ -594,8 +680,11 @@ async def test_effective_price_gcs_contract(tmp_path: Path):
     with (
         patch.object(provider, "_price_storage", AsyncMock(return_value=[base])),
         patch.object(provider, "_fetch_skus", AsyncMock(return_value=[fake_sku])),
-        patch("opencloudcosts.providers.gcp.GCPProvider._get_billing_http",
-              new_callable=AsyncMock, return_value=_make_billing_client(contract_body)),
+        patch(
+            "opencloudcosts.providers.gcp.GCPProvider._get_billing_http",
+            new_callable=AsyncMock,
+            return_value=_make_billing_client(contract_body),
+        ),
     ):
         result = await provider._effective_price_storage(spec)
 
@@ -621,15 +710,24 @@ async def test_effective_price_gcs_no_discount(tmp_path: Path):
         PricingDomain,
         StoragePricingSpec,
     )
+
     base = NormalizedPrice(
-        provider="gcp", service="storage", sku_id="gcp:gcs:standard:us-central1",
-        product_family="Cloud Storage", description="GCS standard",
-        region="us-central1", attributes={}, pricing_term=PricingTerm.ON_DEMAND,
-        price_per_unit=Decimal("0.020"), unit=PriceUnit.PER_GB_MONTH,
+        provider="gcp",
+        service="storage",
+        sku_id="gcp:gcs:standard:us-central1",
+        product_family="Cloud Storage",
+        description="GCS standard",
+        region="us-central1",
+        attributes={},
+        pricing_term=PricingTerm.ON_DEMAND,
+        price_per_unit=Decimal("0.020"),
+        unit=PriceUnit.PER_GB_MONTH,
     )
     spec = StoragePricingSpec(
-        provider="gcp", domain=PricingDomain.STORAGE,
-        storage_type="standard", region="us-central1",
+        provider="gcp",
+        domain=PricingDomain.STORAGE,
+        storage_type="standard",
+        region="us-central1",
     )
     # list == contract → no discount → _fetch_contract_price returns None
     no_discount_body = _contract_resp("0", 20000000, "0", 20000000)
@@ -642,8 +740,11 @@ async def test_effective_price_gcs_no_discount(tmp_path: Path):
     with (
         patch.object(provider, "_price_storage", AsyncMock(return_value=[base])),
         patch.object(provider, "_fetch_skus", AsyncMock(return_value=[fake_sku])),
-        patch("opencloudcosts.providers.gcp.GCPProvider._get_billing_http",
-              new_callable=AsyncMock, return_value=_make_billing_client(no_discount_body)),
+        patch(
+            "opencloudcosts.providers.gcp.GCPProvider._get_billing_http",
+            new_callable=AsyncMock,
+            return_value=_make_billing_client(no_discount_body),
+        ),
     ):
         result = await provider._effective_price_storage(spec)
 
@@ -664,16 +765,27 @@ async def test_effective_price_cloud_sql_contract(tmp_path: Path):
         PriceUnit,
         PricingDomain,
     )
+
     base = NormalizedPrice(
-        provider="gcp", service="database", sku_id="gcp:cloud_sql:MySQL:db-n1-standard-4:us-central1:zonal",
-        product_family="Cloud SQL", description="Cloud SQL MySQL db-n1-standard-4 (Zonal)",
-        region="us-central1", attributes={}, pricing_term=PricingTerm.ON_DEMAND,
-        price_per_unit=Decimal("0.36"), unit=PriceUnit.PER_HOUR,
+        provider="gcp",
+        service="database",
+        sku_id="gcp:cloud_sql:MySQL:db-n1-standard-4:us-central1:zonal",
+        product_family="Cloud SQL",
+        description="Cloud SQL MySQL db-n1-standard-4 (Zonal)",
+        region="us-central1",
+        attributes={},
+        pricing_term=PricingTerm.ON_DEMAND,
+        price_per_unit=Decimal("0.36"),
+        unit=PriceUnit.PER_HOUR,
     )
     spec = DatabasePricingSpec(
-        provider="gcp", domain=PricingDomain.DATABASE, service="cloud_sql",
-        resource_type="db-n1-standard-4", region="us-central1",
-        engine="MySQL", deployment="zonal",
+        provider="gcp",
+        domain=PricingDomain.DATABASE,
+        service="cloud_sql",
+        resource_type="db-n1-standard-4",
+        region="us-central1",
+        engine="MySQL",
+        deployment="zonal",
     )
     # Bundled Cloud SQL SKU description
     fake_sku = {
@@ -688,8 +800,11 @@ async def test_effective_price_cloud_sql_contract(tmp_path: Path):
     with (
         patch.object(provider, "_price_database", AsyncMock(return_value=[base])),
         patch.object(provider, "_fetch_skus", AsyncMock(return_value=[fake_sku])),
-        patch("opencloudcosts.providers.gcp.GCPProvider._get_billing_http",
-              new_callable=AsyncMock, return_value=_make_billing_client(contract_body)),
+        patch(
+            "opencloudcosts.providers.gcp.GCPProvider._get_billing_http",
+            new_callable=AsyncMock,
+            return_value=_make_billing_client(contract_body),
+        ),
     ):
         result = await provider._effective_price_database(spec)
 
@@ -714,17 +829,28 @@ async def test_effective_price_memorystore_contract(tmp_path: Path):
         PriceUnit,
         PricingDomain,
     )
+
     # 8GB standard → M4 tier → hourly = 8 * 0.049/h
     hourly = Decimal("0.049") * Decimal("8")
     base = NormalizedPrice(
-        provider="gcp", service="database", sku_id="gcp:memorystore:standard:8:us-central1",
-        product_family="Memorystore for Redis", description="Memorystore Redis Standard 8GB",
-        region="us-central1", attributes={}, pricing_term=PricingTerm.ON_DEMAND,
-        price_per_unit=hourly, unit=PriceUnit.PER_HOUR,
+        provider="gcp",
+        service="database",
+        sku_id="gcp:memorystore:standard:8:us-central1",
+        product_family="Memorystore for Redis",
+        description="Memorystore Redis Standard 8GB",
+        region="us-central1",
+        attributes={},
+        pricing_term=PricingTerm.ON_DEMAND,
+        price_per_unit=hourly,
+        unit=PriceUnit.PER_HOUR,
     )
     spec = DatabasePricingSpec(
-        provider="gcp", domain=PricingDomain.DATABASE, service="memorystore",
-        capacity_gb=8.0, region="us-central1", deployment="standard",
+        provider="gcp",
+        domain=PricingDomain.DATABASE,
+        service="memorystore",
+        capacity_gb=8.0,
+        region="us-central1",
+        deployment="standard",
     )
     # 8GB → M3 tier (4 ≤ 8 < 12)
     fake_sku = {
@@ -738,8 +864,11 @@ async def test_effective_price_memorystore_contract(tmp_path: Path):
     with (
         patch.object(provider, "_price_database", AsyncMock(return_value=[base])),
         patch.object(provider, "_fetch_skus", AsyncMock(return_value=[fake_sku])),
-        patch("opencloudcosts.providers.gcp.GCPProvider._get_billing_http",
-              new_callable=AsyncMock, return_value=_make_billing_client(contract_body)),
+        patch(
+            "opencloudcosts.providers.gcp.GCPProvider._get_billing_http",
+            new_callable=AsyncMock,
+            return_value=_make_billing_client(contract_body),
+        ),
     ):
         result = await provider._effective_price_database(spec)
 
@@ -753,9 +882,13 @@ async def test_effective_price_memorystore_contract(tmp_path: Path):
 async def test_effective_price_database_no_billing_account(gcp_provider: GCPProvider):
     """_effective_price_database returns [] when billing account not configured."""
     from opencloudcosts.models import DatabasePricingSpec, PricingDomain
+
     spec = DatabasePricingSpec(
-        provider="gcp", domain=PricingDomain.DATABASE, service="cloud_sql",
-        resource_type="db-n1-standard-4", region="us-central1",
+        provider="gcp",
+        domain=PricingDomain.DATABASE,
+        service="cloud_sql",
+        resource_type="db-n1-standard-4",
+        region="us-central1",
     )
     result = await gcp_provider._effective_price_database(spec)
     assert result == []
@@ -765,12 +898,16 @@ async def test_effective_price_database_no_billing_account(gcp_provider: GCPProv
 # v0.8.13 — GCP network contract pricing tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_effective_price_network_no_billing_account(gcp_provider: GCPProvider):
     """_effective_price_network returns [] when billing account not configured."""
     from opencloudcosts.models import NetworkPricingSpec, PricingDomain
+
     spec = NetworkPricingSpec(
-        provider="gcp", domain=PricingDomain.NETWORK, service="cloud_lb",
+        provider="gcp",
+        domain=PricingDomain.NETWORK,
+        service="cloud_lb",
         region="us-central1",
     )
     result = await gcp_provider._effective_price_network(spec)
@@ -791,23 +928,37 @@ async def test_effective_price_network_lb_contract(tmp_path: Path):
         PriceUnit,
         PricingDomain,
     )
+
     base_rule = NormalizedPrice(
-        provider="gcp", service="network", sku_id="gcp:cloud_lb:https:us-central1:rule",
+        provider="gcp",
+        service="network",
+        sku_id="gcp:cloud_lb:https:us-central1:rule",
         product_family="Cloud Load Balancing",
         description="Cloud LB (https) forwarding rule per hour",
-        region="us-central1", attributes={}, pricing_term=PricingTerm.ON_DEMAND,
-        price_per_unit=Decimal("0.008"), unit=PriceUnit.PER_HOUR,
+        region="us-central1",
+        attributes={},
+        pricing_term=PricingTerm.ON_DEMAND,
+        price_per_unit=Decimal("0.008"),
+        unit=PriceUnit.PER_HOUR,
     )
     base_data = NormalizedPrice(
-        provider="gcp", service="network", sku_id="gcp:cloud_lb:https:us-central1:data",
+        provider="gcp",
+        service="network",
+        sku_id="gcp:cloud_lb:https:us-central1:data",
         product_family="Cloud Load Balancing",
         description="Cloud LB data processed per GB",
-        region="us-central1", attributes={}, pricing_term=PricingTerm.ON_DEMAND,
-        price_per_unit=Decimal("0.008"), unit=PriceUnit.PER_GB,
+        region="us-central1",
+        attributes={},
+        pricing_term=PricingTerm.ON_DEMAND,
+        price_per_unit=Decimal("0.008"),
+        unit=PriceUnit.PER_GB,
     )
     spec = NetworkPricingSpec(
-        provider="gcp", domain=PricingDomain.NETWORK, service="cloud_lb",
-        lb_type="https", region="us-central1",
+        provider="gcp",
+        domain=PricingDomain.NETWORK,
+        service="cloud_lb",
+        lb_type="https",
+        region="us-central1",
     )
 
     fake_sku = {
@@ -820,10 +971,15 @@ async def test_effective_price_network_lb_contract(tmp_path: Path):
     contract_body = _contract_resp("0", 8000000, "0", 6400000, "floating-discount")
 
     with (
-        patch.object(provider, "_price_network", AsyncMock(return_value=([base_rule, base_data], {}))),
+        patch.object(
+            provider, "_price_network", AsyncMock(return_value=([base_rule, base_data], {}))
+        ),
         patch.object(provider, "_fetch_skus", AsyncMock(return_value=[fake_sku])),
-        patch("opencloudcosts.providers.gcp.GCPProvider._get_billing_http",
-              new_callable=AsyncMock, return_value=_make_billing_client(contract_body)),
+        patch(
+            "opencloudcosts.providers.gcp.GCPProvider._get_billing_http",
+            new_callable=AsyncMock,
+            return_value=_make_billing_client(contract_body),
+        ),
     ):
         result = await provider._effective_price_network(spec)
 
@@ -848,20 +1004,35 @@ async def test_effective_price_network_cdn_contract(tmp_path: Path):
         PriceUnit,
         PricingDomain,
     )
+
     base_egress = NormalizedPrice(
-        provider="gcp", service="network", sku_id="gcp:cloud_cdn:us-central1:egress",
-        product_family="Cloud CDN", description="Cloud CDN cache egress per GB",
-        region="us-central1", attributes={}, pricing_term=PricingTerm.ON_DEMAND,
-        price_per_unit=Decimal("0.02"), unit=PriceUnit.PER_GB,
+        provider="gcp",
+        service="network",
+        sku_id="gcp:cloud_cdn:us-central1:egress",
+        product_family="Cloud CDN",
+        description="Cloud CDN cache egress per GB",
+        region="us-central1",
+        attributes={},
+        pricing_term=PricingTerm.ON_DEMAND,
+        price_per_unit=Decimal("0.02"),
+        unit=PriceUnit.PER_GB,
     )
     base_fill = NormalizedPrice(
-        provider="gcp", service="network", sku_id="gcp:cloud_cdn:us-central1:cache_fill",
-        product_family="Cloud CDN", description="Cloud CDN cache fill per GB",
-        region="us-central1", attributes={}, pricing_term=PricingTerm.ON_DEMAND,
-        price_per_unit=Decimal("0.01"), unit=PriceUnit.PER_GB,
+        provider="gcp",
+        service="network",
+        sku_id="gcp:cloud_cdn:us-central1:cache_fill",
+        product_family="Cloud CDN",
+        description="Cloud CDN cache fill per GB",
+        region="us-central1",
+        attributes={},
+        pricing_term=PricingTerm.ON_DEMAND,
+        price_per_unit=Decimal("0.01"),
+        unit=PriceUnit.PER_GB,
     )
     spec = NetworkPricingSpec(
-        provider="gcp", domain=PricingDomain.NETWORK, service="cloud_cdn",
+        provider="gcp",
+        domain=PricingDomain.NETWORK,
+        service="cloud_cdn",
         region="us-central1",
     )
 
@@ -882,6 +1053,7 @@ async def test_effective_price_network_cdn_contract(tmp_path: Path):
     _contract_fill = _contract_resp("0", 10000000, "0", 7500000, "floating-discount")
 
     call_count = 0
+
     async def fake_fetch_contract(sku_name: str):
         nonlocal call_count
         call_count += 1
@@ -892,8 +1064,9 @@ async def test_effective_price_network_cdn_contract(tmp_path: Path):
         return None
 
     with (
-        patch.object(provider, "_price_network",
-                     AsyncMock(return_value=([base_egress, base_fill], {}))),
+        patch.object(
+            provider, "_price_network", AsyncMock(return_value=([base_egress, base_fill], {}))
+        ),
         patch.object(provider, "_fetch_skus", AsyncMock(return_value=[sku_egress, sku_fill])),
         patch.object(provider, "_fetch_contract_price", fake_fetch_contract),
     ):
@@ -918,14 +1091,23 @@ async def test_effective_price_network_armor_contract(tmp_path: Path):
         PriceUnit,
         PricingDomain,
     )
+
     base_policy = NormalizedPrice(
-        provider="gcp", service="network", sku_id="gcp:cloud_armor:policy",
-        product_family="Cloud Armor", description="Cloud Armor security policy per month",
-        region="us-central1", attributes={}, pricing_term=PricingTerm.ON_DEMAND,
-        price_per_unit=Decimal("0.75"), unit=PriceUnit.PER_MONTH,
+        provider="gcp",
+        service="network",
+        sku_id="gcp:cloud_armor:policy",
+        product_family="Cloud Armor",
+        description="Cloud Armor security policy per month",
+        region="us-central1",
+        attributes={},
+        pricing_term=PricingTerm.ON_DEMAND,
+        price_per_unit=Decimal("0.75"),
+        unit=PriceUnit.PER_MONTH,
     )
     spec = NetworkPricingSpec(
-        provider="gcp", domain=PricingDomain.NETWORK, service="cloud_armor",
+        provider="gcp",
+        domain=PricingDomain.NETWORK,
+        service="cloud_armor",
         region="us-central1",
     )
 
@@ -938,11 +1120,13 @@ async def test_effective_price_network_armor_contract(tmp_path: Path):
     contract_body = _contract_resp("0", 750000000, "0", 562500000, "floating-discount")
 
     with (
-        patch.object(provider, "_price_network",
-                     AsyncMock(return_value=([base_policy], {}))),
+        patch.object(provider, "_price_network", AsyncMock(return_value=([base_policy], {}))),
         patch.object(provider, "_fetch_skus", AsyncMock(return_value=[fake_sku])),
-        patch("opencloudcosts.providers.gcp.GCPProvider._get_billing_http",
-              new_callable=AsyncMock, return_value=_make_billing_client(contract_body)),
+        patch(
+            "opencloudcosts.providers.gcp.GCPProvider._get_billing_http",
+            new_callable=AsyncMock,
+            return_value=_make_billing_client(contract_body),
+        ),
     ):
         result = await provider._effective_price_network(spec)
 
@@ -955,14 +1139,18 @@ async def test_effective_price_network_armor_contract(tmp_path: Path):
 # GCP internet egress / inter-region egress (v0.8.14)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_egress_internet_americas(gcp_provider: GCPProvider):
     """Internet egress from an Americas region returns the Americas base rate."""
     from opencloudcosts.models import EgressPricingSpec, PricingDomain
 
     _spec = EgressPricingSpec(
-        provider="gcp", domain=PricingDomain.INTER_REGION_EGRESS,
-        source_region="us-central1", dest_region="", data_gb=100.0,
+        provider="gcp",
+        domain=PricingDomain.INTER_REGION_EGRESS,
+        source_region="us-central1",
+        dest_region="",
+        data_gb=100.0,
     )
 
     # Simulate SKU catalog returning an internet-egress SKU for Americas
@@ -971,9 +1159,15 @@ async def test_egress_internet_americas(gcp_provider: GCPProvider):
         "description": "Network Internet Egress from Americas to Worldwide Destinations",
         "category": {"usageType": "OnDemand"},
         "serviceRegions": ["global"],
-        "pricingInfo": [{"pricingExpression": {"tieredRates": [
-            {"startUsageAmount": 0, "unitPrice": {"units": "0", "nanos": 80000000}},
-        ]}}],
+        "pricingInfo": [
+            {
+                "pricingExpression": {
+                    "tieredRates": [
+                        {"startUsageAmount": 0, "unitPrice": {"units": "0", "nanos": 80000000}},
+                    ]
+                }
+            }
+        ],
     }
 
     with patch.object(gcp_provider, "_fetch_skus", AsyncMock(return_value=[fake_sku])):
@@ -1023,8 +1217,10 @@ async def test_egress_via_get_price(gcp_provider: GCPProvider):
     from opencloudcosts.models import EgressPricingSpec, PricingDomain
 
     spec = EgressPricingSpec(
-        provider="gcp", domain=PricingDomain.INTER_REGION_EGRESS,
-        source_region="europe-west1", data_gb=50.0,
+        provider="gcp",
+        domain=PricingDomain.INTER_REGION_EGRESS,
+        source_region="europe-west1",
+        data_gb=50.0,
     )
     with patch.object(gcp_provider, "_fetch_skus", AsyncMock(return_value=[])):
         result = await gcp_provider.get_price(spec)
@@ -1037,14 +1233,17 @@ async def test_egress_via_get_price(gcp_provider: GCPProvider):
 # GCP egress contract pricing (v0.9.1)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_effective_price_egress_no_billing_account(gcp_provider: GCPProvider):
     """Without a billing account, _effective_price_egress returns []."""
     from opencloudcosts.models import EgressPricingSpec, PricingDomain
 
     spec = EgressPricingSpec(
-        provider="gcp", domain=PricingDomain.INTER_REGION_EGRESS,
-        source_region="us-central1", data_gb=100.0,
+        provider="gcp",
+        domain=PricingDomain.INTER_REGION_EGRESS,
+        source_region="us-central1",
+        data_gb=100.0,
     )
     result = await gcp_provider._effective_price_egress(spec)
     assert result == []
@@ -1061,8 +1260,11 @@ async def test_effective_price_egress_skips_inter_region(tmp_path: Path):
     provider = GCPProvider(settings, cache)
 
     spec = EgressPricingSpec(
-        provider="gcp", domain=PricingDomain.INTER_REGION_EGRESS,
-        source_region="us-central1", dest_region="europe-west1", data_gb=100.0,
+        provider="gcp",
+        domain=PricingDomain.INTER_REGION_EGRESS,
+        source_region="us-central1",
+        dest_region="europe-west1",
+        data_gb=100.0,
     )
     result = await provider._effective_price_egress(spec)
     assert result == []
@@ -1079,8 +1281,10 @@ async def test_effective_price_egress_contract(tmp_path: Path):
     provider = GCPProvider(settings, cache)
 
     spec = EgressPricingSpec(
-        provider="gcp", domain=PricingDomain.INTER_REGION_EGRESS,
-        source_region="us-central1", data_gb=1000.0,
+        provider="gcp",
+        domain=PricingDomain.INTER_REGION_EGRESS,
+        source_region="us-central1",
+        data_gb=1000.0,
     )
     # Public rate: $0.08/GB (Americas internet egress)
     fake_sku = {
@@ -1088,17 +1292,26 @@ async def test_effective_price_egress_contract(tmp_path: Path):
         "description": "Network Internet Egress from Americas to Worldwide Destinations",
         "category": {"usageType": "OnDemand"},
         "serviceRegions": ["global"],
-        "pricingInfo": [{"pricingExpression": {"tieredRates": [
-            {"startUsageAmount": 0, "unitPrice": {"units": "0", "nanos": 80000000}},
-        ]}}],
+        "pricingInfo": [
+            {
+                "pricingExpression": {
+                    "tieredRates": [
+                        {"startUsageAmount": 0, "unitPrice": {"units": "0", "nanos": 80000000}},
+                    ]
+                }
+            }
+        ],
     }
     # Contract rate: $0.048/GB (40% EDP discount)
     contract_body = _contract_resp("0", 80000000, "0", 48000000, "floating-discount")
 
     with (
         patch.object(provider, "_fetch_skus", AsyncMock(return_value=[fake_sku])),
-        patch("opencloudcosts.providers.gcp.GCPProvider._get_billing_http",
-              new_callable=AsyncMock, return_value=_make_billing_client(contract_body)),
+        patch(
+            "opencloudcosts.providers.gcp.GCPProvider._get_billing_http",
+            new_callable=AsyncMock,
+            return_value=_make_billing_client(contract_body),
+        ),
     ):
         result = await provider._effective_price_egress(spec)
 
@@ -1120,24 +1333,35 @@ async def test_effective_price_egress_via_get_price(tmp_path: Path):
     provider = GCPProvider(settings, cache)
 
     spec = EgressPricingSpec(
-        provider="gcp", domain=PricingDomain.INTER_REGION_EGRESS,
-        source_region="us-central1", data_gb=100.0,
+        provider="gcp",
+        domain=PricingDomain.INTER_REGION_EGRESS,
+        source_region="us-central1",
+        data_gb=100.0,
     )
     fake_sku = {
         "name": "services/6F81-5844-456A/skus/EGRESS-AMERICAS",
         "description": "Network Internet Egress from Americas to Worldwide Destinations",
         "category": {"usageType": "OnDemand"},
         "serviceRegions": ["global"],
-        "pricingInfo": [{"pricingExpression": {"tieredRates": [
-            {"startUsageAmount": 0, "unitPrice": {"units": "0", "nanos": 80000000}},
-        ]}}],
+        "pricingInfo": [
+            {
+                "pricingExpression": {
+                    "tieredRates": [
+                        {"startUsageAmount": 0, "unitPrice": {"units": "0", "nanos": 80000000}},
+                    ]
+                }
+            }
+        ],
     }
     contract_body = _contract_resp("0", 80000000, "0", 60000000, "floating-discount")
 
     with (
         patch.object(provider, "_fetch_skus", AsyncMock(return_value=[fake_sku])),
-        patch("opencloudcosts.providers.gcp.GCPProvider._get_billing_http",
-              new_callable=AsyncMock, return_value=_make_billing_client(contract_body)),
+        patch(
+            "opencloudcosts.providers.gcp.GCPProvider._get_billing_http",
+            new_callable=AsyncMock,
+            return_value=_make_billing_client(contract_body),
+        ),
     ):
         result = await provider.get_price(spec)
 

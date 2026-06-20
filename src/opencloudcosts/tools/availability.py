@@ -1,4 +1,5 @@
 """Discovery and availability MCP tools — v0.8.0."""
+
 from __future__ import annotations
 
 import asyncio
@@ -48,10 +49,7 @@ def register_availability_tools(mcp: Any) -> None:
         return {
             "provider": provider,
             "domain": domain,
-            "regions": [
-                {"code": r, "name": region_display_name(provider, r)}
-                for r in regions
-            ],
+            "regions": [{"code": r, "name": region_display_name(provider, r)} for r in regions],
             "count": len(regions),
         }
 
@@ -198,10 +196,7 @@ def register_availability_tools(mcp: Any) -> None:
             out["filter_hints"] = hints
 
         # Example invocation
-        example = (
-            cat.example_invocations.get(svc_key)
-            or cat.example_invocations.get(domain)
-        )
+        example = cat.example_invocations.get(svc_key) or cat.example_invocations.get(domain)
         if example:
             out["example_invocation"] = example
             out["usage"] = "Pass example_invocation directly to get_price(spec=...)."
@@ -292,8 +287,7 @@ def register_availability_tools(mcp: Any) -> None:
                     "provider": provider_str,
                     "error": config_errors[0],
                 }
-            return {"result": "no_prices_found",
-                    "message": "No pricing found in any region."}
+            return {"result": "no_prices_found", "message": "No pricing found in any region."}
 
         all_prices.sort(key=lambda p: p.price_per_unit)
 
@@ -327,11 +321,16 @@ def register_availability_tools(mcp: Any) -> None:
             "most_expensive_region": most_exp.region,
             "most_expensive_price": _price(most_exp.price_per_unit, most_exp.unit.value),
             "price_delta_pct": (
-                round(float(
-                    (most_exp.price_per_unit - cheapest.price_per_unit)
-                    / cheapest.price_per_unit * 100
-                ), 1)
-                if cheapest.price_per_unit > 0 else None
+                round(
+                    float(
+                        (most_exp.price_per_unit - cheapest.price_per_unit)
+                        / cheapest.price_per_unit
+                        * 100
+                    ),
+                    1,
+                )
+                if cheapest.price_per_unit > 0
+                else None
             ),
             "all_regions_sorted": entries,
             "not_available_in": not_available or None,
@@ -409,8 +408,10 @@ def register_availability_tools(mcp: Any) -> None:
                 not_available.append(region)
 
         if not available:
-            return {"result": "not_available",
-                    "message": "Not available in any of the checked regions."}
+            return {
+                "result": "not_available",
+                "message": "Not available in any of the checked regions.",
+            }
 
         available.sort(key=lambda x: x[1].price_per_unit)
 

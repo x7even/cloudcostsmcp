@@ -1,4 +1,5 @@
 """Tests for GCP Cloud Armor and Cloud Monitoring pricing provider methods."""
+
 from __future__ import annotations
 
 from decimal import Decimal

@@ -1,4 +1,5 @@
 """Tests for GCP Cloud Storage (GCS) and Cloud SQL pricing."""
+
 from __future__ import annotations
 
 from decimal import Decimal
@@ -16,25 +17,48 @@ from opencloudcosts.providers.gcp import GCPProvider
 # Helpers: minimal but realistic GCP SKU structures
 # ---------------------------------------------------------------------------
 
-def _make_gcs_sku(description: str, regions: list[str], price_units: str = "0", price_nanos: int = 0) -> dict:
+
+def _make_gcs_sku(
+    description: str, regions: list[str], price_units: str = "0", price_nanos: int = 0
+) -> dict:
     return {
         "description": description,
         "serviceRegions": regions,
         "category": {"resourceFamily": "Storage", "usageType": "OnDemand"},
-        "pricingInfo": [{"pricingExpression": {"tieredRates": [
-            {"startUsageAmount": 0, "unitPrice": {"units": price_units, "nanos": price_nanos}}
-        ]}}],
+        "pricingInfo": [
+            {
+                "pricingExpression": {
+                    "tieredRates": [
+                        {
+                            "startUsageAmount": 0,
+                            "unitPrice": {"units": price_units, "nanos": price_nanos},
+                        }
+                    ]
+                }
+            }
+        ],
     }
 
 
-def _make_cloud_sql_sku(description: str, regions: list[str], price_units: str = "0", price_nanos: int = 0) -> dict:
+def _make_cloud_sql_sku(
+    description: str, regions: list[str], price_units: str = "0", price_nanos: int = 0
+) -> dict:
     return {
         "description": description,
         "serviceRegions": regions,
         "category": {"usageType": "OnDemand"},
-        "pricingInfo": [{"pricingExpression": {"tieredRates": [
-            {"startUsageAmount": 0, "unitPrice": {"units": price_units, "nanos": price_nanos}}
-        ]}}],
+        "pricingInfo": [
+            {
+                "pricingExpression": {
+                    "tieredRates": [
+                        {
+                            "startUsageAmount": 0,
+                            "unitPrice": {"units": price_units, "nanos": price_nanos},
+                        }
+                    ]
+                }
+            }
+        ],
     }
 
 
@@ -65,27 +89,37 @@ CLOUD_SQL_FAKE_SKUS = [
     # MySQL Zonal db-n1-standard-4: 4*$0.0413 + 15*$0.007 = $0.2702/hr
     _make_cloud_sql_sku(
         "Cloud SQL for MySQL: Zonal - 4 vCPU + 15GB RAM in Americas",
-        ["us-central1"], "0", 270_200_000,
+        ["us-central1"],
+        "0",
+        270_200_000,
     ),
     # MySQL Zonal db-n1-standard-8: 8*$0.0413 + 30*$0.007 = $0.5404/hr
     _make_cloud_sql_sku(
         "Cloud SQL for MySQL: Zonal - 8 vCPU + 30GB RAM in Americas",
-        ["us-central1"], "0", 540_400_000,
+        ["us-central1"],
+        "0",
+        540_400_000,
     ),
     # MySQL Regional (HA) db-n1-standard-4: 4*$0.0826 + 15*$0.014 = $0.5404/hr
     _make_cloud_sql_sku(
         "Cloud SQL for MySQL: Regional - 4 vCPU + 15GB RAM in Americas",
-        ["us-central1"], "0", 540_400_000,
+        ["us-central1"],
+        "0",
+        540_400_000,
     ),
     # PostgreSQL Zonal db-n1-standard-4: $0.2702/hr
     _make_cloud_sql_sku(
         "Cloud SQL for PostgreSQL: Zonal - 4 vCPU + 15GB RAM in Americas",
-        ["us-central1"], "0", 270_200_000,
+        ["us-central1"],
+        "0",
+        270_200_000,
     ),
     # PostgreSQL Regional (HA) db-n1-standard-4: $0.5404/hr
     _make_cloud_sql_sku(
         "Cloud SQL for PostgreSQL: Regional - 4 vCPU + 15GB RAM in Americas",
-        ["us-central1"], "0", 540_400_000,
+        ["us-central1"],
+        "0",
+        540_400_000,
     ),
 ]
 
@@ -93,6 +127,7 @@ CLOUD_SQL_FAKE_SKUS = [
 # ---------------------------------------------------------------------------
 # Fixture
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 async def gcp_provider(tmp_path: Path):
@@ -112,6 +147,7 @@ async def gcp_provider(tmp_path: Path):
 # ---------------------------------------------------------------------------
 # GCS tests
 # ---------------------------------------------------------------------------
+
 
 async def test_gcs_standard_price(gcp_provider):
     with patch.object(gcp_provider, "_fetch_skus", new=AsyncMock(return_value=GCS_FAKE_SKUS)):
@@ -168,7 +204,12 @@ async def test_gcs_archive_cheapest(gcp_provider):
         cld = await gcp_provider.get_storage_price("coldline", "us-central1")
         arc = await gcp_provider.get_storage_price("archive", "us-central1")
 
-    prices = [std[0].price_per_unit, nrl[0].price_per_unit, cld[0].price_per_unit, arc[0].price_per_unit]
+    prices = [
+        std[0].price_per_unit,
+        nrl[0].price_per_unit,
+        cld[0].price_per_unit,
+        arc[0].price_per_unit,
+    ]
     # Archive should be the cheapest
     assert arc[0].price_per_unit == min(prices)
 
@@ -184,7 +225,7 @@ async def test_gcs_excludes_operations(gcp_provider):
         index = await gcp_provider._build_gcs_price_index("us-central1")
 
     # The operations/retrieval/early-delete SKUs must not appear in the index
-    for (desc, _) in index:
+    for desc, _ in index:
         desc_lower = desc.lower()
         assert "operations" not in desc_lower
         assert "retrieval" not in desc_lower
@@ -195,9 +236,12 @@ async def test_gcs_excludes_operations(gcp_provider):
 # Cloud SQL tests
 # ---------------------------------------------------------------------------
 
+
 async def test_cloud_sql_mysql_zonal(gcp_provider):
     with patch.object(gcp_provider, "_fetch_skus", new=AsyncMock(return_value=CLOUD_SQL_FAKE_SKUS)):
-        prices = await gcp_provider.get_cloud_sql_price("db-n1-standard-4", "us-central1", "MySQL", ha=False)
+        prices = await gcp_provider.get_cloud_sql_price(
+            "db-n1-standard-4", "us-central1", "MySQL", ha=False
+        )
 
     assert len(prices) == 1
     p = prices[0]
@@ -214,7 +258,9 @@ async def test_cloud_sql_mysql_zonal(gcp_provider):
 
 async def test_cloud_sql_postgresql_ha(gcp_provider):
     with patch.object(gcp_provider, "_fetch_skus", new=AsyncMock(return_value=CLOUD_SQL_FAKE_SKUS)):
-        prices = await gcp_provider.get_cloud_sql_price("db-n1-standard-4", "us-central1", "PostgreSQL", ha=True)
+        prices = await gcp_provider.get_cloud_sql_price(
+            "db-n1-standard-4", "us-central1", "PostgreSQL", ha=True
+        )
 
     assert len(prices) == 1
     p = prices[0]
@@ -226,7 +272,9 @@ async def test_cloud_sql_postgresql_ha(gcp_provider):
 async def test_cloud_sql_pricing_math(gcp_provider):
     """Verify: price = vcpu_count * cpu_rate + mem_gb * ram_rate."""
     with patch.object(gcp_provider, "_fetch_skus", new=AsyncMock(return_value=CLOUD_SQL_FAKE_SKUS)):
-        prices = await gcp_provider.get_cloud_sql_price("db-n1-standard-8", "us-central1", "MySQL", ha=False)
+        prices = await gcp_provider.get_cloud_sql_price(
+            "db-n1-standard-8", "us-central1", "MySQL", ha=False
+        )
 
     assert len(prices) == 1
     p = prices[0]
@@ -240,8 +288,12 @@ async def test_cloud_sql_pricing_math(gcp_provider):
 async def test_cloud_sql_ha_costs_more(gcp_provider):
     """HA (Regional) pricing should be greater than Zonal for the same instance."""
     with patch.object(gcp_provider, "_fetch_skus", new=AsyncMock(return_value=CLOUD_SQL_FAKE_SKUS)):
-        zonal = await gcp_provider.get_cloud_sql_price("db-n1-standard-4", "us-central1", "MySQL", ha=False)
-        regional = await gcp_provider.get_cloud_sql_price("db-n1-standard-4", "us-central1", "MySQL", ha=True)
+        zonal = await gcp_provider.get_cloud_sql_price(
+            "db-n1-standard-4", "us-central1", "MySQL", ha=False
+        )
+        regional = await gcp_provider.get_cloud_sql_price(
+            "db-n1-standard-4", "us-central1", "MySQL", ha=True
+        )
 
     assert zonal[0].price_per_unit < regional[0].price_per_unit
 
@@ -254,7 +306,9 @@ async def test_cloud_sql_unknown_instance_raises(gcp_provider):
 async def test_cloud_sql_engine_normalization(gcp_provider):
     """postgres input should be normalized to PostgreSQL for SKU lookup."""
     with patch.object(gcp_provider, "_fetch_skus", new=AsyncMock(return_value=CLOUD_SQL_FAKE_SKUS)):
-        prices = await gcp_provider.get_cloud_sql_price("db-n1-standard-4", "us-central1", "postgres", ha=False)
+        prices = await gcp_provider.get_cloud_sql_price(
+            "db-n1-standard-4", "us-central1", "postgres", ha=False
+        )
 
     assert len(prices) == 1
     assert prices[0].attributes["engine"] == "PostgreSQL"

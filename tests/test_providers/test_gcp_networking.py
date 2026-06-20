@@ -1,4 +1,5 @@
 """Tests for GCP Cloud Load Balancing, Cloud CDN, and Cloud NAT pricing provider methods."""
+
 from __future__ import annotations
 
 from decimal import Decimal

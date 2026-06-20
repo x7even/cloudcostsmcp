@@ -1,4 +1,5 @@
 """Baseline comparison utility for pricing tool responses."""
+
 from __future__ import annotations
 
 from decimal import Decimal
@@ -27,8 +28,7 @@ def apply_baseline_deltas(
     if baseline is None:
         available = [r.get("region") for r in results]
         raise ValueError(
-            f"Baseline region '{baseline_region}' not found in results. "
-            f"Available: {available}"
+            f"Baseline region '{baseline_region}' not found in results. Available: {available}"
         )
 
     def parse_hourly(val: Any) -> Decimal:
