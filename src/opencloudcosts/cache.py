@@ -88,16 +88,11 @@ class CacheManager:
     ) -> list[dict[str, Any]] | None:
         key = _make_key(provider, service, region, key_extras)
         async with self.db.execute(
-            "SELECT data, expires_at FROM prices WHERE cache_key = ?", (key,)
+            "SELECT data FROM prices WHERE cache_key = ? AND expires_at >= ?",
+            (key, _now()),
         ) as cur:
             row = await cur.fetchone()
-        if row is None:
-            return None
-        if datetime.fromisoformat(row["expires_at"]) < datetime.now(UTC):
-            await self.db.execute("DELETE FROM prices WHERE cache_key = ?", (key,))
-            await self.db.commit()
-            return None
-        return json.loads(row["data"])
+        return json.loads(row["data"]) if row else None
 
     async def get_prices_with_meta(
         self,
@@ -109,14 +104,11 @@ class CacheManager:
         """Like get_prices but also returns the fetched_at timestamp for trust metadata."""
         key = _make_key(provider, service, region, key_extras)
         async with self.db.execute(
-            "SELECT data, fetched_at, expires_at FROM prices WHERE cache_key = ?", (key,)
+            "SELECT data, fetched_at FROM prices WHERE cache_key = ? AND expires_at >= ?",
+            (key, _now()),
         ) as cur:
             row = await cur.fetchone()
         if row is None:
-            return None
-        if datetime.fromisoformat(row["expires_at"]) < datetime.now(UTC):
-            await self.db.execute("DELETE FROM prices WHERE cache_key = ?", (key,))
-            await self.db.commit()
             return None
         return json.loads(row["data"]), datetime.fromisoformat(row["fetched_at"])
 
@@ -146,16 +138,11 @@ class CacheManager:
 
     async def get_metadata(self, key: str) -> Any | None:
         async with self.db.execute(
-            "SELECT data, expires_at FROM metadata WHERE cache_key = ?", (key,)
+            "SELECT data FROM metadata WHERE cache_key = ? AND expires_at >= ?",
+            (key, _now()),
         ) as cur:
             row = await cur.fetchone()
-        if row is None:
-            return None
-        if datetime.fromisoformat(row["expires_at"]) < datetime.now(UTC):
-            await self.db.execute("DELETE FROM metadata WHERE cache_key = ?", (key,))
-            await self.db.commit()
-            return None
-        return json.loads(row["data"])
+        return json.loads(row["data"]) if row else None
 
     async def set_metadata(self, key: str, data: Any, ttl_hours: float) -> None:
         await self.db.execute(
