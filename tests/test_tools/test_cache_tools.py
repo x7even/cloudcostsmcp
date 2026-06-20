@@ -11,7 +11,6 @@ from opencloudcosts.cache import CacheManager
 from opencloudcosts.tools.availability import register_availability_tools
 from opencloudcosts.tools.lookup import register_lookup_tools
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

@@ -1,10 +1,8 @@
 """Shared pytest fixtures."""
 from __future__ import annotations
 
-import asyncio
+from collections.abc import AsyncGenerator
 from pathlib import Path
-from typing import AsyncGenerator
-from unittest.mock import MagicMock
 
 import pytest
 

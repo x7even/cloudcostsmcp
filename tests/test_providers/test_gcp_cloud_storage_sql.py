@@ -12,7 +12,6 @@ from opencloudcosts.config import Settings
 from opencloudcosts.models import PriceUnit, PricingTerm
 from opencloudcosts.providers.gcp import GCPProvider
 
-
 # ---------------------------------------------------------------------------
 # Helpers: minimal but realistic GCP SKU structures
 # ---------------------------------------------------------------------------

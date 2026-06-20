@@ -22,17 +22,14 @@ from opencloudcosts.models import (
     PRICING_SCHEMAS,
     CloudProvider,
     ComputePricingSpec,
-    DatabasePricingSpec,
     EffectivePrice,
     NormalizedPrice,
     PriceUnit,
     PricingDomain,
     PricingResult,
-    PricingSpec,
     PricingTerm,
 )
 from opencloudcosts.providers.base import NotSupportedError, ProviderBase
-
 
 # ---------------------------------------------------------------------------
 # Invariant: PRICING_SCHEMAS registry is self-consistent
@@ -342,6 +339,7 @@ async def test_supports_dispatch_agreement(
     # For unsupported combos, get_price must raise NotSupportedError (not KeyError, AttributeError, etc.)
     if not should_support:
         from pydantic import TypeAdapter
+
         from opencloudcosts.models import PricingSpec as _PS
         _SPEC_ADAPTER = TypeAdapter(_PS)
         spec_dict: dict = {
@@ -449,6 +447,7 @@ async def test_region_echo_azure(azure_provider: object) -> None:
 async def test_describe_catalog_example_roundtrip_azure(azure_provider: object) -> None:
     """describe_catalog() example_invocations pass back to get_price() without error."""
     from pydantic import TypeAdapter
+
     from opencloudcosts.models import PricingSpec as _PS
     _SPEC_ADAPTER = TypeAdapter(_PS)
     from opencloudcosts.providers.azure import AzureProvider
@@ -483,6 +482,7 @@ async def test_describe_catalog_example_roundtrip_azure(azure_provider: object) 
 async def test_describe_catalog_example_roundtrip_aws(aws_provider: object) -> None:
     """AWS describe_catalog() example_invocations parse and dispatch without NotSupportedError."""
     from pydantic import TypeAdapter
+
     from opencloudcosts.models import PricingSpec as _PS
     _SPEC_ADAPTER = TypeAdapter(_PS)
     from opencloudcosts.providers.aws import AWSProvider

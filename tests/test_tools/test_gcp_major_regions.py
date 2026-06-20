@@ -13,8 +13,8 @@ from opencloudcosts.models import (
     PricingResult,
     PricingTerm,
 )
-from opencloudcosts.providers.gcp import GCPProvider
 from opencloudcosts.providers.aws import AWSProvider
+from opencloudcosts.providers.gcp import GCPProvider
 
 _GCP_MAJOR_REGIONS = GCPProvider._MAJOR_REGIONS
 _AWS_MAJOR_REGIONS = AWSProvider._MAJOR_REGIONS

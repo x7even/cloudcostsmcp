@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from decimal import Decimal
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -146,7 +146,6 @@ _BULK_INDEX = {
 async def test_bulk_fallback_on_no_credentials(aws_provider: AWSProvider):
     """When boto3 raises NoCredentialsError, _get_products falls back to httpx bulk API."""
     import botocore.exceptions
-    import httpx
 
     def raise_no_creds(*args, **kwargs):
         raise botocore.exceptions.NoCredentialsError()
@@ -497,7 +496,6 @@ async def test_list_services(aws_provider: AWSProvider):
         }
     }
 
-    import httpx
 
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()

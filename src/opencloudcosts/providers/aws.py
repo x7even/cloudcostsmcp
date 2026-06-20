@@ -12,9 +12,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import UTC
 from decimal import Decimal
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 import boto3
 import botocore.exceptions

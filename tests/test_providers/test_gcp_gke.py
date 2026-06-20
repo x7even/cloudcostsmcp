@@ -12,7 +12,6 @@ from opencloudcosts.config import Settings
 from opencloudcosts.providers.gcp import GCPProvider
 from opencloudcosts.utils.units import gcp_money_to_decimal
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

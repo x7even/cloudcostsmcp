@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -110,7 +110,7 @@ async def test_get_service_price_no_results_no_alias(aws_provider: AWSProvider):
         region = "us-east-1"
         provider_name = "aws"
 
-        raw = await aws_provider._get_products(resolved_service, [], max_results=20)
+        _raw = await aws_provider._get_products(resolved_service, [], max_results=20)
         prices = []
 
         assert prices == []

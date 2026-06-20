@@ -11,7 +11,6 @@ from opencloudcosts.cache import CacheManager
 from opencloudcosts.config import Settings
 from opencloudcosts.providers.gcp import GCPProvider
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

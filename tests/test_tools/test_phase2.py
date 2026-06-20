@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -162,7 +162,6 @@ async def test_find_cheapest_region_ordering(aws_provider: AWSProvider):
     aws_provider.list_regions = AsyncMock(return_value=list(region_prices.keys()))
 
     # Replicate what find_cheapest_region does
-    import asyncio
     from opencloudcosts.models import PriceComparison
 
     all_prices = []
@@ -186,8 +185,6 @@ async def test_find_cheapest_region_filters_unavailable(aws_provider: AWSProvide
 
     aws_provider.get_compute_price = mock_get_compute_price
 
-    import asyncio
-    from opencloudcosts.models import PriceComparison
 
     regions = ["us-east-1", "fake-region-1", "fake-region-2"]
     all_prices = []

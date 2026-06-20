@@ -10,10 +10,8 @@ import pytest
 from opencloudcosts.cache import CacheManager
 from opencloudcosts.config import Settings
 from opencloudcosts.models import CloudProvider, PriceUnit, PricingTerm
-from opencloudcosts.providers.base import NotConfiguredError
 from opencloudcosts.providers.gcp import GCPProvider
-from opencloudcosts.utils.gcp_specs import parse_instance_type, get_machine_family
-
+from opencloudcosts.utils.gcp_specs import get_machine_family, parse_instance_type
 
 # ---------------------------------------------------------------------------
 # Minimal SKU data matching what the Catalog API returns
@@ -549,7 +547,7 @@ def _make_billing_client(resp_body: dict) -> AsyncMock:
 @pytest.mark.asyncio
 async def test_effective_price_storage_no_billing_account(gcp_provider: GCPProvider):
     """_effective_price_storage returns [] when billing account not configured."""
-    from opencloudcosts.models import StoragePricingSpec, PricingDomain
+    from opencloudcosts.models import PricingDomain, StoragePricingSpec
     spec = StoragePricingSpec(
         provider="gcp", domain=PricingDomain.STORAGE,
         storage_type="standard", region="us-central1",
@@ -567,7 +565,10 @@ async def test_effective_price_gcs_contract(tmp_path: Path):
     provider = GCPProvider(settings, cache)
 
     from opencloudcosts.models import (
-        StoragePricingSpec, PricingDomain, NormalizedPrice, PriceUnit,
+        NormalizedPrice,
+        PriceUnit,
+        PricingDomain,
+        StoragePricingSpec,
     )
     base = NormalizedPrice(
         provider="gcp", service="storage", sku_id="gcp:gcs:standard:us-central1",
@@ -615,7 +616,10 @@ async def test_effective_price_gcs_no_discount(tmp_path: Path):
     provider = GCPProvider(settings, cache)
 
     from opencloudcosts.models import (
-        StoragePricingSpec, PricingDomain, NormalizedPrice, PriceUnit,
+        NormalizedPrice,
+        PriceUnit,
+        PricingDomain,
+        StoragePricingSpec,
     )
     base = NormalizedPrice(
         provider="gcp", service="storage", sku_id="gcp:gcs:standard:us-central1",
@@ -655,7 +659,10 @@ async def test_effective_price_cloud_sql_contract(tmp_path: Path):
     provider = GCPProvider(settings, cache)
 
     from opencloudcosts.models import (
-        DatabasePricingSpec, PricingDomain, NormalizedPrice, PriceUnit,
+        DatabasePricingSpec,
+        NormalizedPrice,
+        PriceUnit,
+        PricingDomain,
     )
     base = NormalizedPrice(
         provider="gcp", service="database", sku_id="gcp:cloud_sql:MySQL:db-n1-standard-4:us-central1:zonal",
@@ -702,7 +709,10 @@ async def test_effective_price_memorystore_contract(tmp_path: Path):
     provider = GCPProvider(settings, cache)
 
     from opencloudcosts.models import (
-        DatabasePricingSpec, PricingDomain, NormalizedPrice, PriceUnit,
+        DatabasePricingSpec,
+        NormalizedPrice,
+        PriceUnit,
+        PricingDomain,
     )
     # 8GB standard → M4 tier → hourly = 8 * 0.049/h
     hourly = Decimal("0.049") * Decimal("8")
@@ -776,7 +786,10 @@ async def test_effective_price_network_lb_contract(tmp_path: Path):
     provider = GCPProvider(settings, cache)
 
     from opencloudcosts.models import (
-        NetworkPricingSpec, PricingDomain, NormalizedPrice, PriceUnit,
+        NetworkPricingSpec,
+        NormalizedPrice,
+        PriceUnit,
+        PricingDomain,
     )
     base_rule = NormalizedPrice(
         provider="gcp", service="network", sku_id="gcp:cloud_lb:https:us-central1:rule",
@@ -830,7 +843,10 @@ async def test_effective_price_network_cdn_contract(tmp_path: Path):
     provider = GCPProvider(settings, cache)
 
     from opencloudcosts.models import (
-        NetworkPricingSpec, PricingDomain, NormalizedPrice, PriceUnit,
+        NetworkPricingSpec,
+        NormalizedPrice,
+        PriceUnit,
+        PricingDomain,
     )
     base_egress = NormalizedPrice(
         provider="gcp", service="network", sku_id="gcp:cloud_cdn:us-central1:egress",
@@ -862,8 +878,8 @@ async def test_effective_price_network_cdn_contract(tmp_path: Path):
         "serviceRegions": ["us-central1"],
     }
     # 25% discount on both
-    contract_egress = _contract_resp("0", 20000000, "0", 15000000, "floating-discount")
-    contract_fill = _contract_resp("0", 10000000, "0", 7500000, "floating-discount")
+    _contract_egress = _contract_resp("0", 20000000, "0", 15000000, "floating-discount")
+    _contract_fill = _contract_resp("0", 10000000, "0", 7500000, "floating-discount")
 
     call_count = 0
     async def fake_fetch_contract(sku_name: str):
@@ -897,7 +913,10 @@ async def test_effective_price_network_armor_contract(tmp_path: Path):
     provider = GCPProvider(settings, cache)
 
     from opencloudcosts.models import (
-        NetworkPricingSpec, PricingDomain, NormalizedPrice, PriceUnit,
+        NetworkPricingSpec,
+        NormalizedPrice,
+        PriceUnit,
+        PricingDomain,
     )
     base_policy = NormalizedPrice(
         provider="gcp", service="network", sku_id="gcp:cloud_armor:policy",
@@ -941,7 +960,7 @@ async def test_egress_internet_americas(gcp_provider: GCPProvider):
     """Internet egress from an Americas region returns the Americas base rate."""
     from opencloudcosts.models import EgressPricingSpec, PricingDomain
 
-    spec = EgressPricingSpec(
+    _spec = EgressPricingSpec(
         provider="gcp", domain=PricingDomain.INTER_REGION_EGRESS,
         source_region="us-central1", dest_region="", data_gb=100.0,
     )
