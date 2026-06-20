@@ -143,16 +143,25 @@ def register_lookup_tools(mcp: Any) -> None:
         if pvdr is None:
             return {"error": f"Provider '{provider}' not configured."}
 
+        semaphore = asyncio.Semaphore(10)
+
         async def fetch_one(itype: str) -> tuple[str, list | str]:
-            try:
-                spec = _SPEC_ADAPTER.validate_python({
-                    "provider": provider, "domain": "compute",
-                    "resource_type": itype, "region": region, "os": os, "term": term,
-                })
-                result = await pvdr.get_price(spec)
-                return itype, result.public_prices
-            except Exception as e:
-                return itype, str(e)
+            async with semaphore:
+                try:
+                    spec = _SPEC_ADAPTER.validate_python(
+                        {
+                            "provider": provider,
+                            "domain": "compute",
+                            "resource_type": itype,
+                            "region": region,
+                            "os": os,
+                            "term": term,
+                        }
+                    )
+                    result = await pvdr.get_price(spec)
+                    return itype, result.public_prices
+                except Exception as e:
+                    return itype, str(e)
 
         raw = await asyncio.gather(*[fetch_one(t) for t in instance_types])
 
