@@ -10,7 +10,7 @@ readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.11"
 authors = [
-    {name = "x7even", email = "x7sima@gmail.com"},
+    {name = "x7even", email = "x7even@users.noreply.github.com"},
 ]
 keywords = ["mcp", "cloud", "pricing", "aws", "gcp", "azure", "finops", "cost"]
 classifiers = [
