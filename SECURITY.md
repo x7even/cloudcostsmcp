@@ -13,7 +13,7 @@
 
 Report security issues privately via GitHub's
 [Security Advisory](https://github.com/x7even/cloudcostmcp/security/advisories/new)
-feature, or email x7sima@gmail.com with the subject line `[SECURITY] OpenCloudCosts`.
+feature. This keeps the report confidential until a fix is released.
 
 Include:
 - Description of the vulnerability
