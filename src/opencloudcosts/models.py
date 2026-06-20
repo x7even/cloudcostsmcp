@@ -446,8 +446,22 @@ class NetworkPricingSpec(BasePricingSpec):
     monthly_requests_millions: float = Field(default=0.0, ge=0.0)
     hours_per_month: float = 730.0
 
+    # Egress-specific fields (only used when service="egress")
+    source_region: str = ""  # origin region; falls back to .region if empty
+    destination_type: str = (
+        "internet"  # "internet" | "cross_region" | "cross_az" | "cross_continent"
+    )
+    destination_region: str = ""  # target region; empty = internet egress
+    data_gb_per_month: float = 0.0  # monthly data volume; 0 = return rates only
+    network_tier: str = "premium"  # GCP: "premium" | "standard"
+
     def cache_key(self) -> str:
         base = super().cache_key()
+        if self.service == "egress":
+            return (
+                f"{base}:{self.source_region}:{self.destination_type}"
+                f":{self.destination_region}:{self.data_gb_per_month}:{self.network_tier}"
+            )
         return f"{base}:{self.lb_type or ''}:{self.rule_count}:{self.gateway_count}"
 
 
@@ -529,6 +543,7 @@ PRICING_SCHEMAS: dict[tuple[PricingDomain, str | None], type[BasePricingSpec]] =
     (PricingDomain.NETWORK, "nat"): NetworkPricingSpec,
     (PricingDomain.NETWORK, "cloud_armor"): NetworkPricingSpec,
     (PricingDomain.NETWORK, "waf"): NetworkPricingSpec,
+    (PricingDomain.NETWORK, "egress"): NetworkPricingSpec,
     (PricingDomain.OBSERVABILITY, None): ObservabilityPricingSpec,
     (PricingDomain.OBSERVABILITY, "cloudwatch"): ObservabilityPricingSpec,
     (PricingDomain.OBSERVABILITY, "cloud_monitoring"): ObservabilityPricingSpec,

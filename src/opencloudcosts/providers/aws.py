@@ -48,6 +48,7 @@ from opencloudcosts.models import (
     StoragePricingSpec,
 )
 from opencloudcosts.providers.base import NotConfiguredError, NotSupportedError, ProviderBase
+from opencloudcosts.utils.egress_tiers import EgressTier, compute_tiered_cost
 from opencloudcosts.utils.http_retry import sync_retry
 from opencloudcosts.utils.regions import aws_region_to_display, list_aws_regions
 from opencloudcosts.utils.units import parse_aws_unit
@@ -209,6 +210,27 @@ _AWS_CAPABILITIES: dict[tuple[str, str | None], bool] = {
     (PricingDomain.CONTAINER.value, "eks"): True,
     (PricingDomain.INTER_REGION_EGRESS.value, None): True,
 }
+
+
+# ---------------------------------------------------------------------------
+# AWS internet egress tier constants
+# Source: https://aws.amazon.com/ec2/pricing/on-demand/#Data_Transfer
+# Tiers are cumulative monthly aggregated across the AWS account.
+# Used as a static fallback when the live Pricing API is unavailable.
+# ---------------------------------------------------------------------------
+
+_AWS_INTERNET_EGRESS_TIERS: list[EgressTier] = [
+    EgressTier(threshold_gb=0, rate=Decimal("0.000"), label="0-100 GB (free)"),
+    EgressTier(threshold_gb=100, rate=Decimal("0.090"), label="100 GB-10 TB"),
+    EgressTier(threshold_gb=10_340, rate=Decimal("0.085"), label="10-50 TB"),
+    EgressTier(threshold_gb=51_300, rate=Decimal("0.070"), label="50-150 TB"),
+    EgressTier(threshold_gb=153_700, rate=Decimal("0.050"), label="150-500 TB"),
+    EgressTier(threshold_gb=512_100, rate=Decimal("0.050"), label=">500 TB"),
+]
+
+_AWS_CROSS_AZ_RATE = Decimal("0.01")  # per GB each direction, within same region
+
+_AWS_EGRESS_SOURCE_URL = "https://aws.amazon.com/ec2/pricing/on-demand/#Data_Transfer"
 
 
 def _resolve_service_code(service: str) -> str:
@@ -1423,8 +1445,13 @@ class AWSProvider(ProviderBase):
                 ],
             )
 
-        public_prices = await self._dispatch_public(spec)
-        result = PricingResult(public_prices=public_prices, source="catalog")
+        # NetworkPricingSpec with service=egress returns (prices, breakdown) tuple
+        breakdown: dict = {}
+        if isinstance(spec, NetworkPricingSpec) and (spec.service or "").lower() == "egress":
+            public_prices, breakdown = await self._price_network_egress(spec)
+        else:
+            public_prices = await self._dispatch_public(spec)
+        result = PricingResult(public_prices=public_prices, source="catalog", breakdown=breakdown)
 
         # Enrich with effective pricing when auth is configured
         commitments = await self._applicable_commitments(spec)
@@ -1447,7 +1474,11 @@ class AWSProvider(ProviderBase):
                 service=spec.service,
                 reason=f"No handler registered for {type(spec).__name__} — update _dispatch_registry.",
             )
-        return await handler(spec)
+        result = await handler(spec)
+        # _price_network now returns (prices, breakdown) tuple; unwrap for callers
+        if isinstance(result, tuple):
+            return result[0]
+        return result
 
     async def _price_egress(self, spec: EgressPricingSpec) -> list[NormalizedPrice]:
         """Inter-region data transfer pricing from AWS Bulk Pricing (AWSDataTransfer)."""
@@ -1919,7 +1950,7 @@ class AWSProvider(ProviderBase):
         svc = spec.service or "redshift"
         return await self.get_service_price(svc, spec.region, {}, max_results=10)
 
-    async def _price_network(self, spec: NetworkPricingSpec) -> list[NormalizedPrice]:
+    async def _price_network(self, spec: NetworkPricingSpec) -> tuple[list[NormalizedPrice], dict]:
         _NET_SERVICE_MAP = {
             "lb": "elb",
             "load_balancer": "elb",
@@ -1933,10 +1964,114 @@ class AWSProvider(ProviderBase):
             "cloud_nat": "nat_gateway",  # GCP-style alias
             "waf": "waf",
             "data_transfer": "data_transfer",
-            "egress": "data_transfer",
         }
-        svc = _NET_SERVICE_MAP.get(spec.service or "lb", spec.service or "elb")
-        return await self.get_service_price(svc, spec.region, {}, max_results=10)
+        svc_lower = (spec.service or "").lower()
+        # Route service=egress to the tiered internet-egress path
+        if svc_lower == "egress":
+            return await self._price_network_egress(spec)
+        svc = _NET_SERVICE_MAP.get(svc_lower, spec.service or "elb")
+        prices = await self.get_service_price(svc, spec.region, {}, max_results=10)
+        return prices, {}
+
+    async def _price_network_egress(
+        self, spec: NetworkPricingSpec
+    ) -> tuple[list[NormalizedPrice], dict]:
+        """Tiered internet/cross-region/cross-AZ egress for domain=network, service=egress."""
+        src = spec.source_region or spec.region or "us-east-1"
+        dest_type = (spec.destination_type or "internet").lower()
+        dest_region = spec.destination_region or ""
+        data_gb = spec.data_gb_per_month if spec.data_gb_per_month > 0 else spec.egress_gb
+
+        if dest_type == "cross_az":
+            tiers = [EgressTier(0, _AWS_CROSS_AZ_RATE, "Cross-AZ within same region ($0.01/GB)")]
+            tier_result = compute_tiered_cost(tiers, data_gb)
+            price = NormalizedPrice(
+                provider=CloudProvider.AWS,
+                service="egress",
+                sku_id=f"aws:cross_az:{src}",
+                product_family="Data Transfer",
+                description=f"AWS cross-AZ traffic within {src}",
+                region=src,
+                pricing_term=PricingTerm.ON_DEMAND,
+                price_per_unit=_AWS_CROSS_AZ_RATE,
+                unit=PriceUnit.PER_GB,
+                attributes={
+                    "source_region": src,
+                    "destination_type": "cross_az",
+                    "note": "Flat $0.01/GB each direction within the same AWS region.",
+                },
+            )
+            return self._annotate_fresh([price], "https://aws.amazon.com/vpc/pricing/"), tier_result
+
+        if dest_type in ("cross_region", "cross_continent"):
+            src_c = self._region_continent(src)
+            dst_c = self._region_continent(dest_region) if dest_region else src_c
+            rate = self._EGRESS_RATES.get((src_c, dst_c), Decimal("0.16"))
+            tiers = [EgressTier(0, rate, f"{src_c.upper()} to {dst_c.upper()} inter-region")]
+            tier_result = compute_tiered_cost(tiers, data_gb)
+            desc = f"AWS inter-region data transfer {src}"
+            if dest_region:
+                desc += f" to {dest_region}"
+            else:
+                desc += f" to {dst_c} regions"
+            price = NormalizedPrice(
+                provider=CloudProvider.AWS,
+                service="egress",
+                sku_id=f"aws:inter_region:{src}:{dest_region or dst_c}",
+                product_family="Data Transfer",
+                description=desc,
+                region=src,
+                pricing_term=PricingTerm.ON_DEMAND,
+                price_per_unit=rate,
+                unit=PriceUnit.PER_GB,
+                attributes={
+                    "source_region": src,
+                    "destination_type": dest_type,
+                    "fromRegionCode": src,
+                    "toRegionCode": dest_region or f"{dst_c}-*",
+                },
+            )
+            return self._annotate_fresh([price], _AWS_EGRESS_SOURCE_URL), tier_result
+
+        # Validate destination_type before falling through to internet egress
+        if dest_type not in ("internet", "cross_az", "cross_region", "cross_continent"):
+            raise NotSupportedError(
+                provider=self.provider,
+                domain=spec.domain,
+                service=spec.service,
+                reason=(
+                    f"AWS: unknown destination_type={dest_type!r}. "
+                    "Valid values: 'internet', 'cross_region', 'cross_continent', 'cross_az'."
+                ),
+                alternatives=["Use destination_type='internet' for internet egress."],
+            )
+
+        # Default: internet egress with tiering
+        tiers = _AWS_INTERNET_EGRESS_TIERS
+        tier_result = compute_tiered_cost(tiers, data_gb)
+        blended = Decimal(tier_result["blended_rate_per_gb"]) if data_gb > 0 else tiers[1].rate
+        desc = f"AWS internet egress from {src} (tiered, 100 GB/month free)"
+        if data_gb > 0:
+            total_cost = tier_result["total_cost"]
+            desc += f": {data_gb:.0f} GB/month — ${total_cost} (${float(blended):.4f}/GB blended)"
+        price = NormalizedPrice(
+            provider=CloudProvider.AWS,
+            service="egress",
+            sku_id=f"aws:internet_egress:{src}",
+            product_family="Data Transfer",
+            description=desc,
+            region=src,
+            pricing_term=PricingTerm.ON_DEMAND,
+            price_per_unit=blended,
+            unit=PriceUnit.PER_GB_MONTH,
+            attributes={
+                "source_region": src,
+                "destination_type": "internet",
+                "free_tier_gb": "100",
+                "note": "First 100 GB/month free. Rates are tiered monthly aggregate.",
+            },
+        )
+        return self._annotate_fresh([price], _AWS_EGRESS_SOURCE_URL), tier_result
 
     async def _price_observability(self, spec: ObservabilityPricingSpec) -> list[NormalizedPrice]:
         svc = spec.service or "cloudwatch"
@@ -1968,7 +2103,7 @@ class AWSProvider(ProviderBase):
                 "ai": ["bedrock", "sagemaker"],
                 "serverless": ["lambda"],
                 "analytics": ["redshift", "athena"],
-                "network": ["lb", "cdn", "nat", "waf", "data_transfer"],
+                "network": ["lb", "cdn", "nat", "waf", "data_transfer", "egress"],
                 "observability": ["cloudwatch"],
                 "container": ["eks"],
                 "inter_region_egress": [],
@@ -2014,6 +2149,12 @@ class AWSProvider(ProviderBase):
                 "network/cdn": {"service": "cdn"},
                 "network/nat": {"service": "nat", "note": "also accepts 'cloud_nat'"},
                 "network/data_transfer": {"service": "data_transfer"},
+                "network/egress": {
+                    "source_region": "origin region e.g. 'us-east-1'",
+                    "destination_type": "internet | cross_region | cross_az | cross_continent",
+                    "destination_region": "target region for cross_region (optional; empty = internet)",
+                    "data_gb_per_month": "monthly data volume in GB for blended-rate estimate",
+                },
                 "observability/cloudwatch": {"service": "cloudwatch"},
                 "container/eks": {"service": "eks"},
                 "inter_region_egress": {
@@ -2087,6 +2228,23 @@ class AWSProvider(ProviderBase):
                     "source_region": "us-east-1",
                     "dest_region": "eu-west-1",
                 },
+                "network/egress": {
+                    "provider": "aws",
+                    "domain": "network",
+                    "service": "egress",
+                    "source_region": "us-east-1",
+                    "destination_type": "internet",
+                    "data_gb_per_month": 1024.0,
+                },
+                "network/egress/cross_region": {
+                    "provider": "aws",
+                    "domain": "network",
+                    "service": "egress",
+                    "source_region": "us-east-1",
+                    "destination_type": "cross_region",
+                    "destination_region": "eu-west-1",
+                    "data_gb_per_month": 1024.0,
+                },
             },
             decision_matrix={
                 "ECS on Fargate": "compute/fargate — use vcpu + memory_gb params",
@@ -2107,6 +2265,9 @@ class AWSProvider(ProviderBase):
                 "AWS WAF": "network/waf",
                 "Data transfer / egress": "network/data_transfer",
                 "Inter-region data transfer (region-to-region)": "inter_region_egress — use source_region + dest_region",
+                "Internet egress with tier breakdown (first 100 GB free)": "network/egress — set destination_type=internet + data_gb_per_month",
+                "Cross-region transfer with blended cost": "network/egress — set destination_type=cross_region + destination_region",
+                "Cross-AZ traffic cost": "network/egress — set destination_type=cross_az",
             },
         )
 

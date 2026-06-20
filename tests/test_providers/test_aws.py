@@ -787,3 +787,104 @@ async def test_price_egress_falls_back_when_api_empty(aws_provider: AWSProvider)
     assert len(prices) == 1
     assert prices[0].attributes.get("fallback") == "true"
     assert float(prices[0].price_per_unit) == pytest.approx(0.02)
+
+
+# ---------------------------------------------------------------------------
+# network/egress (tiered internet egress path)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_network_egress_internet_returns_breakdown(aws_provider: AWSProvider):
+    """get_price with domain=network service=egress returns a PricingResult with breakdown."""
+    from opencloudcosts.models import NetworkPricingSpec, PricingDomain
+
+    spec = NetworkPricingSpec(
+        provider="aws",
+        domain=PricingDomain.NETWORK,
+        service="egress",
+        source_region="us-east-1",
+        destination_type="internet",
+        data_gb_per_month=1000.0,
+    )
+    result = await aws_provider.get_price(spec)
+
+    assert len(result.public_prices) == 1
+    p = result.public_prices[0]
+    assert p.provider.value == "aws"
+    assert p.service == "egress"
+    # Should have breakdown with tier info
+    assert "tiers" in result.breakdown
+    assert result.breakdown["data_gb"] == pytest.approx(1000.0)
+    # 100 GB free, then 900 GB at $0.09 = $81.00
+    assert float(result.breakdown["total_cost"]) == pytest.approx(81.0, rel=1e-3)
+
+
+@pytest.mark.asyncio
+async def test_network_egress_cross_region_returns_flat_rate(aws_provider: AWSProvider):
+    """Cross-region egress via network/egress uses continent-pair lookup."""
+    from opencloudcosts.models import NetworkPricingSpec, PricingDomain
+
+    spec = NetworkPricingSpec(
+        provider="aws",
+        domain=PricingDomain.NETWORK,
+        service="egress",
+        source_region="us-east-1",
+        destination_type="cross_region",
+        destination_region="eu-west-1",
+        data_gb_per_month=1024.0,
+    )
+    result = await aws_provider.get_price(spec)
+
+    assert len(result.public_prices) == 1
+    p = result.public_prices[0]
+    assert p.service == "egress"
+    # us → eu = $0.02/GB
+    assert float(p.price_per_unit) == pytest.approx(0.02, rel=1e-3)
+
+
+@pytest.mark.asyncio
+async def test_network_egress_cross_az(aws_provider: AWSProvider):
+    """Cross-AZ egress via network/egress uses $0.01/GB flat rate."""
+    from opencloudcosts.models import NetworkPricingSpec, PricingDomain
+
+    spec = NetworkPricingSpec(
+        provider="aws",
+        domain=PricingDomain.NETWORK,
+        service="egress",
+        source_region="us-east-1",
+        destination_type="cross_az",
+        data_gb_per_month=500.0,
+    )
+    result = await aws_provider.get_price(spec)
+
+    assert len(result.public_prices) == 1
+    p = result.public_prices[0]
+    assert float(p.price_per_unit) == pytest.approx(0.01, rel=1e-3)
+    assert result.breakdown["data_gb"] == pytest.approx(500.0)
+
+
+@pytest.mark.asyncio
+async def test_network_egress_100gb_all_free(aws_provider: AWSProvider):
+    """Exactly 100 GB hits the free tier fully, total cost should be $0."""
+    from opencloudcosts.models import NetworkPricingSpec, PricingDomain
+
+    spec = NetworkPricingSpec(
+        provider="aws",
+        domain=PricingDomain.NETWORK,
+        service="egress",
+        source_region="us-east-1",
+        destination_type="internet",
+        data_gb_per_month=100.0,
+    )
+    result = await aws_provider.get_price(spec)
+
+    assert result.breakdown["total_cost"] == "0.0000"
+
+
+@pytest.mark.asyncio
+async def test_network_egress_supports_check(aws_provider: AWSProvider):
+    """supports() returns True for NETWORK/egress."""
+    from opencloudcosts.models import PricingDomain
+
+    assert aws_provider.supports(PricingDomain.NETWORK, "egress")

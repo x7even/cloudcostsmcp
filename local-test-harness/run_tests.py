@@ -927,6 +927,44 @@ TEST_PROMPTS = {
         "What does Azure CDN Standard cost to serve 1 TB of data per month from eastus (Zone 1)? "
         "Give the per-GB rate and the total monthly estimate."
     ),
+
+    # --- Egress Tiering (NET_EGR) [network/egress domain] ---
+    "NET_EGR1": (
+        "What is the total monthly cost for sending 5 TB of outbound internet traffic from "
+        "AWS us-east-1? Show the per-tier breakdown (first 100 GB free, then tiered rates) "
+        "and give me the blended effective rate per GB. Use domain=network, service=egress."
+    ),
+    "NET_EGR2": (
+        "How much does it cost to transfer 1 TB of data each month from AWS us-east-1 to "
+        "eu-west-1? Use domain=network, service=egress, destination_type=cross_region."
+    ),
+    "NET_EGR3": (
+        "What is the GCP internet egress cost for 2 TB/month from us-central1? "
+        "Show the tiered breakdown (rates change at 1 TB and 10 TB) and the blended rate. "
+        "Use domain=network, service=egress, destination_type=internet, network_tier=premium."
+    ),
+    "NET_EGR4": (
+        "What does Azure charge for 1 TB of outbound internet traffic from eastus per month? "
+        "Show the tier breakdown (first 5 GB free, then tiered rates) and total monthly cost. "
+        "Use domain=network, service=egress."
+    ),
+    # --- New egress prompts (NET_EGR5-NET_EGR8) ---
+    "NET_EGR5": (
+        "What would it cost to transfer 5 TB per month out of AWS us-east-1 to the internet? "
+        "Use domain=network, service=egress and show the tiered cost breakdown."
+    ),
+    "NET_EGR6": (
+        "How much does it cost to transfer 1 TB/month from us-east-1 to eu-west-1 on AWS? "
+        "Use domain=network, service=egress, destination_type=cross_region."
+    ),
+    "NET_EGR7": (
+        "Estimate GCP egress cost for 2 TB/month from us-central1 to users in Europe. "
+        "Use domain=network, service=egress, destination_type=internet, network_tier=premium."
+    ),
+    "NET_EGR8": (
+        "What is the Azure bandwidth cost for 1 TB/month outbound from East US? "
+        "Use domain=network, service=egress and show the tier breakdown."
+    ),
 }
 
 

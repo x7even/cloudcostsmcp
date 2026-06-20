@@ -1369,3 +1369,88 @@ async def test_effective_price_egress_via_get_price(tmp_path: Path):
     assert result.effective_price is not None
     assert result.effective_price.discount_pct > 0
     assert result.source == "catalog+billing_api"
+
+
+# ---------------------------------------------------------------------------
+# network/egress (tiered internet egress path) [new in this version]
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_gcp_network_egress_internet_returns_breakdown(gcp_provider: GCPProvider):
+    """get_price with domain=network service=egress returns PricingResult with tier breakdown."""
+    from opencloudcosts.models import NetworkPricingSpec, PricingDomain
+
+    spec = NetworkPricingSpec(
+        provider="gcp",
+        domain=PricingDomain.NETWORK,
+        service="egress",
+        source_region="us-central1",
+        destination_type="internet",
+        data_gb_per_month=2048.0,  # 2 TB: crosses 1 TB tier boundary
+        network_tier="premium",
+    )
+    with patch.object(gcp_provider, "_fetch_skus", AsyncMock(return_value=[])):
+        result = await gcp_provider.get_price(spec)
+
+    assert len(result.public_prices) == 1
+    p = result.public_prices[0]
+    assert p.provider.value == "gcp"
+    assert p.service == "egress"
+    assert "tiers" in result.breakdown
+    assert result.breakdown["data_gb"] == pytest.approx(2048.0)
+    # When _fetch_skus returns [], _fetch_internet_egress_rate falls back to
+    # _GCP_INTERNET_EGRESS_RATE["americas"] = $0.08, overriding the static tier
+    # value of $0.085. So: 1024 * 0.08 + 1024 * 0.065 = 81.92 + 66.56 = 148.48
+    expected_cost = 1024 * 0.08 + 1024 * 0.065
+    assert float(result.breakdown["total_cost"]) == pytest.approx(expected_cost, rel=1e-3)
+
+
+@pytest.mark.asyncio
+async def test_gcp_network_egress_cross_region(gcp_provider: GCPProvider):
+    """Cross-region egress via network/egress uses correct same/cross-continent rate."""
+    from opencloudcosts.models import NetworkPricingSpec, PricingDomain
+
+    spec = NetworkPricingSpec(
+        provider="gcp",
+        domain=PricingDomain.NETWORK,
+        service="egress",
+        source_region="us-central1",
+        destination_type="cross_region",
+        destination_region="europe-west1",
+        data_gb_per_month=100.0,
+    )
+    result = await gcp_provider.get_price(spec)
+
+    assert len(result.public_prices) == 1
+    p = result.public_prices[0]
+    assert p.service == "egress"
+    # Cross-continent = $0.08/GB
+    assert float(p.price_per_unit) == pytest.approx(0.08, rel=1e-3)
+
+
+@pytest.mark.asyncio
+async def test_gcp_network_egress_cross_az(gcp_provider: GCPProvider):
+    """Cross-zone egress uses $0.01/GB flat rate."""
+    from opencloudcosts.models import NetworkPricingSpec, PricingDomain
+
+    spec = NetworkPricingSpec(
+        provider="gcp",
+        domain=PricingDomain.NETWORK,
+        service="egress",
+        source_region="us-central1",
+        destination_type="cross_az",
+        data_gb_per_month=500.0,
+    )
+    result = await gcp_provider.get_price(spec)
+
+    assert len(result.public_prices) == 1
+    assert float(result.public_prices[0].price_per_unit) == pytest.approx(0.01, rel=1e-3)
+
+
+@pytest.mark.asyncio
+async def test_gcp_network_egress_supports_capability(gcp_provider: GCPProvider):
+    """GCPProvider.supports returns True for NETWORK/egress."""
+    from opencloudcosts.models import PricingDomain
+
+    assert gcp_provider.supports(PricingDomain.NETWORK, "egress")

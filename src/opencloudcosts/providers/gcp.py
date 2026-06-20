@@ -52,6 +52,7 @@ from opencloudcosts.models import (
     StoragePricingSpec,
 )
 from opencloudcosts.providers.base import NotConfiguredError, NotSupportedError, ProviderBase
+from opencloudcosts.utils.egress_tiers import EgressTier, compute_tiered_cost
 from opencloudcosts.utils.gcp_specs import (
     CLOUD_SQL_INSTANCE_SPECS,
     GCP_FAMILY_SKU,
@@ -105,6 +106,33 @@ _GCP_INTRA_EGRESS_RATE: dict[str, Decimal] = {
     "cross": Decimal("0.08"),
 }
 
+# GCP internet egress tiers by source continent (Premium Tier).
+# Source: https://cloud.google.com/vpc/network-pricing
+# Tiers are cumulative monthly: 0-1 TB, 1-10 TB, >10 TB.
+# Used as static fallback for the tiered network/egress path.
+_GCP_INTERNET_EGRESS_TIERS: dict[str, list[EgressTier]] = {
+    "americas": [
+        EgressTier(threshold_gb=0, rate=Decimal("0.080"), label="0-1 TB"),  # matches _GCP_INTERNET_EGRESS_RATE["americas"]
+        EgressTier(threshold_gb=1_024, rate=Decimal("0.065"), label="1-10 TB"),
+        EgressTier(threshold_gb=10_240, rate=Decimal("0.045"), label=">10 TB"),
+    ],
+    "emea": [
+        EgressTier(threshold_gb=0, rate=Decimal("0.085"), label="0-1 TB"),
+        EgressTier(threshold_gb=1_024, rate=Decimal("0.065"), label="1-10 TB"),
+        EgressTier(threshold_gb=10_240, rate=Decimal("0.045"), label=">10 TB"),
+    ],
+    "apac": [
+        EgressTier(threshold_gb=0, rate=Decimal("0.120"), label="0-1 TB"),
+        EgressTier(threshold_gb=1_024, rate=Decimal("0.085"), label="1-10 TB"),
+        EgressTier(threshold_gb=10_240, rate=Decimal("0.065"), label=">10 TB"),
+    ],
+}
+
+# Cross-zone (same region) rate
+_GCP_CROSS_ZONE_RATE = Decimal("0.01")
+
+_GCP_EGRESS_SOURCE_URL = "https://cloud.google.com/vpc/network-pricing"
+
 # GCS storage class -> description substring in SKU catalog
 _GCS_STORAGE_CLASSES: dict[str, str] = {
     "standard": "Standard Storage",
@@ -156,6 +184,7 @@ _GCP_CAPABILITIES: dict[tuple[str, str | None], bool] = {
     (PricingDomain.NETWORK.value, "cloud_cdn"): True,
     (PricingDomain.NETWORK.value, "cloud_nat"): True,
     (PricingDomain.NETWORK.value, "cloud_armor"): True,
+    (PricingDomain.NETWORK.value, "egress"): True,
     (PricingDomain.OBSERVABILITY.value, None): True,
     (PricingDomain.OBSERVABILITY.value, "cloud_monitoring"): True,
     (PricingDomain.INTER_REGION_EGRESS.value, None): True,
@@ -2952,6 +2981,8 @@ class GCPProvider(ProviderBase):
 
     async def _price_network(self, spec: NetworkPricingSpec) -> tuple[list[NormalizedPrice], dict]:
         svc = (spec.service or "").lower()
+        if svc == "egress":
+            return await self._price_network_egress(spec)
         if svc == "cloud_cdn":
             index = await self._build_networking_price_index(spec.region)
             return await self._price_network_cdn(spec, index)
@@ -2963,6 +2994,151 @@ class GCPProvider(ProviderBase):
         # default: cloud_lb
         index = await self._build_networking_price_index(spec.region)
         return await self._price_network_lb(spec, index)
+
+    async def _price_network_egress(
+        self, spec: NetworkPricingSpec
+    ) -> tuple[list[NormalizedPrice], dict]:
+        """Tiered internet/cross-region/cross-zone egress for domain=network, service=egress."""
+        src = spec.source_region or spec.region or "us-central1"
+        dest_type = (spec.destination_type or "internet").lower()
+        dest_region = spec.destination_region or ""
+        data_gb = spec.data_gb_per_month if spec.data_gb_per_month > 0 else spec.egress_gb
+        network_tier = (spec.network_tier or "premium").lower()
+
+        src_continent = self._gcp_egress_continent(src)
+
+        if dest_type == "same_zone":
+            # Same-zone traffic within a GCP region is free
+            tiers = [EgressTier(0, Decimal("0"), "Same-zone within region (free)")]
+            tier_result = compute_tiered_cost(tiers, data_gb)
+            price = NormalizedPrice(
+                provider=CloudProvider.GCP,
+                service="egress",
+                sku_id=f"gcp:same_zone:{src}",
+                product_family="Networking",
+                description=f"GCP same-zone traffic within {src} (free)",
+                region=src,
+                pricing_term=PricingTerm.ON_DEMAND,
+                price_per_unit=Decimal("0"),
+                unit=PriceUnit.PER_GB,
+                attributes={
+                    "source_region": src,
+                    "destination_type": "same_zone",
+                    "note": "Traffic between VMs in the same GCP zone is free.",
+                },
+            )
+            return self._annotate_fresh([price], _GCP_EGRESS_SOURCE_URL), tier_result
+
+        if dest_type == "cross_az":
+            tiers = [
+                EgressTier(0, _GCP_CROSS_ZONE_RATE, "Cross-zone within same region ($0.01/GB)")
+            ]
+            tier_result = compute_tiered_cost(tiers, data_gb)
+            price = NormalizedPrice(
+                provider=CloudProvider.GCP,
+                service="egress",
+                sku_id=f"gcp:cross_zone:{src}",
+                product_family="Networking",
+                description=f"GCP cross-zone traffic within {src} region",
+                region=src,
+                pricing_term=PricingTerm.ON_DEMAND,
+                price_per_unit=_GCP_CROSS_ZONE_RATE,
+                unit=PriceUnit.PER_GB,
+                attributes={
+                    "source_region": src,
+                    "destination_type": "cross_az",
+                    "note": "Flat $0.01/GB between zones within the same GCP region.",
+                },
+            )
+            return self._annotate_fresh([price], _GCP_EGRESS_SOURCE_URL), tier_result
+
+        if dest_type in ("cross_region", "cross_continent"):
+            dst_continent = (
+                self._gcp_egress_continent(dest_region) if dest_region else src_continent
+            )
+            same = src_continent == dst_continent
+            rate = _GCP_INTRA_EGRESS_RATE["same" if same else "cross"]
+            label = f"{'Same-continent' if same else 'Cross-continent'} inter-region (${'0.01' if same else '0.08'}/GB)"
+            tiers = [EgressTier(0, rate, label)]
+            tier_result = compute_tiered_cost(tiers, data_gb)
+            desc = f"GCP inter-region data transfer {src}"
+            if dest_region:
+                desc += f" to {dest_region}"
+            price = NormalizedPrice(
+                provider=CloudProvider.GCP,
+                service="egress",
+                sku_id=f"gcp:inter_region:{src}:{dest_region or dst_continent}",
+                product_family="Networking",
+                description=desc,
+                region=src,
+                pricing_term=PricingTerm.ON_DEMAND,
+                price_per_unit=rate,
+                unit=PriceUnit.PER_GB,
+                attributes={
+                    "source_region": src,
+                    "destination_type": dest_type,
+                    "continent": src_continent,
+                    **({"dest_region": dest_region} if dest_region else {}),
+                },
+            )
+            return self._annotate_fresh([price], _GCP_EGRESS_SOURCE_URL), tier_result
+
+        # Validate destination_type before falling through to internet egress
+        if dest_type not in ("internet", "cross_az", "cross_region", "cross_continent", "same_zone"):
+            from opencloudcosts.providers.base import NotSupportedError
+            raise NotSupportedError(
+                provider=self.provider,
+                domain=spec.domain,
+                service=spec.service,
+                reason=(
+                    f"GCP: unknown destination_type={dest_type!r}. "
+                    "Valid values: 'internet', 'cross_region', 'cross_continent', 'cross_az'."
+                ),
+                alternatives=["Use destination_type='internet' for internet egress."],
+            )
+
+        # Default: internet egress with tiering
+        tier_map = _GCP_INTERNET_EGRESS_TIERS
+        tiers = tier_map.get(src_continent, tier_map["americas"])
+
+        # Attempt live API fetch to verify first-tier rate
+        try:
+            live_rate = await self._fetch_internet_egress_rate(src_continent)
+            if live_rate != tiers[0].rate:
+                tiers = [EgressTier(0, live_rate, tiers[0].label)] + list(tiers[1:])
+        except Exception:
+            pass
+
+        tier_result = compute_tiered_cost(tiers, data_gb)
+        blended = Decimal(tier_result["blended_rate_per_gb"]) if data_gb > 0 else tiers[0].rate
+        desc = (
+            f"GCP internet egress from {src} ({src_continent.upper()}, {network_tier} tier, tiered)"
+        )
+        if data_gb > 0:
+            total_cost = tier_result["total_cost"]
+            desc += f": {data_gb:.0f} GB/month — ${total_cost} (${float(blended):.4f}/GB blended)"
+        price = NormalizedPrice(
+            provider=CloudProvider.GCP,
+            service="egress",
+            sku_id=f"gcp:internet_egress:{src}:{network_tier}",
+            product_family="Networking",
+            description=desc,
+            region=src,
+            pricing_term=PricingTerm.ON_DEMAND,
+            price_per_unit=blended,
+            unit=PriceUnit.PER_GB_MONTH,
+            attributes={
+                "source_region": src,
+                "destination_type": "internet",
+                "continent": src_continent,
+                "network_tier": network_tier,
+                "note": (
+                    f"Tiered rates for {src_continent.upper()} internet egress. "
+                    "China and Australia destinations billed at higher rates."
+                ),
+            },
+        )
+        return self._annotate_fresh([price], _GCP_EGRESS_SOURCE_URL), tier_result
 
     async def _price_network_lb(
         self, spec: NetworkPricingSpec, index: dict[str, Decimal]
@@ -3451,7 +3627,7 @@ class GCPProvider(ProviderBase):
                 "container": ["gke"],
                 "ai": ["vertex", "gemini"],
                 "analytics": ["bigquery"],
-                "network": ["cloud_lb", "cloud_cdn", "cloud_nat", "cloud_armor"],
+                "network": ["cloud_lb", "cloud_cdn", "cloud_nat", "cloud_armor", "egress"],
                 "observability": ["cloud_monitoring"],
                 "inter_region_egress": [],
             },
@@ -3469,6 +3645,7 @@ class GCPProvider(ProviderBase):
                 "network/cloud_cdn": ["on_demand"],
                 "network/cloud_nat": ["on_demand"],
                 "network/cloud_armor": ["on_demand"],
+                "network/egress": ["on_demand"],
                 "observability/cloud_monitoring": ["on_demand"],
                 "inter_region_egress": ["on_demand"],
             },
@@ -3539,6 +3716,13 @@ class GCPProvider(ProviderBase):
                     "policy_count": "Number of security policies",
                     "monthly_requests_millions": "Millions of requests evaluated per month",
                     "service": "cloud_armor",
+                },
+                "network/egress": {
+                    "source_region": "GCP origin region e.g. 'us-central1', 'europe-west1'",
+                    "destination_type": "internet | cross_region | cross_az",
+                    "destination_region": "target GCP region for cross_region (optional)",
+                    "data_gb_per_month": "monthly data volume in GB for blended-rate estimate",
+                    "network_tier": "premium (default) | standard",
                 },
                 "observability/cloud_monitoring": {
                     "ingestion_mib": "MiB of custom/external metrics ingested per month (150 MiB free tier)",
@@ -3654,6 +3838,24 @@ class GCPProvider(ProviderBase):
                     "source_region": "us-central1",
                     "data_gb": 1000.0,
                 },
+                "network/egress": {
+                    "provider": "gcp",
+                    "domain": "network",
+                    "service": "egress",
+                    "source_region": "us-central1",
+                    "destination_type": "internet",
+                    "data_gb_per_month": 1024.0,
+                    "network_tier": "premium",
+                },
+                "network/egress/cross_region": {
+                    "provider": "gcp",
+                    "domain": "network",
+                    "service": "egress",
+                    "source_region": "us-central1",
+                    "destination_type": "cross_region",
+                    "destination_region": "europe-west1",
+                    "data_gb_per_month": 1024.0,
+                },
             },
             decision_matrix={
                 "Cloud Storage": "storage/gcs",
@@ -3677,6 +3879,8 @@ class GCPProvider(ProviderBase):
                 "GCP Egress": "inter_region_egress — set source_region and data_gb",
                 "GCP Data Transfer": "inter_region_egress — set source_region, dest_region (optional), data_gb",
                 "GCP Internet Egress": "inter_region_egress — set source_region, data_gb (no dest_region)",
+                "GCP internet egress with tier breakdown": "network/egress — set destination_type=internet + data_gb_per_month",
+                "GCP inter-region transfer with tier breakdown": "network/egress — set destination_type=cross_region + destination_region",
             },
         )
 

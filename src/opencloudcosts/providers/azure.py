@@ -44,6 +44,7 @@ from opencloudcosts.models import (
     StoragePricingSpec,
 )
 from opencloudcosts.providers.base import NotConfiguredError, NotSupportedError, ProviderBase
+from opencloudcosts.utils.egress_tiers import EgressTier, compute_tiered_cost
 from opencloudcosts.utils.http_retry import sync_retry
 from opencloudcosts.utils.regions import list_azure_regions
 
@@ -122,6 +123,8 @@ _AZURE_CAPABILITIES: dict[tuple[str, str | None], bool] = {
     (PricingDomain.SERVERLESS.value, "azure_functions"): True,
     (PricingDomain.AI.value, None): True,
     (PricingDomain.AI.value, "openai"): True,
+    (PricingDomain.NETWORK.value, None): True,
+    (PricingDomain.NETWORK.value, "egress"): True,
     (PricingDomain.INTER_REGION_EGRESS.value, None): True,
     # Azure Monitor (Observability domain)
     (PricingDomain.OBSERVABILITY.value, None): True,
@@ -141,6 +144,49 @@ _AZURE_EGRESS_BASE_RATE: dict[str, Decimal] = {
     "zone3": Decimal("0.181"),  # 5 GB – 10 TB
 }
 
+# Azure internet egress tiers by billing zone.
+# Source: https://azure.microsoft.com/en-us/pricing/details/bandwidth/
+# Tiers: 0-100 GB free, then tiered at 100 GB, ~10 TB, ~50 TB, ~150 TB, ~500 TB.
+# Used as static fallback for the tiered network/egress path.
+_AZURE_INTERNET_EGRESS_TIERS: dict[str, list[EgressTier]] = {
+    "zone1": [
+        EgressTier(threshold_gb=0, rate=Decimal("0.000"), label="0-5 GB (free)"),
+        EgressTier(threshold_gb=5, rate=Decimal("0.087"), label="5 GB-10 TB"),
+        EgressTier(threshold_gb=10_240, rate=Decimal("0.083"), label="10-50 TB"),
+        EgressTier(threshold_gb=51_200, rate=Decimal("0.070"), label="50-150 TB"),
+        EgressTier(threshold_gb=153_600, rate=Decimal("0.050"), label="150-500 TB"),
+        EgressTier(threshold_gb=512_000, rate=Decimal("0.050"), label=">500 TB"),
+    ],
+    "zone2": [
+        EgressTier(threshold_gb=0, rate=Decimal("0.000"), label="0-5 GB (free)"),
+        EgressTier(threshold_gb=5, rate=Decimal("0.120"), label="5 GB-10 TB"),
+        EgressTier(threshold_gb=10_240, rate=Decimal("0.085"), label="10-50 TB"),
+        EgressTier(threshold_gb=51_200, rate=Decimal("0.082"), label="50-150 TB"),
+        EgressTier(threshold_gb=153_600, rate=Decimal("0.080"), label="150-500 TB"),
+        EgressTier(threshold_gb=512_000, rate=Decimal("0.080"), label=">500 TB"),
+    ],
+    "zone3": [
+        EgressTier(threshold_gb=0, rate=Decimal("0.000"), label="0-5 GB (free)"),
+        EgressTier(threshold_gb=5, rate=Decimal("0.181"), label="5 GB-10 TB"),
+        EgressTier(threshold_gb=10_240, rate=Decimal("0.175"), label="10-50 TB"),
+        EgressTier(threshold_gb=51_200, rate=Decimal("0.170"), label="50-150 TB"),
+        EgressTier(threshold_gb=153_600, rate=Decimal("0.160"), label="150-500 TB"),
+        EgressTier(threshold_gb=512_000, rate=Decimal("0.160"), label=">500 TB"),
+    ],
+}
+
+# Azure cross-region inter-region flat rate by zone
+_AZURE_CROSS_REGION_RATE: dict[str, Decimal] = {
+    "zone1": Decimal("0.02"),
+    "zone2": Decimal("0.08"),
+    "zone3": Decimal("0.16"),
+}
+
+# Azure cross-AZ flat rate
+_AZURE_CROSS_AZ_RATE = Decimal("0.01")  # per GB each direction
+
+_AZURE_EGRESS_SOURCE_URL = "https://azure.microsoft.com/en-us/pricing/details/bandwidth/"
+
 # Map source armRegionName → billing zone (unlisted regions default to zone1)
 _AZURE_EGRESS_ZONE: dict[str, str] = {
     # Zone 2: Asia Pacific
@@ -155,7 +201,6 @@ _AZURE_EGRESS_ZONE: dict[str, str] = {
     "westindia": "zone2",
     "koreacentral": "zone2",
     "koreasouth": "zone2",
-    "swedencentral": "zone2",
     # Zone 3: Middle East + Africa
     "uaenorth": "zone3",
     "uaecentral": "zone3",
@@ -1365,6 +1410,7 @@ class AzureProvider(ProviderBase):
                     "region": "eastus",
                 },
             )
+        breakdown: dict = {}
         if isinstance(spec, ComputePricingSpec):
             public_prices = await self._price_compute(spec)
         elif isinstance(spec, StoragePricingSpec):
@@ -1382,7 +1428,7 @@ class AzureProvider(ProviderBase):
         elif isinstance(spec, ObservabilityPricingSpec):
             public_prices = await self._price_observability(spec)
         elif isinstance(spec, NetworkPricingSpec):
-            public_prices = await self._price_network(spec)
+            public_prices, breakdown = await self._price_network(spec)
         else:
             raise NotSupportedError(
                 provider=self.provider,
@@ -1394,6 +1440,7 @@ class AzureProvider(ProviderBase):
             public_prices=public_prices,
             auth_available=False,
             source="catalog",
+            breakdown=breakdown,
         )
 
     async def _price_compute(self, spec: ComputePricingSpec) -> list[NormalizedPrice]:
@@ -1445,6 +1492,173 @@ class AzureProvider(ProviderBase):
             output_tokens=spec.output_tokens,
         )
 
+    async def _price_network(self, spec: NetworkPricingSpec) -> tuple[list[NormalizedPrice], dict]:
+        """Dispatch for domain=network specs. Supports egress, azure_cdn, azure_front_door."""
+        svc = (spec.service or "").lower()
+        if svc == "egress":
+            return await self._price_network_egress(spec)
+        if svc == "azure_cdn":
+            prices = await self.get_cdn_price(
+                region=spec.region,
+                data_gb=spec.data_gb or spec.egress_gb,
+            )
+            return prices, {}
+        if svc == "azure_front_door":
+            prices = await self.get_front_door_price(
+                region=spec.region,
+                data_gb=spec.data_gb or spec.egress_gb,
+                monthly_requests_millions=spec.monthly_requests_millions,
+            )
+            return prices, {}
+        raise NotSupportedError(
+            provider=self.provider,
+            domain=spec.domain,
+            service=spec.service,
+            reason=(
+                f"Azure NETWORK service '{spec.service}' not yet supported. "
+                "Supported: egress, azure_cdn, azure_front_door."
+            ),
+            alternatives=["Use domain=inter_region_egress for legacy egress queries."],
+        )
+
+    async def _price_network_egress(
+        self, spec: NetworkPricingSpec
+    ) -> tuple[list[NormalizedPrice], dict]:
+        """Tiered internet/cross-region/cross-AZ egress for domain=network, service=egress."""
+        src = spec.source_region or spec.region or "eastus"
+        dest_type = (spec.destination_type or "internet").lower()
+        dest_region = spec.destination_region or ""
+        data_gb = spec.data_gb_per_month if spec.data_gb_per_month > 0 else spec.egress_gb
+
+        zone = _AZURE_EGRESS_ZONE.get(src.lower(), "zone1")
+
+        if dest_type == "cross_az":
+            tiers = [EgressTier(0, _AZURE_CROSS_AZ_RATE, "Cross-AZ within same region ($0.01/GB)")]
+            tier_result = compute_tiered_cost(tiers, data_gb)
+            price = NormalizedPrice(
+                provider=CloudProvider.AZURE,
+                service="egress",
+                sku_id=f"azure:cross_az:{src}",
+                product_family="Bandwidth",
+                description=f"Azure cross-AZ traffic within {src}",
+                region=src,
+                pricing_term=PricingTerm.ON_DEMAND,
+                price_per_unit=_AZURE_CROSS_AZ_RATE,
+                unit=PriceUnit.PER_GB,
+                attributes={
+                    "source_region": src,
+                    "destination_type": "cross_az",
+                    "zone": zone,
+                    "note": "Flat $0.01/GB each direction between availability zones.",
+                },
+            )
+            return self._annotate_fresh([price], _AZURE_EGRESS_SOURCE_URL), tier_result
+
+        if dest_type == "cross_region":
+            rate = _AZURE_CROSS_REGION_RATE.get(zone, Decimal("0.02"))
+            tiers = [EgressTier(0, rate, f"Inter-region within Azure ({zone}, flat)")]
+            tier_result = compute_tiered_cost(tiers, data_gb)
+            desc = f"Azure inter-region data transfer from {src}"
+            if dest_region:
+                desc += f" to {dest_region}"
+            price = NormalizedPrice(
+                provider=CloudProvider.AZURE,
+                service="egress",
+                sku_id=f"azure:inter_region:{src}:{dest_region or zone}",
+                product_family="Bandwidth",
+                description=desc,
+                region=src,
+                pricing_term=PricingTerm.ON_DEMAND,
+                price_per_unit=rate,
+                unit=PriceUnit.PER_GB,
+                attributes={
+                    "source_region": src,
+                    "destination_type": "cross_region",
+                    "zone": zone,
+                    **({"dest_region": dest_region} if dest_region else {}),
+                },
+            )
+            return self._annotate_fresh([price], _AZURE_EGRESS_SOURCE_URL), tier_result
+
+        # Validate destination_type before falling through to internet egress
+        if dest_type not in ("internet", "cross_az", "cross_region"):
+            raise NotSupportedError(
+                provider=self.provider,
+                domain=spec.domain,
+                service=spec.service,
+                reason=(
+                    f"Azure: unknown destination_type={dest_type!r}. "
+                    "Valid values: 'internet', 'cross_region', 'cross_az'."
+                ),
+                alternatives=["Use destination_type='internet' for internet egress."],
+            )
+
+        # Default: internet egress with tiering
+        tiers = _AZURE_INTERNET_EGRESS_TIERS.get(zone, _AZURE_INTERNET_EGRESS_TIERS["zone1"])
+
+        # Attempt live fetch to update first paid tier rate
+        try:
+            zone_label = zone.replace("zone", "zone ")
+            items = await asyncio.to_thread(
+                self._fetch_prices,
+                {"serviceName": "Bandwidth"},
+                max_results=200,
+            )
+            tier_rows: list[tuple[float, Decimal]] = []
+            for item in items:
+                meter = item.get("meterName", "").lower()
+                if "out" in meter and zone_label in meter:
+                    tier_min = float(item.get("tierMinimumUnits", 0))
+                    r = Decimal(str(item.get("retailPrice", 0)))
+                    if r >= 0:
+                        tier_rows.append((tier_min, r))
+            if tier_rows:
+                tier_rows.sort(key=lambda x: x[0])
+                live_tiers = [
+                    EgressTier(
+                        threshold_gb=int(t[0]),
+                        rate=t[1],
+                        label=f"From {int(t[0])} GB (live)",
+                    )
+                    for t in tier_rows
+                ]
+                if live_tiers:
+                    tiers = live_tiers
+        except Exception as exc:
+            logger.warning("Azure: tiered egress fetch failed: %s", exc)
+
+        tier_result = compute_tiered_cost(tiers, data_gb)
+        blended = (
+            Decimal(tier_result["blended_rate_per_gb"])
+            if data_gb > 0
+            else tiers[1].rate
+            if len(tiers) > 1
+            else tiers[0].rate
+        )
+        desc = f"Azure internet egress from {src} ({zone.upper()}, tiered, first 5 GB free)"
+        if data_gb > 0:
+            total_cost = tier_result["total_cost"]
+            desc += f": {data_gb:.0f} GB/month — ${total_cost} (${float(blended):.4f}/GB blended)"
+        price = NormalizedPrice(
+            provider=CloudProvider.AZURE,
+            service="egress",
+            sku_id=f"azure:internet_egress:{src}:{zone}",
+            product_family="Bandwidth",
+            description=desc,
+            region=src,
+            pricing_term=PricingTerm.ON_DEMAND,
+            price_per_unit=blended,
+            unit=PriceUnit.PER_GB_MONTH,
+            attributes={
+                "source_region": src,
+                "destination_type": "internet",
+                "zone": zone,
+                "free_tier_gb": "5",
+                "note": f"First 5 GB/month free. {zone.upper()} rates.",
+            },
+        )
+        return self._annotate_fresh([price], _AZURE_EGRESS_SOURCE_URL), tier_result
+
     async def _price_egress(self, spec: EgressPricingSpec) -> list[NormalizedPrice]:
         src = spec.source_region or spec.region or "eastus"
         return await self.get_egress_price(src, spec.dest_region, spec.data_gb)
@@ -1465,37 +1679,6 @@ class AzureProvider(ProviderBase):
             reason=(
                 f"Azure observability service '{spec.service}' not supported. Use 'azure_monitor'."
             ),
-        )
-
-    async def _price_network(self, spec: NetworkPricingSpec) -> list[NormalizedPrice]:
-        svc = (spec.service or "azure_cdn").lower()
-        if svc == "azure_cdn":
-            return await self.get_cdn_price(
-                region=spec.region,
-                data_gb=spec.data_gb or spec.egress_gb,
-            )
-        elif svc == "azure_front_door":
-            return await self.get_front_door_price(
-                region=spec.region,
-                data_gb=spec.data_gb or spec.egress_gb,
-                monthly_requests_millions=spec.monthly_requests_millions,
-            )
-        raise NotSupportedError(
-            provider=self.provider,
-            domain=spec.domain,
-            service=spec.service,
-            reason=(
-                f"Azure network service '{spec.service}' not supported. "
-                "Use 'azure_cdn' or 'azure_front_door'."
-            ),
-            alternatives=["azure_cdn", "azure_front_door"],
-            example_invocation={
-                "provider": "azure",
-                "domain": "network",
-                "service": "azure_cdn",
-                "region": "eastus",
-                "data_gb": 1000,
-            },
         )
 
     async def get_egress_price(
@@ -1578,7 +1761,7 @@ class AzureProvider(ProviderBase):
 
         price = NormalizedPrice(
             provider=CloudProvider.AZURE,
-            service="inter_region_egress",
+            service="egress",
             sku_id=f"azure:egress:{source_region}:{dest_region}:{zone}",
             product_family="Bandwidth",
             description=desc,
@@ -2132,6 +2315,7 @@ class AzureProvider(ProviderBase):
                 PricingDomain.CONTAINER,
                 PricingDomain.SERVERLESS,
                 PricingDomain.AI,
+                PricingDomain.NETWORK,
                 PricingDomain.INTER_REGION_EGRESS,
                 PricingDomain.OBSERVABILITY,
                 PricingDomain.NETWORK,
@@ -2143,6 +2327,7 @@ class AzureProvider(ProviderBase):
                 "container": ["aks"],
                 "serverless": ["azure_functions"],
                 "ai": ["openai"],
+                "network": ["egress"],
                 "inter_region_egress": [],
                 "observability": ["azure_monitor"],
                 "network": ["azure_cdn", "azure_front_door"],
@@ -2156,6 +2341,7 @@ class AzureProvider(ProviderBase):
                 "container/aks": ["on_demand"],
                 "serverless/azure_functions": ["on_demand"],
                 "ai/openai": ["on_demand"],
+                "network/egress": ["on_demand"],
                 "inter_region_egress": ["on_demand"],
                 "observability/azure_monitor": ["on_demand"],
                 "network/azure_cdn": ["on_demand"],
@@ -2241,6 +2427,13 @@ class AzureProvider(ProviderBase):
                         "Front Door has 8 pricing zones. "
                         "Standard SKU Zone 1 base: $0.0825/GB, $0.009/10K requests."
                     ),
+                },
+                "network/egress": {
+                    "source_region": "Origin Azure ARM region e.g. 'eastus', 'westeurope'",
+                    "destination_type": "internet | cross_region | cross_az",
+                    "destination_region": "Target region for cross_region (optional)",
+                    "data_gb_per_month": "Monthly data volume in GB for tiered cost estimate",
+                    "note": "First 100 GB/month free. Zone 1 rates for Americas + Europe.",
                 },
             },
             example_invocations={
@@ -2329,6 +2522,23 @@ class AzureProvider(ProviderBase):
                     "data_gb": 1000,
                     "monthly_requests_millions": 100,
                 },
+                "network/egress": {
+                    "provider": "azure",
+                    "domain": "network",
+                    "service": "egress",
+                    "source_region": "eastus",
+                    "destination_type": "internet",
+                    "data_gb_per_month": 1024.0,
+                },
+                "network/egress/cross_region": {
+                    "provider": "azure",
+                    "domain": "network",
+                    "service": "egress",
+                    "source_region": "eastus",
+                    "destination_type": "cross_region",
+                    "destination_region": "westeurope",
+                    "data_gb_per_month": 1024.0,
+                },
             },
             decision_matrix={
                 "Azure VMs": "compute/vm",
@@ -2357,6 +2567,8 @@ class AzureProvider(ProviderBase):
                 "Azure Front Door": "network/azure_front_door — set data_gb and monthly_requests_millions",
                 "Azure Front Door Standard": "network/azure_front_door — set data_gb, monthly_requests_millions",
                 "Azure Front Door Premium": "network/azure_front_door — Premium WAF rules cost additional",
+                "Azure internet egress with tier breakdown (first 100 GB free)": "network/egress — set destination_type=internet + data_gb_per_month",
+                "Azure inter-region transfer with blended cost": "network/egress — set destination_type=cross_region + destination_region",
             },
         )
 

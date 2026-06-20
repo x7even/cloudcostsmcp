@@ -556,7 +556,93 @@ async def test_egress_get_price_dispatch(azure_provider: AzureProvider):
         result = await azure_provider.get_price(spec)
 
     assert len(result.public_prices) == 1
-    assert result.public_prices[0].service == "inter_region_egress"
+    assert result.public_prices[0].service == "egress"
+
+
+# ---------------------------------------------------------------------------
+# network/egress (tiered internet egress path) [new in this version]
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_network_egress_internet_returns_breakdown(azure_provider: AzureProvider):
+    """get_price with domain=network service=egress returns PricingResult with tier breakdown."""
+    from opencloudcosts.models import NetworkPricingSpec, PricingDomain
+
+    spec = NetworkPricingSpec(
+        provider="azure",
+        domain=PricingDomain.NETWORK,
+        service="egress",
+        source_region="eastus",
+        destination_type="internet",
+        data_gb_per_month=1000.0,
+    )
+    api_resp = {"Items": [], "NextPageLink": None}
+    with patch("httpx.get", return_value=_make_mock_response(api_resp)):
+        result = await azure_provider.get_price(spec)
+
+    assert len(result.public_prices) == 1
+    p = result.public_prices[0]
+    assert p.provider.value == "azure"
+    assert p.service == "egress"
+    assert "tiers" in result.breakdown
+    assert result.breakdown["data_gb"] == pytest.approx(1000.0)
+    # Zone 1: 5 GB free, 995 GB at $0.087 = $86.565
+    assert float(result.breakdown["total_cost"]) == pytest.approx(86.565, rel=1e-3)
+
+
+@pytest.mark.asyncio
+async def test_network_egress_cross_region(azure_provider: AzureProvider):
+    """Cross-region egress via network/egress uses zone1 flat rate ($0.02/GB)."""
+    from opencloudcosts.models import NetworkPricingSpec, PricingDomain
+
+    spec = NetworkPricingSpec(
+        provider="azure",
+        domain=PricingDomain.NETWORK,
+        service="egress",
+        source_region="eastus",
+        destination_type="cross_region",
+        destination_region="westeurope",
+        data_gb_per_month=500.0,
+    )
+    api_resp = {"Items": [], "NextPageLink": None}
+    with patch("httpx.get", return_value=_make_mock_response(api_resp)):
+        result = await azure_provider.get_price(spec)
+
+    assert len(result.public_prices) == 1
+    p = result.public_prices[0]
+    assert p.service == "egress"
+    # Zone 1 cross-region = $0.02/GB
+    assert float(p.price_per_unit) == pytest.approx(0.02, rel=1e-3)
+
+
+@pytest.mark.asyncio
+async def test_network_egress_100gb_all_free(azure_provider: AzureProvider):
+    """100 GB: first 5 GB free, remaining 95 GB at $0.087/GB = $8.265."""
+    from opencloudcosts.models import NetworkPricingSpec, PricingDomain
+
+    spec = NetworkPricingSpec(
+        provider="azure",
+        domain=PricingDomain.NETWORK,
+        service="egress",
+        source_region="eastus",
+        destination_type="internet",
+        data_gb_per_month=100.0,
+    )
+    api_resp = {"Items": [], "NextPageLink": None}
+    with patch("httpx.get", return_value=_make_mock_response(api_resp)):
+        result = await azure_provider.get_price(spec)
+
+    # 5 GB free, 95 GB × $0.087 = $8.265
+    assert float(result.breakdown["total_cost"]) == pytest.approx(8.265, rel=1e-3)
+
+
+@pytest.mark.asyncio
+async def test_network_egress_supports_capability(azure_provider: AzureProvider):
+    """AzureProvider.supports returns True for NETWORK/egress."""
+    from opencloudcosts.models import PricingDomain
+
+    assert azure_provider.supports(PricingDomain.NETWORK, "egress")
 
 
 # ===========================================================================
