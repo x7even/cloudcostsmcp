@@ -1056,7 +1056,7 @@ async def run_single(
                 "tools": openai_tools,
                 "tool_choice": "auto",
                 "temperature": 0.3,
-                "max_tokens": 16384,
+                "max_tokens": 32768,
             }
 
             try:
