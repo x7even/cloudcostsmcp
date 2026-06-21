@@ -7,7 +7,7 @@ server and writes a pass/fail matrix to docs/harness-results.md (or --output).
 
 Usage:
     uv run local-test-harness/run_matrix.py \\
-        --base-url http://192.168.50.230:1234 \\
+        --base-url http://your-llm-host:8080 \\
         --models "qwen3.5-122b-a10b@q6_k,unsloth/qwen3.6-35b-a3b,google/gemma-4-26b-a4b" \\
         [--ids all] \\
         [--parallel 2] \\
@@ -462,11 +462,11 @@ if __name__ == "__main__":
             "Examples:\n"
             "  # Run all tests against 3 models:\n"
             "  uv run local-test-harness/run_matrix.py \\\n"
-            "      --base-url http://192.168.50.230:1234 \\\n"
+            "      --base-url http://your-llm-host:8080 \\\n"
             "      --models 'qwen3.5-122b-a10b@q6_k,unsloth/qwen3.6-35b-a3b,google/gemma-4-26b-a4b'\n\n"
             "  # Run a subset of tests:\n"
             "  uv run local-test-harness/run_matrix.py \\\n"
-            "      --base-url http://192.168.50.230:1234 \\\n"
+            "      --base-url http://your-llm-host:8080 \\\n"
             "      --models 'qwen3.5-122b-a10b@q6_k' \\\n"
             "      --ids C1,C2,M1,X1\n"
         ),
@@ -474,7 +474,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--base-url",
         required=True,
-        help="OpenAI-compatible LLM server base URL (e.g. http://192.168.50.230:1234)",
+        help="OpenAI-compatible LLM server base URL (e.g. http://your-llm-host:8080)",
     )
     parser.add_argument(
         "--models",

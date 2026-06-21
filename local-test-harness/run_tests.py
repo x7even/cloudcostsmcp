@@ -10,13 +10,13 @@ Configuration (copy .env.example to .env and edit):
     OCC_LLM_MODEL      Model identifier as reported by the server
     OCC_LLM_API_KEY    Optional API key (for OpenAI, hosted providers, etc.)
     OCC_MCP_URL        HTTP MCP endpoint — uses containerised server instead of stdio subprocess
-                       (e.g. http://192.168.50.17:8080/mcp). Unset = spawn local stdio process.
+                       (e.g. http://your-mcp-host:8080/mcp). Unset = spawn local stdio process.
 
 Usage:
     uv run local-test-harness/run_tests.py
     uv run local-test-harness/run_tests.py --ids C1,C4,X2
     uv run local-test-harness/run_tests.py --ids all --parallel 8
-    uv run local-test-harness/run_tests.py --mcp-url http://192.168.50.17:8080/mcp --parallel 8
+    uv run local-test-harness/run_tests.py --mcp-url http://your-mcp-host:8080/mcp --parallel 8
 """
 # /// script
 # requires-python = ">=3.11"
@@ -1394,7 +1394,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--mcp-url",
         default="",
-        help="Override OCC_MCP_URL — HTTP MCP endpoint (e.g. http://192.168.50.17:8080/mcp). "
+        help="Override OCC_MCP_URL — HTTP MCP endpoint (e.g. http://your-mcp-host:8080/mcp). "
              "When set, workers connect via HTTP instead of spawning a local stdio process.",
     )
     args = parser.parse_args()
