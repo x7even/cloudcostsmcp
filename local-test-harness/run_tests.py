@@ -1057,7 +1057,6 @@ async def run_single(
                 "tool_choice": "auto",
                 "temperature": 0.3,
                 "max_tokens": 16384,
-                "enable_thinking": False,
             }
 
             try:
@@ -1099,7 +1098,7 @@ async def run_single(
                     headers = {"Authorization": f"Bearer {LLM_API_KEY}"} if LLM_API_KEY else {}
                     recovery_resp = await client.post(
                         f"{LLM_BASE_URL}/v1/chat/completions",
-                        json={**payload, "messages": messages, "tools": []},
+                        json={**payload, "messages": messages, "tool_choice": "none"},
                         headers=headers,
                     )
                     recovery_resp.raise_for_status()
@@ -1202,7 +1201,7 @@ async def run_single(
                     headers = {"Authorization": f"Bearer {LLM_API_KEY}"} if LLM_API_KEY else {}
                     loop_resp = await client.post(
                         f"{LLM_BASE_URL}/v1/chat/completions",
-                        json={**payload, "messages": messages, "tools": [], "tool_choice": "none"},
+                        json={**payload, "messages": messages, "tool_choice": "none"},
                         headers=headers,
                     )
                     loop_resp.raise_for_status()
