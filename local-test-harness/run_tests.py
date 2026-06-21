@@ -6,15 +6,17 @@ Runs test prompts through any OpenAI-compatible LLM API with the full
 MCP tool-call agentic loop. Results are saved per-run for analysis.
 
 Configuration (copy .env.example to .env and edit):
-    OCC_LLM_BASE_URL   Base URL of your LLM server, e.g. http://localhost:1234
+    OCC_LLM_BASE_URL   Base URL of your LLM server, no /v1 suffix (e.g. http://127.0.0.1:8080)
     OCC_LLM_MODEL      Model identifier as reported by the server
-    OCC_LLM_API_KEY    Optional API key (for OpenAI, Anthropic-proxy, etc.)
+    OCC_LLM_API_KEY    Optional API key (for OpenAI, hosted providers, etc.)
+    OCC_MCP_URL        HTTP MCP endpoint — uses containerised server instead of stdio subprocess
+                       (e.g. http://192.168.50.17:8080/mcp). Unset = spawn local stdio process.
 
 Usage:
     uv run local-test-harness/run_tests.py
     uv run local-test-harness/run_tests.py --ids C1,C4,X2
-    uv run local-test-harness/run_tests.py --ids all
-    uv run local-test-harness/run_tests.py --llm-base-url http://localhost:1234 --model my-model
+    uv run local-test-harness/run_tests.py --ids all --parallel 8
+    uv run local-test-harness/run_tests.py --mcp-url http://192.168.50.17:8080/mcp --parallel 8
 """
 # /// script
 # requires-python = ">=3.11"
@@ -32,6 +34,7 @@ from pathlib import Path
 import httpx
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from mcp.client.streamable_http import streamablehttp_client
 
 # ---------------------------------------------------------------------------
 # Configuration — read from .env file then environment variables.
@@ -60,6 +63,7 @@ _load_dotenv(_HARNESS_DIR / ".env")
 LLM_BASE_URL = os.environ.get("OCC_LLM_BASE_URL", "")
 LLM_MODEL = os.environ.get("OCC_LLM_MODEL", "")
 LLM_API_KEY = os.environ.get("OCC_LLM_API_KEY", "")  # optional
+MCP_URL = os.environ.get("OCC_MCP_URL", "")  # HTTP MCP endpoint; if unset, falls back to stdio
 PROJECT_DIR = _HARNESS_DIR.parent
 MCP_COMMAND = "uv"
 MCP_ARGS = ["run", "--directory", str(PROJECT_DIR), "opencloudcosts"]
@@ -1066,7 +1070,7 @@ async def run_single(
                 resp.raise_for_status()
                 data = resp.json()
             except Exception as e:
-                trace["error"] = f"LMStudio API error (round {round_num+1}): {e}"
+                trace["error"] = f"LLM API error (round {round_num+1}): {e}"
                 print(f"  ERROR: {e}")
                 break
 
@@ -1234,44 +1238,59 @@ async def run_single(
 # Entry point
 # ---------------------------------------------------------------------------
 
+async def _run_prompts(items, session, run_dir, results, print_lock):
+    """Inner loop: run a list of (pid, prompt) pairs against an already-initialised session."""
+    tools_resp = await session.list_tools()
+    openai_tools = [mcp_tool_to_openai(t) for t in tools_resp.tools]
+    for pid, prompt in items:
+        try:
+            trace = await run_single(pid, prompt, session, openai_tools, run_dir)
+            results[pid] = {
+                "status": "error" if trace["error"] else "ok",
+                "rounds": trace["rounds"],
+                "tool_calls": len(trace["tool_calls"]),
+                "tools_used": list({tc["tool"] for tc in trace["tool_calls"]}),
+                "error": trace["error"],
+                "answer_preview": (trace["final_answer"] or "")[:200],
+            }
+        except Exception as e:
+            async with print_lock:
+                print(f"  FATAL [{pid}]: {e}")
+            results[pid] = {
+                "status": "fatal",
+                "error": str(e),
+                "rounds": 0,
+                "tool_calls": 0,
+                "tools_used": [],
+            }
+
+
 async def run_worker(
     items: list[tuple[str, str]],
     run_dir: "Path",
     results: dict,
     print_lock: asyncio.Lock,
 ) -> None:
-    """Run a subset of prompts sequentially, each with its own MCP session."""
-    server_params = StdioServerParameters(
-        command=MCP_COMMAND,
-        args=MCP_ARGS,
-        env={**os.environ},
-    )
-    async with stdio_client(server_params) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            tools_resp = await session.list_tools()
-            openai_tools = [mcp_tool_to_openai(t) for t in tools_resp.tools]
-            for pid, prompt in items:
-                try:
-                    trace = await run_single(pid, prompt, session, openai_tools, run_dir)
-                    results[pid] = {
-                        "status": "error" if trace["error"] else "ok",
-                        "rounds": trace["rounds"],
-                        "tool_calls": len(trace["tool_calls"]),
-                        "tools_used": list({tc["tool"] for tc in trace["tool_calls"]}),
-                        "error": trace["error"],
-                        "answer_preview": (trace["final_answer"] or "")[:200],
-                    }
-                except Exception as e:
-                    async with print_lock:
-                        print(f"  FATAL [{pid}]: {e}")
-                    results[pid] = {
-                        "status": "fatal",
-                        "error": str(e),
-                        "rounds": 0,
-                        "tool_calls": 0,
-                        "tools_used": [],
-                    }
+    """Run a subset of prompts sequentially, each with its own MCP session.
+
+    Uses HTTP transport when OCC_MCP_URL is set (shared containerised server),
+    falls back to stdio (spawns a local uv process) when it is not.
+    """
+    if MCP_URL:
+        async with streamablehttp_client(MCP_URL) as (read, write, _):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                await _run_prompts(items, session, run_dir, results, print_lock)
+    else:
+        server_params = StdioServerParameters(
+            command=MCP_COMMAND,
+            args=MCP_ARGS,
+            env={**os.environ},
+        )
+        async with stdio_client(server_params) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                await _run_prompts(items, session, run_dir, results, print_lock)
 
 
 async def main(ids: list[str], parallel: int = 1):
@@ -1372,6 +1391,12 @@ if __name__ == "__main__":
         default=1,
         help="Number of parallel workers (each with its own MCP session). Default: 1",
     )
+    parser.add_argument(
+        "--mcp-url",
+        default="",
+        help="Override OCC_MCP_URL — HTTP MCP endpoint (e.g. http://192.168.50.17:8080/mcp). "
+             "When set, workers connect via HTTP instead of spawning a local stdio process.",
+    )
     args = parser.parse_args()
 
     # CLI flags override env / .env
@@ -1381,6 +1406,8 @@ if __name__ == "__main__":
         LLM_MODEL = args.model
     if args.api_key:
         LLM_API_KEY = args.api_key
+    if args.mcp_url:
+        MCP_URL = args.mcp_url
 
     if not LLM_BASE_URL:
         print("Error: OCC_LLM_BASE_URL is not set.")
