@@ -24,7 +24,7 @@ import json
 import os
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
@@ -53,38 +53,38 @@ _MCP_ARGS = ["run", "--directory", str(_PROJECT_DIR), "opencloudcosts"]
 # Category labels derived from test ID prefix
 # ---------------------------------------------------------------------------
 _CATEGORY_MAP: dict[str, str] = {
-    "C":    "Common",
-    "M":    "Multi-cloud",
-    "X":    "Complex BoM",
-    "AS":   "AWS Simple",
-    "GS":   "GCP Simple",
-    "MP":   "AWS vs GCP",
-    "MR":   "Multi-region",
-    "CX":   "Complex TCO",
-    "AZX":  "Azure Complex",
-    "MRS":  "Multi-region Stack",
-    "CCR":  "Cross-Cloud",
-    "AZ":   "Azure Simple",
-    "AA":   "Advanced AWS",
-    "MC":   "3-Cloud Compare",
-    "GK":   "GCP GKE",
-    "GM":   "GCP Memorystore",
-    "GB":   "GCP BigQuery",
-    "GV":   "GCP Vertex AI",
-    "GN":   "GCP Networking",
-    "GC":   "GCP Cloud Armor",
-    "GCX":  "GCP Complex",
-    "GGCS":  "GCP Cloud Storage",
-    "GSQL":  "GCP Cloud SQL",
+    "C": "Common",
+    "M": "Multi-cloud",
+    "X": "Complex BoM",
+    "AS": "AWS Simple",
+    "GS": "GCP Simple",
+    "MP": "AWS vs GCP",
+    "MR": "Multi-region",
+    "CX": "Complex TCO",
+    "AZX": "Azure Complex",
+    "MRS": "Multi-region Stack",
+    "CCR": "Cross-Cloud",
+    "AZ": "Azure Simple",
+    "AA": "Advanced AWS",
+    "MC": "3-Cloud Compare",
+    "GK": "GCP GKE",
+    "GM": "GCP Memorystore",
+    "GB": "GCP BigQuery",
+    "GV": "GCP Vertex AI",
+    "GN": "GCP Networking",
+    "GC": "GCP Cloud Armor",
+    "GCX": "GCP Complex",
+    "GGCS": "GCP Cloud Storage",
+    "GSQL": "GCP Cloud SQL",
     "AZSQL": "Azure SQL",
     "AZCOS": "Azure Cosmos DB",
     "AZAKS": "Azure AKS",
-    "AZFN":  "Azure Functions",
-    "AZAI":  "Azure OpenAI",
+    "AZFN": "Azure Functions",
+    "AZAI": "Azure OpenAI",
     "AZMON": "Azure Monitor",
     "AZCDN": "Azure CDN",
-    "AZFD":  "Azure Front Door",
-    "EGR":   "Inter-region Egress",
+    "AZFD": "Azure Front Door",
+    "EGR": "Inter-region Egress",
 }
 
 
@@ -110,6 +110,7 @@ def _short_model(model: str) -> str:
 # Single-test runner (model-parameterised)
 # ---------------------------------------------------------------------------
 
+
 async def _run_single(
     prompt_id: str,
     prompt: str,
@@ -130,7 +131,7 @@ async def _run_single(
     trace: dict = {
         "prompt_id": prompt_id,
         "model": model,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "rounds": 0,
         "tool_calls": [],
         "final_answer": None,
@@ -222,24 +223,30 @@ async def _run_single(
                 except Exception as e:
                     tool_result = {"error": f"MCP error: {e}"}
                 print(f"       ← {_preview(tool_result, 100)}")
-                trace["tool_calls"].append({
-                    "round": round_num,
-                    "tool": tool_name,
-                    "args": tool_args,
-                    "result": tool_result,
-                })
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc["id"],
-                    "content": json.dumps(tool_result),
-                })
+                trace["tool_calls"].append(
+                    {
+                        "round": round_num,
+                        "tool": tool_name,
+                        "args": tool_args,
+                        "result": tool_result,
+                    }
+                )
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc["id"],
+                        "content": json.dumps(tool_result),
+                    }
+                )
         else:
             trace["error"] = f"max rounds ({MAX_TOOL_ROUNDS}) exhausted"
-            print(f"    ✗ max rounds")
+            print("    ✗ max rounds")
 
     status = "✅" if not trace["error"] else "❌"
-    print(f"    {status} {round_num + 1} round(s), {len(trace['tool_calls'])} tool call(s)"
-          + (f" — {trace['error']}" if trace["error"] else ""))
+    print(
+        f"    {status} {round_num + 1} round(s), {len(trace['tool_calls'])} tool call(s)"
+        + (f" — {trace['error']}" if trace["error"] else "")
+    )
 
     # Save per-test trace
     safe_model = re.sub(r"[^a-zA-Z0-9_-]", "_", model)
@@ -251,6 +258,7 @@ async def _run_single(
 # ---------------------------------------------------------------------------
 # Per-model runner (all tests in sequence, sharing one MCP session)
 # ---------------------------------------------------------------------------
+
 
 async def run_model(
     model: str,
@@ -265,9 +273,7 @@ async def run_model(
     print(f"  Model: {model}")
     print(f"{'━' * 68}")
 
-    server_params = StdioServerParameters(
-        command=_MCP_COMMAND, args=_MCP_ARGS, env={**os.environ}
-    )
+    server_params = StdioServerParameters(command=_MCP_COMMAND, args=_MCP_ARGS, env={**os.environ})
 
     results: dict[str, dict] = {}
     items = list(tests.items())
@@ -281,16 +287,25 @@ async def run_model(
                 for pid, prompt in bucket:
                     try:
                         trace = await _run_single(
-                            pid, prompt, session, openai_tools,
-                            base_url, model, api_key, run_dir,
+                            pid,
+                            prompt,
+                            session,
+                            openai_tools,
+                            base_url,
+                            model,
+                            api_key,
+                            run_dir,
                         )
                         results[pid] = trace
                     except Exception as e:
                         print(f"  FATAL [{pid}]: {e}")
                         results[pid] = {
-                            "prompt_id": pid, "model": model,
-                            "error": f"fatal: {e}", "rounds": 0,
-                            "tool_calls": [], "final_answer": None,
+                            "prompt_id": pid,
+                            "model": model,
+                            "error": f"fatal: {e}",
+                            "rounds": 0,
+                            "tool_calls": [],
+                            "final_answer": None,
                         }
 
     buckets: list[list[tuple[str, str]]] = [[] for _ in range(max(1, min(parallel, len(items))))]
@@ -304,6 +319,7 @@ async def run_model(
 # ---------------------------------------------------------------------------
 # Markdown matrix generator
 # ---------------------------------------------------------------------------
+
 
 def _build_markdown(
     models: list[str],
@@ -363,7 +379,7 @@ def _build_markdown(
     for model in models:
         p = model_pass[model]
         totals.append(f"**{p}/{len(tests)}**")
-    lines.append(f"| **Total** | | " + " | ".join(totals) + " |")
+    lines.append("| **Total** | | " + " | ".join(totals) + " |")
 
     lines += [
         "",
@@ -389,6 +405,7 @@ def _build_markdown(
 # Entry point
 # ---------------------------------------------------------------------------
 
+
 async def main(
     base_url: str,
     models: list[str],
@@ -398,8 +415,8 @@ async def main(
     parallel_models: int,
     output_path: Path,
 ) -> None:
-    run_ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    run_dir = _HARNESS_DIR / "results" / f"matrix_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+    run_ts = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
+    run_dir = _HARNESS_DIR / "results" / f"matrix_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}"
     run_dir.mkdir(parents=True, exist_ok=True)
 
     if "all" in ids:
@@ -414,7 +431,9 @@ async def main(
         print("No tests selected. Use --ids C1,C2,... or --ids all")
         sys.exit(1)
 
-    print(f"Matrix run: {len(models)} model(s) × {len(tests)} test(s) = {len(models) * len(tests)} total")
+    print(
+        f"Matrix run: {len(models)} model(s) × {len(tests)} test(s) = {len(models) * len(tests)} total"
+    )
     if parallel_models > 1:
         print(f"  Running up to {parallel_models} models in parallel")
     print(f"Run dir: {run_dir}")
@@ -522,12 +541,14 @@ if __name__ == "__main__":
 
     id_list = [x.strip() for x in args.ids.split(",") if x.strip()]
 
-    asyncio.run(main(
-        base_url=args.base_url,
-        models=model_list,
-        ids=id_list,
-        api_key=args.api_key,
-        parallel=args.parallel,
-        parallel_models=args.parallel_models,
-        output_path=Path(args.output),
-    ))
+    asyncio.run(
+        main(
+            base_url=args.base_url,
+            models=model_list,
+            ids=id_list,
+            api_key=args.api_key,
+            parallel=args.parallel,
+            parallel_models=args.parallel_models,
+            output_path=Path(args.output),
+        )
+    )

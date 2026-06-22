@@ -695,9 +695,19 @@ async def test_sql_price_vcores_word_boundary(azure_provider: AzureProvider):
         # 4-vCore item — should match
         {**_AZURE_SQL_ITEM, "skuName": "GP_Gen5_4 LRS", "meterId": "sql-gp-4"},
         # 14-vCore item — must NOT match (false positive fixed by issue #3)
-        {**_AZURE_SQL_ITEM, "skuName": "GP_Gen5_14 LRS", "retailPrice": 1.34, "meterId": "sql-gp-14"},
+        {
+            **_AZURE_SQL_ITEM,
+            "skuName": "GP_Gen5_14 LRS",
+            "retailPrice": 1.34,
+            "meterId": "sql-gp-14",
+        },
         # 40-vCore item — must NOT match
-        {**_AZURE_SQL_ITEM, "skuName": "GP_Gen5_40 LRS", "retailPrice": 3.05, "meterId": "sql-gp-40"},
+        {
+            **_AZURE_SQL_ITEM,
+            "skuName": "GP_Gen5_40 LRS",
+            "retailPrice": 3.05,
+            "meterId": "sql-gp-40",
+        },
     ]
     api_resp = {"Items": items, "NextPageLink": None}
     with patch("httpx.get", return_value=_make_mock_response(api_resp)):

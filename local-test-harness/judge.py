@@ -35,9 +35,9 @@ RESULTS_ROOT = HARNESS_DIR / "results"
 # Total character budget for tool results in a judge prompt.
 # Raised for traces with few calls (≤5) so the judge sees enough detail
 # (e.g. a get_prices_batch returning 36 GPU instances needs > 800 chars).
-_BUDGET_FEW_CALLS = 12000   # ≤5 tool calls
-_BUDGET_MANY_CALLS = 6000   # >5 tool calls
-_MAX_PER_CALL = 3000        # hard cap per individual call regardless of n
+_BUDGET_FEW_CALLS = 12000  # ≤5 tool calls
+_BUDGET_MANY_CALLS = 6000  # >5 tool calls
+_MAX_PER_CALL = 3000  # hard cap per individual call regardless of n
 
 
 def _load_dotenv(env_file: Path) -> None:
@@ -121,6 +121,7 @@ ASSISTANT'S ANSWER:
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _get_prompt(trace: dict) -> str:
     """Return question text from trace or fall back to TEST_PROMPTS lookup."""
     if trace.get("prompt"):
@@ -156,13 +157,13 @@ def _parse_judge_json(text: str) -> dict | None:
     text = re.sub(r"\s*```\s*$", "", text.strip(), flags=re.MULTILINE)
     # Walk each '{' position and find its matching '}', then try to parse.
     # This handles greedy regex failures (e.g. judge wraps result in outer object).
-    for start in (m.start() for m in re.finditer(r'\{', text)):
+    for start in (m.start() for m in re.finditer(r"\{", text)):
         depth = 0
         end = -1
         for i, ch in enumerate(text[start:], start):
-            if ch == '{':
+            if ch == "{":
                 depth += 1
-            elif ch == '}':
+            elif ch == "}":
                 depth -= 1
                 if depth == 0:
                     end = i
@@ -170,7 +171,7 @@ def _parse_judge_json(text: str) -> dict | None:
         if end == -1:
             continue
         try:
-            d = json.loads(text[start:end + 1])
+            d = json.loads(text[start : end + 1])
             if not isinstance(d, dict):
                 continue
             if d.get("verdict") in _VERDICTS:
@@ -209,6 +210,7 @@ async def _llm_call(messages: list[dict], client: httpx.AsyncClient) -> str:
 # Core judge logic
 # ---------------------------------------------------------------------------
 
+
 async def judge_trace(trace: dict, client: httpx.AsyncClient) -> dict:
     answer = trace.get("final_answer") or ""
     prompt = _get_prompt(trace)
@@ -232,6 +234,7 @@ async def judge_trace(trace: dict, client: httpx.AsyncClient) -> dict:
         }
 
     tool_results_str = _format_tool_results(tool_calls)
+
     # Escape curly braces in untrusted content so str.format() cannot
     # interpret embedded {placeholders} as format specifiers.
     def _esc(s: str) -> str:
@@ -257,14 +260,16 @@ async def judge_trace(trace: dict, client: httpx.AsyncClient) -> dict:
                 return parsed
             # Retry once with a nudge if JSON was unparseable
             messages.append({"role": "assistant", "content": content})
-            messages.append({
-                "role": "user",
-                "content": (
-                    "Your response was not valid JSON. "
-                    "Reply with ONLY the JSON object in the exact format specified — "
-                    "no explanation, no markdown, just the JSON."
-                ),
-            })
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        "Your response was not valid JSON. "
+                        "Reply with ONLY the JSON object in the exact format specified — "
+                        "no explanation, no markdown, just the JSON."
+                    ),
+                }
+            )
         except Exception as e:
             if attempt == 1:
                 return {
@@ -286,11 +291,12 @@ async def judge_trace(trace: dict, client: httpx.AsyncClient) -> dict:
 # Trace loading
 # ---------------------------------------------------------------------------
 
+
 def load_traces(run_dir: Path, ids: list[str] | None) -> dict[str, dict]:
     traces: dict[str, dict] = {}
     for f in sorted(run_dir.glob("*_trace.json")):
         stem = f.stem.replace("_trace", "")
-        m = re.search(r'_([A-Z][A-Z0-9_]*)$', stem)
+        m = re.search(r"_([A-Z][A-Z0-9_]*)$", stem)
         pid = m.group(1) if m else stem
         if ids and pid not in ids:
             continue
@@ -301,6 +307,7 @@ def load_traces(run_dir: Path, ids: list[str] | None) -> dict[str, dict]:
 # ---------------------------------------------------------------------------
 # Main runner
 # ---------------------------------------------------------------------------
+
 
 async def run_judge(run_dir: Path, ids: list[str] | None, parallel: int) -> dict:
     traces = load_traces(run_dir, ids)
@@ -347,9 +354,9 @@ async def run_judge(run_dir: Path, ids: list[str] | None, parallel: int) -> dict
     fail_c = sum(1 for r in results.values() if r["verdict"] in ("fail", "error"))
     total = len(results)
 
-    print(f"\n{'='*64}")
+    print(f"\n{'=' * 64}")
     print(f"JUDGE SUMMARY — {run_dir.name}")
-    print(f"{'='*64}")
+    print(f"{'=' * 64}")
     print(f"  Pass:    {pass_c}/{total}  ({100 * pass_c // total if total else 0}%)")
     print(f"  Partial: {partial_c}/{total}")
     print(f"  Fail:    {fail_c}/{total}")
@@ -371,10 +378,14 @@ async def run_judge(run_dir: Path, ids: list[str] | None, parallel: int) -> dict
                 agree += 1
             elif heuristic_ok and not judge_ok:
                 disagree_stricter += 1
-                disagreements.append((pid, "heuristic=pass", f"judge={jr['verdict']}", jr["summary"][:60]))
+                disagreements.append(
+                    (pid, "heuristic=pass", f"judge={jr['verdict']}", jr["summary"][:60])
+                )
             else:
                 disagree_lenient += 1
-                disagreements.append((pid, "heuristic=fail", f"judge={jr['verdict']}", jr["summary"][:60]))
+                disagreements.append(
+                    (pid, "heuristic=fail", f"judge={jr['verdict']}", jr["summary"][:60])
+                )
 
         total_compared = agree + disagree_stricter + disagree_lenient
         print(f"\n── vs heuristic analyse.py ({total_compared} compared) ──")
@@ -382,8 +393,10 @@ async def run_judge(run_dir: Path, ids: list[str] | None, parallel: int) -> dict
             for pid, h, j, note in disagreements:
                 print(f"  [{pid}] {h} / {j} — {note}")
         pct = 100 * agree // total_compared if total_compared else 0
-        print(f"  Agreement: {agree}/{total_compared} ({pct}%)  "
-              f"judge stricter: {disagree_stricter}  judge more lenient: {disagree_lenient}")
+        print(
+            f"  Agreement: {agree}/{total_compared} ({pct}%)  "
+            f"judge stricter: {disagree_stricter}  judge more lenient: {disagree_lenient}"
+        )
 
     print(f"\nResults written to: {out_file}")
     return results
@@ -392,6 +405,7 @@ async def run_judge(run_dir: Path, ids: list[str] | None, parallel: int) -> dict
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(

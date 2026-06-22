@@ -8,7 +8,6 @@ import pytest
 
 from opencloudcosts.utils.egress_tiers import EgressTier, compute_tiered_cost
 
-
 # ---------------------------------------------------------------------------
 # EgressTier dataclass
 # ---------------------------------------------------------------------------

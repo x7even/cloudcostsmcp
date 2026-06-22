@@ -99,7 +99,7 @@ SYSTEM_PROMPT = (
     "Do not estimate or guess any cost that was not returned by a tool.\n\n"
     "TOOL CALL FORMAT — always use this exact format when calling a tool:\n"
     "<tool_call>\n"
-    "{\"name\": \"TOOL_NAME\", \"arguments\": {\"param\": \"value\"}}\n"
+    '{"name": "TOOL_NAME", "arguments": {"param": "value"}}\n'
     "</tool_call>"
 )
 
@@ -112,9 +112,7 @@ TEST_PROMPTS = {
         "What does an m5.2xlarge cost on-demand in us-east-1? "
         "Give me the hourly and monthly figure."
     ),
-    "C2": (
-        "I need 2TB of gp3 EBS storage in us-west-2. What will that cost per month?"
-    ),
+    "C2": ("I need 2TB of gp3 EBS storage in us-west-2. What will that cost per month?"),
     "C3": (
         "I want to run a c6g.4xlarge on Linux. Which AWS region is cheapest, "
         "and how much cheaper is it than us-east-1?"
@@ -148,7 +146,6 @@ TEST_PROMPTS = {
         "1-year reserved instance options (No Upfront, Partial Upfront, All Upfront) and "
         "tell me which saves the most over 12 months compared to on-demand."
     ),
-
     # -----------------------------------------------------------------------
     # AWS Simple (AS)
     # -----------------------------------------------------------------------
@@ -165,7 +162,6 @@ TEST_PROMPTS = {
     "AS8": "How much does AWS charge for data transfer from us-east-1 to eu-west-1?",
     "AS9": "What does a NAT Gateway cost in us-east-1? Give me the hourly charge and the per-GB data processing fee.",
     "AS10": "What's the on-demand price for an ElastiCache cache.r7g.large (Redis) node in us-east-1?",
-
     # -----------------------------------------------------------------------
     # GCP Simple (GS)
     # -----------------------------------------------------------------------
@@ -179,7 +175,6 @@ TEST_PROMPTS = {
     "GS8": "What's the on-demand price for a c3-standard-8 in us-east4?",
     "GS9": "Compare pd-balanced vs pd-ssd storage costs for 1TB in us-central1.",
     "GS10": "What's the on-demand price for an a2-highgpu-1g (GPU) instance in us-central1?",
-
     # -----------------------------------------------------------------------
     # Multi-product AWS vs GCP comparisons (MP)
     # -----------------------------------------------------------------------
@@ -203,7 +198,6 @@ TEST_PROMPTS = {
         "What's cheaper for 2TB of block storage — AWS gp3 in us-east-1 or GCP pd-balanced in us-central1? "
         "Show the monthly cost and per-GB rate for each."
     ),
-
     # -----------------------------------------------------------------------
     # Multi-region comparisons within AWS & GCP (MR)
     # -----------------------------------------------------------------------
@@ -222,7 +216,6 @@ TEST_PROMPTS = {
         "Compare the compute cost in both regions. If I transfer 1TB of data per month during migration, "
         "what's the data egress cost from us-east-1?"
     ),
-
     # -----------------------------------------------------------------------
     # Complex BoM / TCO (CX)
     # -----------------------------------------------------------------------
@@ -326,7 +319,6 @@ TEST_PROMPTS = {
         "hot standby on us-west-2 (identical stack). "
         "What is the total monthly DR bill and how do the two regions compare in price?"
     ),
-
     # -----------------------------------------------------------------------
     # Azure Complex BoM/TCO (AZX)
     # -----------------------------------------------------------------------
@@ -346,7 +338,6 @@ TEST_PROMPTS = {
         "2x Standard_D4s_v3 + 1x Standard_E4s_v3 + 200GB premium-ssd. "
         "What is the monthly cost in each region and which is cheaper?"
     ),
-
     # -----------------------------------------------------------------------
     # Multi-region full-stack comparisons (MRS)
     # -----------------------------------------------------------------------
@@ -366,7 +357,6 @@ TEST_PROMPTS = {
         "Stack: 2x 4-vCPU/16GB web servers + 500GB SSD block storage. "
         "Rank all four options cheapest to most expensive with monthly totals."
     ),
-
     # -----------------------------------------------------------------------
     # Cross-cloud BoM comparisons (CCR)
     # -----------------------------------------------------------------------
@@ -387,7 +377,6 @@ TEST_PROMPTS = {
         "for this stack: 6x 4-vCPU/16GB app servers, 2x 8-vCPU/64GB memory-optimised DB servers, "
         "1TB SSD block storage, in US East regions. Show itemised costs per provider."
     ),
-
     # -----------------------------------------------------------------------
     # Azure Simple (AZ)
     # -----------------------------------------------------------------------
@@ -408,7 +397,6 @@ TEST_PROMPTS = {
         "What's the price difference between running a Standard_D4s_v3 on Linux vs Windows in eastus? "
         "Show both hourly rates and the Windows premium."
     ),
-
     # -----------------------------------------------------------------------
     # Advanced AWS (AA)
     # -----------------------------------------------------------------------
@@ -416,9 +404,7 @@ TEST_PROMPTS = {
         "What does AWS Lambda cost per 1 million requests in us-east-1? "
         "Also show the GB-second duration price. How much would 10M requests at 512MB / 200ms cost?"
     ),
-    "AA2": (
-        "I need to store 50TB in S3 Standard in us-east-1. What is the monthly storage cost?"
-    ),
+    "AA2": ("I need to store 50TB in S3 Standard in us-east-1. What is the monthly storage cost?"),
     "AA3": (
         "Compare db.r6g.large MySQL RDS Single-AZ vs Multi-AZ monthly cost in us-east-1. "
         "What is the extra monthly cost of high availability?"
@@ -431,7 +417,6 @@ TEST_PROMPTS = {
         "List all GPU instances available in us-east-1 on AWS and show their on-demand prices. "
         "Which is the cheapest GPU instance per hour?"
     ),
-
     # -----------------------------------------------------------------------
     # Multi-Cloud 3-way comparisons (MC)
     # -----------------------------------------------------------------------
@@ -460,7 +445,6 @@ TEST_PROMPTS = {
         "Check AWS (r6i.2xlarge, us-east-1), GCP (n2-highmem-8, us-central1), "
         "and Azure (Standard_E8s_v3, eastus) on-demand pricing."
     ),
-
     # -----------------------------------------------------------------------
     # GCP GKE — Kubernetes Engine (GK) [v0.7.2]
     # -----------------------------------------------------------------------
@@ -484,13 +468,10 @@ TEST_PROMPTS = {
         "What does GKE Autopilot cost for a small microservice in us-central1 "
         "requesting 0.5 vCPU and 512MB RAM running always-on?"
     ),
-
     # -----------------------------------------------------------------------
     # GCP Memorystore for Redis (GM) [v0.7.2]
     # -----------------------------------------------------------------------
-    "GM1": (
-        "What does a 10GB Memorystore for Redis Basic instance cost per month in us-central1?"
-    ),
+    "GM1": ("What does a 10GB Memorystore for Redis Basic instance cost per month in us-central1?"),
     "GM2": (
         "Compare Memorystore for Redis Basic vs Standard (HA) for a 10GB cache in us-central1. "
         "What is the monthly cost difference and what does Standard add?"
@@ -506,7 +487,6 @@ TEST_PROMPTS = {
         "I need a session cache of about 5GB in us-central1. "
         "What does Memorystore Basic tier cost and how does it compare to Standard?"
     ),
-
     # -----------------------------------------------------------------------
     # GCP BigQuery (GB) [v0.7.3]
     # -----------------------------------------------------------------------
@@ -530,7 +510,6 @@ TEST_PROMPTS = {
         "What does BigQuery streaming insert pricing look like? "
         "If I stream 50GB of data per month, what is the cost?"
     ),
-
     # -----------------------------------------------------------------------
     # GCP Vertex AI + Gemini (GV) [v0.7.4]
     # -----------------------------------------------------------------------
@@ -554,7 +533,6 @@ TEST_PROMPTS = {
         "Compare Vertex AI training cost for n1-standard-4 vs n1-standard-8 "
         "for a 200-hour monthly training job in us-central1. Which is cheaper per hour?"
     ),
-
     # -----------------------------------------------------------------------
     # GCP Networking — LB, CDN, NAT (GN) [v0.7.6]
     # -----------------------------------------------------------------------
@@ -578,7 +556,6 @@ TEST_PROMPTS = {
         "1 HTTPS load balancer (3 rules, 2TB traffic), Cloud CDN (3TB egress), "
         "1 NAT gateway (200GB processed)."
     ),
-
     # -----------------------------------------------------------------------
     # GCP Cloud Armor + Cloud Monitoring (GC) [v0.7.7]
     # -----------------------------------------------------------------------
@@ -602,7 +579,6 @@ TEST_PROMPTS = {
         "What is the combined monthly cost of Cloud Armor (3 policies, 500M requests) "
         "plus Cloud Monitoring (1000 MiB ingestion) for a production GCP deployment?"
     ),
-
     # -----------------------------------------------------------------------
     # GCP Complex stacks combining new services (GCX) [v0.7.2–v0.7.7]
     # -----------------------------------------------------------------------
@@ -638,7 +614,6 @@ TEST_PROMPTS = {
         "300 MiB Cloud Monitoring ingestion. "
         "Break down each component and give a total."
     ),
-
     # -----------------------------------------------------------------------
     # GCP Cloud Storage — GCS (GGCS) [v0.7.x]
     # -----------------------------------------------------------------------
@@ -649,9 +624,7 @@ TEST_PROMPTS = {
         "Compare GCS storage class pricing for 500GB in us-central1: "
         "Standard vs Nearline vs Coldline vs Archive. Which is cheapest and what are the trade-offs?"
     ),
-    "GGCS3": (
-        "I store 200GB in GCS Nearline in europe-west1. What is the monthly storage cost?"
-    ),
+    "GGCS3": ("I store 200GB in GCS Nearline in europe-west1. What is the monthly storage cost?"),
     "GGCS4": (
         "My app uses GCS in us-central1: 100GB Standard, 500GB Nearline, 1TB Coldline. "
         "What is the total monthly storage cost broken down by class?"
@@ -660,7 +633,6 @@ TEST_PROMPTS = {
         "What is the cheapest GCP GCS storage class for archival data accessed less than once a year? "
         "Show the per-GB rate and monthly cost for 10TB in us-central1."
     ),
-
     # -----------------------------------------------------------------------
     # GCP Cloud SQL (GSQL) [v0.7.x]
     # -----------------------------------------------------------------------
@@ -682,7 +654,6 @@ TEST_PROMPTS = {
         "I need a Cloud SQL MySQL instance in us-central1 with at least 4 vCPUs. "
         "What instance type should I use, and what is the monthly cost?"
     ),
-
     # -----------------------------------------------------------------------
     # Azure SQL / MySQL / PostgreSQL (AZSQL) [v0.8.8]
     # -----------------------------------------------------------------------
@@ -705,7 +676,6 @@ TEST_PROMPTS = {
         "I'm migrating from AWS RDS db.r6g.large MySQL (us-east-1) to Azure Database for MySQL "
         "in eastus. What is the closest Azure SKU and how do the monthly costs compare?"
     ),
-
     # -----------------------------------------------------------------------
     # Azure Cosmos DB (AZCOS) [v0.8.8]
     # -----------------------------------------------------------------------
@@ -725,10 +695,7 @@ TEST_PROMPTS = {
         "I'm building a serverless app on Azure. Compare the cost of Azure Cosmos DB serverless "
         "vs Azure SQL Database General Purpose 2 vCores in eastus for a low-traffic workload."
     ),
-    "AZCOS5": (
-        "What would a Cosmos DB autoscale setup cost in eastus? Explain the pricing model."
-    ),
-
+    "AZCOS5": ("What would a Cosmos DB autoscale setup cost in eastus? Explain the pricing model."),
     # -----------------------------------------------------------------------
     # Azure Kubernetes Service (AZAKS) [v0.8.8]
     # -----------------------------------------------------------------------
@@ -744,7 +711,6 @@ TEST_PROMPTS = {
         "I need a production AKS cluster in westeurope with 5x Standard_D8s_v3 nodes. "
         "What is the total monthly estimate including the cluster management fee?"
     ),
-
     # -----------------------------------------------------------------------
     # Azure Functions (AZFN) [v0.8.8]
     # -----------------------------------------------------------------------
@@ -769,13 +735,10 @@ TEST_PROMPTS = {
         "Lambda runs 20M invocations/month at 256MB / 200ms average. "
         "What will I pay on Azure Functions vs AWS Lambda?"
     ),
-
     # -----------------------------------------------------------------------
     # Azure OpenAI (AZAI) [v0.8.8]
     # -----------------------------------------------------------------------
-    "AZAI1": (
-        "What does Azure OpenAI GPT-4o cost per 1K input and output tokens in eastus?"
-    ),
+    "AZAI1": ("What does Azure OpenAI GPT-4o cost per 1K input and output tokens in eastus?"),
     "AZAI2": (
         "Compare Azure OpenAI GPT-4o vs GPT-4o-mini pricing in eastus. "
         "For a workload sending 1M input tokens and receiving 500K output tokens per month, "
@@ -794,13 +757,10 @@ TEST_PROMPTS = {
         "GPT-4o-mini, 5M input tokens and 2M output tokens per month. "
         "What is the total monthly AI cost?"
     ),
-
     # -----------------------------------------------------------------------
     # Inter-region egress / data transfer (EGR) [v0.8.3]
     # -----------------------------------------------------------------------
-    "EGR1": (
-        "How much does AWS charge to transfer 1TB of data from us-east-1 to eu-west-1?"
-    ),
+    "EGR1": ("How much does AWS charge to transfer 1TB of data from us-east-1 to eu-west-1?"),
     "EGR2": (
         "Compare AWS inter-region data transfer costs: us-east-1 to eu-west-1 vs "
         "us-east-1 to ap-southeast-1 for 1TB. Which is more expensive and by how much?"
@@ -824,9 +784,7 @@ TEST_PROMPTS = {
         "Compare GCS Nearline vs Coldline vs Archive storage prices in us-central1. "
         "Which is cheapest for long-term archival?"
     ),
-    "GCPSTO3": (
-        "What does GCP pd-ssd Persistent Disk cost per GB-month in us-central1?"
-    ),
+    "GCPSTO3": ("What does GCP pd-ssd Persistent Disk cost per GB-month in us-central1?"),
     "GCPDB1": (
         "What is the hourly cost for a Cloud SQL db-n1-standard-4 MySQL instance "
         "in us-central1 (zonal, no HA)?"
@@ -836,8 +794,7 @@ TEST_PROMPTS = {
         "in us-central1. What is the monthly cost difference?"
     ),
     "GCPDB3": (
-        "What does a Memorystore Redis standard-tier 8GB instance cost per hour "
-        "in us-central1?"
+        "What does a Memorystore Redis standard-tier 8GB instance cost per hour in us-central1?"
     ),
     # --- GCP Network Pricing (v0.8.13) ---
     "GCPNET1": (
@@ -877,7 +834,6 @@ TEST_PROMPTS = {
         "Compare internet egress costs for 1 TB/month from AWS (us-east-1), "
         "GCP (us-central1), and Azure (eastus). Which is cheapest?"
     ),
-
     # -----------------------------------------------------------------------
     # Azure Monitor / Log Analytics (AZMON) [v0.8.x]
     # -----------------------------------------------------------------------
@@ -893,7 +849,6 @@ TEST_PROMPTS = {
         "I have 50 Azure Monitor metric alert rules in eastus. "
         "What is the monthly cost for those alert rules after the free tier?"
     ),
-
     # -----------------------------------------------------------------------
     # Azure CDN / Front Door (AZCDN / AZFD) [v0.8.x]
     # -----------------------------------------------------------------------
@@ -909,7 +864,6 @@ TEST_PROMPTS = {
         "Compare Azure CDN vs Azure Front Door pricing for serving 1TB/month of content "
         "to users primarily in North America and Europe. Which is cheaper and what are the trade-offs?"
     ),
-
     # -----------------------------------------------------------------------
     # New Azure service spot checks (NSV) — added with v0.8.x critical fixes
     # -----------------------------------------------------------------------
@@ -937,7 +891,6 @@ TEST_PROMPTS = {
         "What does Azure CDN Standard cost to serve 1 TB of data per month from eastus (Zone 1)? "
         "Give the per-GB rate and the total monthly estimate."
     ),
-
     # --- Egress Tiering (NET_EGR) [network/egress domain] ---
     "NET_EGR1": (
         "What is the total monthly cost for sending 5 TB of outbound internet traffic from "
@@ -1028,15 +981,14 @@ TEST_PROMPTS = {
         "Estimate monthly cost for a 3-tier AWS stack with 1-year No Upfront reservations: "
         "2x c5.2xlarge Linux web (us-east-1), 1x r6i.xlarge Linux DB (us-east-1), 500 GB gp3 EBS."
     ),
-    "REC1": (
-        "Price a t3.medium Linux instance."
-    ),
+    "REC1": ("Price a t3.medium Linux instance."),
 }
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def mcp_tool_to_openai(tool) -> dict:
     """Convert an MCP tool definition to OpenAI function-calling schema."""
@@ -1089,6 +1041,7 @@ def _sanitise_tool_call_args(messages: list[dict]) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Loop detection
 # ---------------------------------------------------------------------------
+
 
 def _preprocess_json(s: str) -> str:
     """Fix common LLM JSON syntax errors before parsing."""
@@ -1171,11 +1124,16 @@ def _extract_xml_tool_calls(content: str) -> list[dict]:
             continue
         if not name:
             continue
-        results.append({
-            "id": f"xml-tool-{idx}",
-            "type": "function",
-            "function": {"name": name, "arguments": json.dumps(args) if isinstance(args, dict) else str(args)},
-        })
+        results.append(
+            {
+                "id": f"xml-tool-{idx}",
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "arguments": json.dumps(args) if isinstance(args, dict) else str(args),
+                },
+            }
+        )
         idx += 1
 
     # Format 2: Anthropic <tool_calls><invoke name="X"><parameter name="k">v</parameter></invoke>
@@ -1183,21 +1141,27 @@ def _extract_xml_tool_calls(content: str) -> list[dict]:
     for m in re.finditer(r'<invoke\s+name="([^"]+)">(.*?)</invoke>', content, re.DOTALL):
         name = m.group(1)
         args = {}
-        for pm in re.finditer(r'<parameter\s+name="([^"]+)">(.*?)</parameter>', m.group(2), re.DOTALL):
+        for pm in re.finditer(
+            r'<parameter\s+name="([^"]+)">(.*?)</parameter>', m.group(2), re.DOTALL
+        ):
             key, val = pm.group(1), pm.group(2).strip()
             try:
                 args[key] = json.loads(val)
             except json.JSONDecodeError:
                 args[key] = val
-        results.append({
-            "id": f"xml-tool-{idx}",
-            "type": "function",
-            "function": {"name": name, "arguments": json.dumps(args)},
-        })
+        results.append(
+            {
+                "id": f"xml-tool-{idx}",
+                "type": "function",
+                "function": {"name": name, "arguments": json.dumps(args)},
+            }
+        )
         idx += 1
 
     # Format 3: Qwen3 native <tool_call><function=X><parameter=k>v</parameter></function></tool_call>
-    for m in re.finditer(r"<tool_call>\s*<function=([^>]+)>(.*?)</function>\s*</tool_call>", content, re.DOTALL):
+    for m in re.finditer(
+        r"<tool_call>\s*<function=([^>]+)>(.*?)</function>\s*</tool_call>", content, re.DOTALL
+    ):
         name = m.group(1).strip()
         args = {}
         for pm in re.finditer(r"<parameter=([^>]+)>(.*?)</parameter>", m.group(2), re.DOTALL):
@@ -1206,11 +1170,13 @@ def _extract_xml_tool_calls(content: str) -> list[dict]:
                 args[key] = json.loads(val)
             except json.JSONDecodeError:
                 args[key] = val
-        results.append({
-            "id": f"xml-tool-{idx}",
-            "type": "function",
-            "function": {"name": name, "arguments": json.dumps(args)},
-        })
+        results.append(
+            {
+                "id": f"xml-tool-{idx}",
+                "type": "function",
+                "function": {"name": name, "arguments": json.dumps(args)},
+            }
+        )
         idx += 1
 
     return results
@@ -1235,6 +1201,7 @@ def _loop_detected(recent_fingerprints: list[str]) -> bool:
 # Core test runner
 # ---------------------------------------------------------------------------
 
+
 async def run_single(
     prompt_id: str,
     prompt: str,
@@ -1242,9 +1209,9 @@ async def run_single(
     openai_tools: list[dict],
     run_dir: Path,
 ) -> dict:
-    print(f"\n{'='*64}")
+    print(f"\n{'=' * 64}")
     print(f"  [{prompt_id}] {prompt[:90]}")
-    print(f"{'='*64}")
+    print(f"{'=' * 64}")
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -1295,7 +1262,7 @@ async def run_single(
                     body = resp.text[:300]
                 except Exception:
                     pass
-                trace["error"] = f"LLM API error (round {round_num+1}): {e} | {body}"
+                trace["error"] = f"LLM API error (round {round_num + 1}): {e} | {body}"
                 print(f"  ERROR: {e} | {body}")
                 break
 
@@ -1315,14 +1282,22 @@ async def run_single(
             # as plain-text XML in various formats. Rescue them so the loop can still
             # execute them via MCP.
             _xml_markers = ("<tool_call>", "<tool_calls>", "<invoke ", "<function=")
-            if not (assistant_msg.get("tool_calls") or []) and any(m in content for m in _xml_markers):
+            if not (assistant_msg.get("tool_calls") or []) and any(
+                m in content for m in _xml_markers
+            ):
                 synthetic = _extract_xml_tool_calls(content)
                 if synthetic:
                     stripped = re.sub(
                         r"<tool_calls?>.*?</tool_calls?>|<tool_call>.*?</tool_call>",
-                        "", content, flags=re.DOTALL,
+                        "",
+                        content,
+                        flags=re.DOTALL,
                     ).strip()
-                    assistant_msg = {**assistant_msg, "content": stripped or None, "tool_calls": synthetic}
+                    assistant_msg = {
+                        **assistant_msg,
+                        "content": stripped or None,
+                        "tool_calls": synthetic,
+                    }
                     content = stripped
                     finish_reason = "tool_calls"
 
@@ -1340,7 +1315,11 @@ async def run_single(
                     headers = {"Authorization": f"Bearer {LLM_API_KEY}"} if LLM_API_KEY else {}
                     recovery_resp = await client.post(
                         f"{LLM_BASE_URL}/v1/chat/completions",
-                        json={**payload, "messages": _sanitise_tool_call_args(messages), "tool_choice": "none"},
+                        json={
+                            **payload,
+                            "messages": _sanitise_tool_call_args(messages),
+                            "tool_choice": "none",
+                        },
                         headers=headers,
                     )
                     recovery_resp.raise_for_status()
@@ -1356,7 +1335,10 @@ async def run_single(
                     pass  # fall through with thinking_only still True
 
             if thinking_only:
-                assistant_msg = {**assistant_msg, "content": f"[thinking only — no final answer generated]\n\n{reasoning[:500]}"}
+                assistant_msg = {
+                    **assistant_msg,
+                    "content": f"[thinking only — no final answer generated]\n\n{reasoning[:500]}",
+                }
 
             messages.append(assistant_msg)
             trace["messages"].append(assistant_msg)
@@ -1366,8 +1348,10 @@ async def run_single(
             if not tool_calls or finish_reason in ("stop", "length"):
                 trace["final_answer"] = assistant_msg.get("content") or reasoning
                 if finish_reason == "length":
-                    trace["error"] = f"Hit max_tokens at round {round_num+1} — answer may be truncated"
-                    print(f"  ⚠ max_tokens hit at round {round_num+1}")
+                    trace["error"] = (
+                        f"Hit max_tokens at round {round_num + 1} — answer may be truncated"
+                    )
+                    print(f"  ⚠ max_tokens hit at round {round_num + 1}")
                 else:
                     print(f"  ✓ Done in {round_num + 1} round(s)")
                 preview = (trace["final_answer"] or "")[:300]
@@ -1386,7 +1370,9 @@ async def run_single(
                         tool_args = json.loads(_repair_json(_preprocess_json(raw_args)))
                     except json.JSONDecodeError:
                         tool_args = {}
-                fn["arguments"] = json.dumps(tool_args)  # always normalise — ensures history is clean JSON
+                fn["arguments"] = json.dumps(
+                    tool_args
+                )  # always normalise — ensures history is clean JSON
 
                 print(f"  → {tool_name}({_preview(tool_args, 100)})")
 
@@ -1399,9 +1385,11 @@ async def run_single(
                 _cache_key = f"{tool_name}:{json.dumps(tool_args, sort_keys=True)}"
                 if _cache_key in _call_cache:
                     tool_result = _call_cache[_cache_key]
-                    print(f"     ↩ (cached — same call already made this conversation)")
+                    print("     ↩ (cached — same call already made this conversation)")
                 elif not mcp_session_ok:
-                    tool_result = {"error": "MCP session unavailable (prior timeout) — pricing unavailable"}
+                    tool_result = {
+                        "error": "MCP session unavailable (prior timeout) — pricing unavailable"
+                    }
                 else:
                     try:
                         mcp_result = await asyncio.wait_for(
@@ -1409,19 +1397,21 @@ async def run_single(
                             timeout=45.0,
                         )
                         # MCP returns a list of content items; join text parts
-                        text_parts = [
-                            c.text for c in mcp_result.content if hasattr(c, "text")
-                        ]
+                        text_parts = [c.text for c in mcp_result.content if hasattr(c, "text")]
                         raw_text = "".join(text_parts)
                         try:
                             tool_result = json.loads(raw_text)
                         except json.JSONDecodeError:
                             tool_result = {"text": raw_text}
                         _call_cache[_cache_key] = tool_result
-                    except asyncio.TimeoutError:
-                        tool_result = {"error": "MCP tool timed out after 45s — pricing unavailable"}
+                    except TimeoutError:
+                        tool_result = {
+                            "error": "MCP tool timed out after 45s — pricing unavailable"
+                        }
                         mcp_session_ok = False
-                        print(f"  ⚠ {tool_name} timed out — session poisoned, no more MCP calls this prompt")
+                        print(
+                            f"  ⚠ {tool_name} timed out — session poisoned, no more MCP calls this prompt"
+                        )
                     except Exception as e:
                         tool_result = {"error": f"MCP tool error: {e}"}
 
@@ -1434,28 +1424,44 @@ async def run_single(
                         # Keep summary metadata, truncate the list
                         truncated = {k: v for k, v in tool_result.items() if k != "instance_types"}
                         truncated["instance_types"] = tool_result["instance_types"][:20]
-                        truncated["_truncated"] = f"Showing 20 of {tool_result.get('count', '?')} results — use more specific filters"
+                        truncated["_truncated"] = (
+                            f"Showing 20 of {tool_result.get('count', '?')} results — use more specific filters"
+                        )
                         tool_result = truncated
-                    elif isinstance(tool_result, dict) and "results" in tool_result and isinstance(tool_result["results"], list):
+                    elif (
+                        isinstance(tool_result, dict)
+                        and "results" in tool_result
+                        and isinstance(tool_result["results"], list)
+                    ):
                         truncated = {k: v for k, v in tool_result.items() if k != "results"}
                         truncated["results"] = tool_result["results"][:20]
-                        truncated["_truncated"] = f"Showing 20 of {tool_result.get('count', len(tool_result['results']))} results"
+                        truncated["_truncated"] = (
+                            f"Showing 20 of {tool_result.get('count', len(tool_result['results']))} results"
+                        )
                         tool_result = truncated
                     else:
-                        tool_result = {"_truncated": True, "preview": result_str[:MAX_TOOL_RESULT_CHARS], "note": "Result too large — use more specific parameters"}
+                        tool_result = {
+                            "_truncated": True,
+                            "preview": result_str[:MAX_TOOL_RESULT_CHARS],
+                            "note": "Result too large — use more specific parameters",
+                        }
 
-                trace["tool_calls"].append({
-                    "round": round_num,
-                    "tool": tool_name,
-                    "args": tool_args,
-                    "result": tool_result,
-                })
+                trace["tool_calls"].append(
+                    {
+                        "round": round_num,
+                        "tool": tool_name,
+                        "args": tool_args,
+                        "result": tool_result,
+                    }
+                )
 
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc["id"],
-                    "content": json.dumps(tool_result),
-                })
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc["id"],
+                        "content": json.dumps(tool_result),
+                    }
+                )
 
             # After executing all tool calls this round, check for a loop.
             # A loop is detected when the same (tool, args) fingerprint appears
@@ -1480,7 +1486,11 @@ async def run_single(
                     headers = {"Authorization": f"Bearer {LLM_API_KEY}"} if LLM_API_KEY else {}
                     loop_resp = await client.post(
                         f"{LLM_BASE_URL}/v1/chat/completions",
-                        json={**payload, "messages": _sanitise_tool_call_args(messages), "tool_choice": "none"},
+                        json={
+                            **payload,
+                            "messages": _sanitise_tool_call_args(messages),
+                            "tool_choice": "none",
+                        },
                         headers=headers,
                     )
                     loop_resp.raise_for_status()
@@ -1494,7 +1504,9 @@ async def run_single(
                             trace["messages"].append(final_msg)
                             trace["final_answer"] = content
                             trace["rounds"] = round_num + 1
-                            print(f"  ✓ Loop broken — answer obtained after {round_num + 1} round(s)")
+                            print(
+                                f"  ✓ Loop broken — answer obtained after {round_num + 1} round(s)"
+                            )
                             print(f"  Answer preview: {content[:300]}")
                             break
                 except Exception as e:
@@ -1503,8 +1515,10 @@ async def run_single(
                 recent_fingerprints.clear()
 
         else:
-            trace["error"] = f"Hit absolute tool-round cap ({MAX_TOOL_ROUNDS}) — loop detection did not fire"
-            print(f"  ✗ Absolute cap reached")
+            trace["error"] = (
+                f"Hit absolute tool-round cap ({MAX_TOOL_ROUNDS}) — loop detection did not fire"
+            )
+            print("  ✗ Absolute cap reached")
 
     # Persist full trace
     out_file = run_dir / f"{prompt_id}_trace.json"
@@ -1515,6 +1529,7 @@ async def run_single(
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
 
 async def _make_mcp_session():
     """Context manager factory — yields an initialised MCP session."""
@@ -1571,14 +1586,18 @@ async def _run_prompt_with_fresh_session(pid, prompt, openai_tools, run_dir, res
         except Exception as e:
             err_str = str(e)
             is_connect_err = (
-                "ConnectError" in err_str or "ConnectionRefused" in err_str
-                or "TaskGroup" in err_str or "TimeoutError" in err_str
+                "ConnectError" in err_str
+                or "ConnectionRefused" in err_str
+                or "TaskGroup" in err_str
+                or "TimeoutError" in err_str
                 or "timed out" in err_str.lower()
             )
             if is_connect_err and attempt < 5:
                 wait = 30 * (attempt + 1)  # 30s, 60s, 90s, 120s, 150s — covers ~5min pod restart
                 async with print_lock:
-                    print(f"  ⚠ [{pid}] MCP connect error (attempt {attempt+1}/6), waiting {wait}s for pod restart…")
+                    print(
+                        f"  ⚠ [{pid}] MCP connect error (attempt {attempt + 1}/6), waiting {wait}s for pod restart…"
+                    )
                 await asyncio.sleep(wait)
             else:
                 async with print_lock:
@@ -1623,7 +1642,9 @@ async def run_worker(
     openai_tools = [mcp_tool_to_openai(t) for t in tools_resp.tools]
 
     for pid, prompt in items:
-        await _run_prompt_with_fresh_session(pid, prompt, openai_tools, run_dir, results, print_lock)
+        await _run_prompt_with_fresh_session(
+            pid, prompt, openai_tools, run_dir, results, print_lock
+        )
 
 
 async def main(ids: list[str], parallel: int = 1):
@@ -1656,10 +1677,9 @@ async def main(ids: list[str], parallel: int = 1):
     results: dict = {}
     print_lock = asyncio.Lock()
 
-    await asyncio.gather(*[
-        run_worker(bucket, run_dir, results, print_lock)
-        for bucket in buckets if bucket
-    ])
+    await asyncio.gather(
+        *[run_worker(bucket, run_dir, results, print_lock) for bucket in buckets if bucket]
+    )
 
     summary = {
         "run_dir": str(run_dir),
@@ -1673,15 +1693,14 @@ async def main(ids: list[str], parallel: int = 1):
     summary_file = run_dir / "summary.json"
     summary_file.write_text(json.dumps(summary, indent=2))
 
-    print(f"\n\n{'='*64}")
+    print(f"\n\n{'=' * 64}")
     print(f"SUMMARY — results in {run_dir}")
-    print(f"{'='*64}")
+    print(f"{'=' * 64}")
     for pid, r in summary["results"].items():
         status = "✓" if r["status"] == "ok" else "✗"
         print(
             f"  {status} [{pid}] {r['rounds']} round(s), "
-            f"{r['tool_calls']} tool call(s)"
-            + (f"  ERROR: {r['error']}" if r["error"] else "")
+            f"{r['tool_calls']} tool call(s)" + (f"  ERROR: {r['error']}" if r["error"] else "")
         )
     print(f"\nFull traces: {run_dir}/")
 
@@ -1728,7 +1747,7 @@ if __name__ == "__main__":
         "--mcp-url",
         default="",
         help="Override OCC_MCP_URL — HTTP MCP endpoint (e.g. http://your-mcp-host:8080/mcp). "
-             "When set, workers connect via HTTP instead of spawning a local stdio process.",
+        "When set, workers connect via HTTP instead of spawning a local stdio process.",
     )
     args = parser.parse_args()
 

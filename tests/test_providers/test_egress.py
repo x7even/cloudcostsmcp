@@ -22,7 +22,6 @@ import pytest
 from opencloudcosts.cache import CacheManager
 from opencloudcosts.config import Settings
 from opencloudcosts.models import (
-    CloudProvider,
     NetworkPricingSpec,
     PricingDomain,
 )
@@ -31,10 +30,10 @@ from opencloudcosts.providers.azure import AzureProvider
 from opencloudcosts.providers.base import NotSupportedError
 from opencloudcosts.providers.gcp import GCPProvider
 
-
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_httpx_mock(data: dict) -> MagicMock:
     """Mock for httpx.get that returns a JSON response."""
@@ -102,6 +101,7 @@ async def azure_provider(tmp_path: Path):
 
 # --- (a) AWS Internet egress tier boundary tests ---
 
+
 async def test_aws_internet_egress_50gb_free(aws_provider: AWSProvider):
     """50 GB falls entirely within the 100 GB free tier: $0 total."""
     spec = NetworkPricingSpec(
@@ -143,7 +143,7 @@ async def test_aws_internet_egress_500gb_first_tier(aws_provider: AWSProvider):
 
 async def test_aws_internet_egress_5000gb_crosses_tiers(aws_provider: AWSProvider):
     """5000 GB crosses into tier 2 (>10 TB boundary at 10,240 GB is not crossed here).
-    
+
     Tiers:
       - 0–100 GB: free
       - 100–10,340 GB: $0.090/GB
@@ -167,6 +167,7 @@ async def test_aws_internet_egress_5000gb_crosses_tiers(aws_provider: AWSProvide
 
 # --- (b) AWS Cross-region egress ---
 
+
 async def test_aws_cross_region_us_east_to_us_west(aws_provider: AWSProvider):
     """us-east-1 → us-west-2: both 'us' continent → rate $0.02/GB."""
     spec = NetworkPricingSpec(
@@ -187,6 +188,7 @@ async def test_aws_cross_region_us_east_to_us_west(aws_provider: AWSProvider):
 
 
 # --- (d) AWS Unknown destination_type → NotSupportedError ---
+
 
 async def test_aws_unknown_destination_type_raises(aws_provider: AWSProvider):
     """Unknown destination_type raises NotSupportedError (structured error)."""
@@ -209,6 +211,7 @@ async def test_aws_unknown_destination_type_raises(aws_provider: AWSProvider):
 
 # --- (e) AWS Trust metadata ---
 
+
 async def test_aws_egress_trust_metadata(aws_provider: AWSProvider):
     """Internet egress result has cache_age_seconds=0 and source_url set."""
     spec = NetworkPricingSpec(
@@ -228,6 +231,7 @@ async def test_aws_egress_trust_metadata(aws_provider: AWSProvider):
 
 
 # --- (f) AWS Spec validation ---
+
 
 async def test_aws_cross_region_without_destination_uses_continent(aws_provider: AWSProvider):
     """cross_region without destination_region still returns a result using source continent."""
@@ -272,6 +276,7 @@ async def test_aws_egress_zero_gb_returns_rate_no_error(aws_provider: AWSProvide
 
 # --- (a) GCP Internet egress tier boundary tests ---
 
+
 async def test_gcp_internet_egress_50gb_first_tier(gcp_provider: GCPProvider):
     """50 GB in 'americas' at $0.080/GB = $4.00 (no free tier for GCP internet egress)."""
     with patch.object(
@@ -313,7 +318,7 @@ async def test_gcp_internet_egress_500gb_first_tier(gcp_provider: GCPProvider):
 
 async def test_gcp_internet_egress_5000gb_crosses_tiers(gcp_provider: GCPProvider):
     """5000 GB crosses the 1 TB tier boundary (1024 GB).
-    
+
     Tiers (americas):
       - 0–1024 GB: $0.080/GB
       - 1024–10240 GB: $0.065/GB
@@ -341,6 +346,7 @@ async def test_gcp_internet_egress_5000gb_crosses_tiers(gcp_provider: GCPProvide
 
 # --- (b) GCP Cross-region egress ---
 
+
 async def test_gcp_cross_region_us_to_europe(gcp_provider: GCPProvider):
     """us-central1 → europe-west1: different continents → cross-continent rate $0.08/GB."""
     spec = NetworkPricingSpec(
@@ -363,6 +369,7 @@ async def test_gcp_cross_region_us_to_europe(gcp_provider: GCPProvider):
 
 # --- (c) GCP Intra-region (same zone = free) ---
 
+
 async def test_gcp_same_zone_is_free(gcp_provider: GCPProvider):
     """Traffic within the same GCP zone is free ($0.00/GB)."""
     spec = NetworkPricingSpec(
@@ -384,6 +391,7 @@ async def test_gcp_same_zone_is_free(gcp_provider: GCPProvider):
 
 # --- (d) GCP Unknown destination_type → NotSupportedError ---
 
+
 async def test_gcp_unknown_destination_type_raises(gcp_provider: GCPProvider):
     """Unknown destination_type raises NotSupportedError (structured error)."""
     spec = NetworkPricingSpec(
@@ -404,6 +412,7 @@ async def test_gcp_unknown_destination_type_raises(gcp_provider: GCPProvider):
 
 
 # --- (e) GCP Trust metadata ---
+
 
 async def test_gcp_egress_trust_metadata(gcp_provider: GCPProvider):
     """Internet egress result has cache_age_seconds=0 and source_url set."""
@@ -427,6 +436,7 @@ async def test_gcp_egress_trust_metadata(gcp_provider: GCPProvider):
 
 
 # --- (f) GCP Spec validation ---
+
 
 async def test_gcp_cross_region_without_dest_uses_same_continent(gcp_provider: GCPProvider):
     """cross_region without destination_region uses same-continent rate ($0.01/GB)."""
@@ -472,6 +482,7 @@ async def test_gcp_egress_zero_gb_no_error(gcp_provider: GCPProvider):
 
 
 # --- (a) Azure Internet egress tier boundary tests ---
+
 
 async def test_azure_internet_egress_50gb_crosses_free_tier(azure_provider: AzureProvider):
     """50 GB: first 5 GB free, then 45 GB at $0.087 = $3.915."""
@@ -549,6 +560,7 @@ async def test_azure_internet_egress_5000gb_crosses_tiers(azure_provider: AzureP
 
 # --- (b) Azure Cross-region egress ---
 
+
 async def test_azure_cross_region_eastus_to_westeurope(azure_provider: AzureProvider):
     """eastus → westeurope: both zone1 → flat cross-region rate $0.02/GB."""
     spec = NetworkPricingSpec(
@@ -571,6 +583,7 @@ async def test_azure_cross_region_eastus_to_westeurope(azure_provider: AzureProv
 
 # --- (d) Azure Unknown destination_type → NotSupportedError ---
 
+
 async def test_azure_unknown_destination_type_raises(azure_provider: AzureProvider):
     """Unknown destination_type raises NotSupportedError (structured error)."""
     spec = NetworkPricingSpec(
@@ -592,6 +605,7 @@ async def test_azure_unknown_destination_type_raises(azure_provider: AzureProvid
 
 # --- (e) Azure Trust metadata ---
 
+
 async def test_azure_egress_trust_metadata(azure_provider: AzureProvider):
     """Internet egress result has cache_age_seconds=0 and source_url set."""
     spec = NetworkPricingSpec(
@@ -612,6 +626,7 @@ async def test_azure_egress_trust_metadata(azure_provider: AzureProvider):
 
 
 # --- (e) Azure swedencentral zone fix ---
+
 
 async def test_azure_swedencentral_is_zone1(azure_provider: AzureProvider):
     """swedencentral is European and must use zone1 ($0.087/GB), not zone2 ($0.120/GB)."""
@@ -636,6 +651,7 @@ async def test_azure_swedencentral_is_zone1(azure_provider: AzureProvider):
 
 
 # --- (f) Azure Spec validation ---
+
 
 async def test_azure_cross_region_without_destination_uses_zone_rate(azure_provider: AzureProvider):
     """cross_region without destination_region uses zone1 cross-region rate ($0.02/GB)."""
@@ -674,6 +690,7 @@ async def test_azure_egress_zero_gb_no_error(azure_provider: AzureProvider):
 
 
 # --- (f) Azure service field consistency ---
+
 
 async def test_azure_network_egress_service_field_is_egress(azure_provider: AzureProvider):
     """Both domain=network/egress and domain=inter_region_egress must return service='egress'."""

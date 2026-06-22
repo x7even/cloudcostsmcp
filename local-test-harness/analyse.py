@@ -28,29 +28,80 @@ RESULTS_ROOT = Path(__file__).parent / "results"
 # Keywords that suggest a figure was estimated rather than retrieved
 # (kept as a secondary signal for answers with no dollar amounts)
 ESTIMATE_PHRASES = [
-    "typically", "usually", "approximately", "roughly", "around",
-    "estimate", "estimated", "generally", "varies", "may cost",
-    "could cost", "would cost", "from memory", "based on my knowledge",
-    "based on general", "range from", "range of",
+    "typically",
+    "usually",
+    "approximately",
+    "roughly",
+    "around",
+    "estimate",
+    "estimated",
+    "generally",
+    "varies",
+    "may cost",
+    "could cost",
+    "would cost",
+    "from memory",
+    "based on my knowledge",
+    "based on general",
+    "range from",
+    "range of",
 ]
 
 # Multipliers that represent legitimate unit conversions in cloud pricing:
 #   instance counts (2–10), hours/month (730), hours/year (8760),
 #   months (12, 24, 36, 60=5yr), days (24, 30), GB quantities (1000=1TB)
-_ARITH_MULTIPLIERS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 24, 30, 36, 60, 100, 120, 730, 1000, 8760,
-                      10_000, 100_000, 1_000_000, 10_000_000]
+_ARITH_MULTIPLIERS = [
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    12,
+    24,
+    30,
+    36,
+    60,
+    100,
+    120,
+    730,
+    1000,
+    8760,
+    10_000,
+    100_000,
+    1_000_000,
+    10_000_000,
+]
 
-_DOLLAR_RE = re.compile(r'\$[\d,]+(?:\.\d+)?(?:[eE][+-]?\d+)?')
+_DOLLAR_RE = re.compile(r"\$[\d,]+(?:\.\d+)?(?:[eE][+-]?\d+)?")
 
 # Keywords that suggest the LLM acknowledged a missing data problem
 MISSING_DATA_PHRASES = [
-    "requires api key", "requires credentials", "requires authentication",
-    "not available", "couldn't retrieve", "could not retrieve",
-    "unable to retrieve", "failed to fetch",
+    "requires api key",
+    "requires credentials",
+    "requires authentication",
+    "not available",
+    "couldn't retrieve",
+    "could not retrieve",
+    "unable to retrieve",
+    "failed to fetch",
 ]
 
-ANCHOR_FIELDS = ["region", "instance", "os", "linux", "windows", "term",
-                 "on.demand", "reserved", "per.hour", "per hour"]
+ANCHOR_FIELDS = [
+    "region",
+    "instance",
+    "os",
+    "linux",
+    "windows",
+    "term",
+    "on.demand",
+    "reserved",
+    "per.hour",
+    "per hour",
+]
 
 NO_ANSWER_MARKERS = ["[thinking only", "no final answer", ""]
 
@@ -60,7 +111,7 @@ def load_traces(run_dir: Path) -> dict:
     for f in sorted(run_dir.glob("*_trace.json")):
         stem = f.stem.replace("_trace", "")
         # Strip model prefix when present (e.g. "google_gemma-4-26b-a4b_AA1" → "AA1")
-        m = re.search(r'_([A-Z][A-Z0-9]*)$', stem)
+        m = re.search(r"_([A-Z][A-Z0-9]*)$", stem)
         pid = m.group(1) if m else stem
         traces[pid] = json.loads(f.read_text())
     return traces
@@ -210,8 +261,14 @@ def flag_hallucination(trace: dict) -> tuple[bool, str]:
     # are descriptive, not estimates from training data.
     answer_lower = answer.lower()
     tool_lower = tool_results_text.lower()
-    _UNAVAIL_PHRASES = ["api key", "credentials", "cannot retrieve", "unable to retrieve",
-                        "not configured", "requires authentication"]
+    _UNAVAIL_PHRASES = [
+        "api key",
+        "credentials",
+        "cannot retrieve",
+        "unable to retrieve",
+        "not configured",
+        "requires authentication",
+    ]
     answer_acknowledges_unavail = any(p in answer_lower for p in _UNAVAIL_PHRASES)
     for phrase in ESTIMATE_PHRASES:
         if phrase in answer_lower and phrase not in tool_lower:
@@ -266,10 +323,22 @@ def flag_unanchored(trace: dict) -> tuple[bool, str]:
     # Unit-economics questions (e.g. "cost per user") typically don't specify a
     # region, so the LLM has no obligation to echo one.
     prompt = trace.get("prompt", "").lower()
-    prompt_has_region = any(term in prompt for term in [
-        "us-", "eu-", "ap-", "eastus", "us-east", "us-west", "eu-west",
-        "central", "europe", "asia", "region",
-    ])
+    prompt_has_region = any(
+        term in prompt
+        for term in [
+            "us-",
+            "eu-",
+            "ap-",
+            "eastus",
+            "us-east",
+            "us-west",
+            "eu-west",
+            "central",
+            "europe",
+            "asia",
+            "region",
+        ]
+    )
     if not prompt_has_region:
         return False, ""
 
@@ -277,16 +346,31 @@ def flag_unanchored(trace: dict) -> tuple[bool, str]:
     # region identifier. If all tool calls returned errors (e.g. GCP API key not
     # configured) the LLM never received a region to echo.
     tool_results_text = json.dumps([tc["result"] for tc in trace["tool_calls"]])
-    results_have_region = any(term in tool_results_text.lower() for term in [
-        "us-east", "us-west", "eu-west", "ap-", "eastus", "us-central",
-    ])
+    results_have_region = any(
+        term in tool_results_text.lower()
+        for term in [
+            "us-east",
+            "us-west",
+            "eu-west",
+            "ap-",
+            "eastus",
+            "us-central",
+        ]
+    )
     if not results_have_region:
         return False, ""
 
     # Check that the answer mentions at least one region keyword.
-    if "region" not in answer and "us-" not in answer \
-            and "eu-" not in answer and "ap-" not in answer and "eastus" not in answer \
-            and "central" not in answer and "europe" not in answer and "asia" not in answer:
+    if (
+        "region" not in answer
+        and "us-" not in answer
+        and "eu-" not in answer
+        and "ap-" not in answer
+        and "eastus" not in answer
+        and "central" not in answer
+        and "europe" not in answer
+        and "asia" not in answer
+    ):
         return True, "Answer mentions no region despite tool calls being made"
     return False, ""
 
@@ -294,7 +378,6 @@ def flag_unanchored(trace: dict) -> tuple[bool, str]:
 def flag_missing_data(trace: dict) -> tuple[bool, str]:
     """Check if pricing that should have been fetched was skipped."""
     answer = (trace.get("final_answer") or "").lower()
-    prompt = trace.get("prompt", "").lower()
 
     # If no tool calls at all for a pricing question
     if not trace["tool_calls"] and trace.get("final_answer"):
@@ -305,11 +388,15 @@ def flag_missing_data(trace: dict) -> tuple[bool, str]:
     # Collect tools that returned successful pricing data (used to suppress
     # estimate_bom/estimate_unit_economics fallback failures).
     successful_pricing_tools = {
-        tc2["tool"] for tc2 in trace["tool_calls"]
+        tc2["tool"]
+        for tc2 in trace["tool_calls"]
         if isinstance(tc2["result"], dict)
         and "error" not in tc2["result"]
-        and ("prices" in tc2["result"] or "line_items" in tc2["result"]
-             or "infrastructure_monthly" in tc2["result"])
+        and (
+            "prices" in tc2["result"]
+            or "line_items" in tc2["result"]
+            or "infrastructure_monthly" in tc2["result"]
+        )
     }
 
     # Check for tool errors on public APIs (not GCP/credentials)
@@ -319,18 +406,25 @@ def flag_missing_data(trace: dict) -> tuple[bool, str]:
             err = (result["error"] or "").lower()
             # Expected: GCP auth errors, spot-price auth, cost-explorer auth,
             # and any error explicitly telling the LLM not to estimate
-            if "gcp" not in err and "api key" not in err and "credentials" not in err \
-                    and "spot" not in err and "cost explorer" not in err \
-                    and "do not estimate" not in err \
-                    and "not supported for azure" not in err \
-                    and "not supported for" not in err \
-                    and "does not support" not in err \
-                    and "not yet implemented" not in err:
+            if (
+                "gcp" not in err
+                and "api key" not in err
+                and "credentials" not in err
+                and "spot" not in err
+                and "cost explorer" not in err
+                and "do not estimate" not in err
+                and "not supported for azure" not in err
+                and "not supported for" not in err
+                and "does not support" not in err
+                and "not yet implemented" not in err
+            ):
                 # If estimate_bom/estimate_unit_economics failed but the LLM already
                 # retrieved pricing via get_service_price / get_compute_price etc.,
                 # the failed aggregator call is a dead-end attempt, not missing data.
-                if tc["tool"] in ("estimate_bom", "estimate_unit_economics") \
-                        and successful_pricing_tools:
+                if (
+                    tc["tool"] in ("estimate_bom", "estimate_unit_economics")
+                    and successful_pricing_tools
+                ):
                     continue
                 return True, f"Tool {tc['tool']} returned unexpected error: {result['error'][:100]}"
 
@@ -356,19 +450,26 @@ def flag_api_key(trace: dict) -> tuple[bool, str]:
             if "api key" in err or ("gcp" in err and "requires" in err):
                 return True, "GCP API key not configured (expected in this environment)"
             # AWS spot/Cost Explorer pricing requires live credentials — expected gap
-            if ("spot pricing requires" in err or "aws credentials" in err
-                    or "cost explorer" in err or "aws_access_key_id" in err):
-                return True, "AWS credentials required for this pricing data (expected in this environment)"
+            if (
+                "spot pricing requires" in err
+                or "aws credentials" in err
+                or "cost explorer" in err
+                or "aws_access_key_id" in err
+            ):
+                return (
+                    True,
+                    "AWS credentials required for this pricing data (expected in this environment)",
+                )
     return False, ""
 
 
 CHECKS = [
-    ("NO_ANSWER",    flag_no_answer),
+    ("NO_ANSWER", flag_no_answer),
     ("HALLUCINATION", flag_hallucination),
-    ("TRUNCATION",   flag_truncation),
-    ("UNANCHORED",   flag_unanchored),
+    ("TRUNCATION", flag_truncation),
+    ("UNANCHORED", flag_unanchored),
     ("MISSING_DATA", flag_missing_data),
-    ("API_KEY",      flag_api_key),
+    ("API_KEY", flag_api_key),
 ]
 
 
@@ -397,9 +498,9 @@ def analyse_run(run_dir: Path) -> dict:
 
 
 def print_report(report: dict, run_dir: Path):
-    print(f"\n{'='*72}")
+    print(f"\n{'=' * 72}")
     print(f"ANALYSIS — {run_dir.name}")
-    print(f"{'='*72}")
+    print(f"{'=' * 72}")
 
     # Group by category prefix
     categories = {}
@@ -443,14 +544,14 @@ def print_report(report: dict, run_dir: Path):
                     if f["flag"] != "API_KEY":
                         print(f"         → {f['reason']}")
 
-    print(f"\n{'─'*72}")
-    print(f"SCORE: {passed}/{total} passed  ({100*passed//total}%)")
+    print(f"\n{'─' * 72}")
+    print(f"SCORE: {passed}/{total} passed  ({100 * passed // total}%)")
 
     # Failure breakdown
     from collections import Counter
+
     all_flags = Counter(
-        f["flag"] for r in report.values() for f in r["flags"]
-        if f["flag"] != "API_KEY"
+        f["flag"] for r in report.values() for f in r["flags"] if f["flag"] != "API_KEY"
     )
     if all_flags:
         print("\nFailure breakdown (excl. expected API_KEY):")
@@ -465,6 +566,7 @@ def build_improvement_plan(report: dict, run_dir: Path):
         plan = "# Improvement Plan\n\nAll tests passed. No improvements needed from this run.\n"
     else:
         from collections import defaultdict
+
         by_flag = defaultdict(list)
         for pid, r in failures.items():
             for f in r["flags"]:
@@ -484,21 +586,31 @@ def build_improvement_plan(report: dict, run_dir: Path):
 
         lines.append("\n## Recommended Actions\n")
         if "NO_ANSWER" in by_flag:
-            lines.append("- **NO_ANSWER**: Check if `enable_thinking=false` is being applied correctly. "
-                         "Inspect traces for `finish_reason=length` — may need higher `max_tokens` or "
-                         "simpler tool sequences.\n")
+            lines.append(
+                "- **NO_ANSWER**: Check if `enable_thinking=false` is being applied correctly. "
+                "Inspect traces for `finish_reason=length` — may need higher `max_tokens` or "
+                "simpler tool sequences.\n"
+            )
         if "HALLUCINATION" in by_flag:
-            lines.append("- **HALLUCINATION**: Add stronger 'see_also' / 'next_steps' hints to tool "
-                         "responses so the LLM fetches data rather than filling gaps from training.\n")
+            lines.append(
+                "- **HALLUCINATION**: Add stronger 'see_also' / 'next_steps' hints to tool "
+                "responses so the LLM fetches data rather than filling gaps from training.\n"
+            )
         if "MISSING_DATA" in by_flag:
-            lines.append("- **MISSING_DATA**: Review which tools the LLM failed to call. Consider adding "
-                         "cross-reference hints in docstrings pointing to the right tool for each scenario.\n")
+            lines.append(
+                "- **MISSING_DATA**: Review which tools the LLM failed to call. Consider adding "
+                "cross-reference hints in docstrings pointing to the right tool for each scenario.\n"
+            )
         if "TRUNCATION" in by_flag:
-            lines.append("- **TRUNCATION**: Increase default max_results where appropriate, or add "
-                         "'truncated' flags with next_steps hints to drive follow-up calls.\n")
+            lines.append(
+                "- **TRUNCATION**: Increase default max_results where appropriate, or add "
+                "'truncated' flags with next_steps hints to drive follow-up calls.\n"
+            )
         if "UNANCHORED" in by_flag:
-            lines.append("- **UNANCHORED**: Enforce that tool responses always echo back key parameters "
-                         "(region, OS, term, instance type) so the LLM anchors its answer to them.\n")
+            lines.append(
+                "- **UNANCHORED**: Enforce that tool responses always echo back key parameters "
+                "(region, OS, term, instance type) so the LLM anchors its answer to them.\n"
+            )
 
     plan_file = run_dir / "improvement_plan.md"
     plan_file.write_text("".join(lines) if isinstance(lines, list) else plan)

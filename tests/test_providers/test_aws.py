@@ -894,12 +894,14 @@ async def test_network_egress_supports_check(aws_provider: AWSProvider):
 # ijson streaming bulk path tests (_get_products_bulk)
 # ---------------------------------------------------------------------------
 
-import gzip as _gzip
-import json as _json
-import time as _time
+import gzip as _gzip  # noqa: E402
+import json as _json  # noqa: E402
+import time as _time  # noqa: E402
 
 
-def _make_bulk_json(products: dict, on_demand: dict | None = None, reserved: dict | None = None) -> bytes:
+def _make_bulk_json(
+    products: dict, on_demand: dict | None = None, reserved: dict | None = None
+) -> bytes:
     """Build a minimal AWS bulk pricing JSON and return it gzip-compressed.
 
     This matches the format _fetch_bulk_compressed returns, which is what
@@ -1167,7 +1169,9 @@ async def test_singleflight_serialises_concurrent_downloads(aws_provider: AWSPro
     (i.e. call_count == N, not 1 — it's a mutex, not a singleflight with shared result).
     """
     import asyncio
+
     import botocore.exceptions
+
     from opencloudcosts.providers import aws as aws_module
 
     # Clear module-level lock cache so this test starts clean
@@ -1226,7 +1230,9 @@ async def test_singleflight_serialises_concurrent_downloads(aws_provider: AWSPro
 async def test_singleflight_different_regions_run_concurrently(aws_provider: AWSProvider):
     """Calls for DIFFERENT (service, region) pairs are NOT blocked by the same lock."""
     import asyncio
+
     import botocore.exceptions
+
     from opencloudcosts.providers import aws as aws_module
 
     aws_module._bulk_fetch_locks.clear()
@@ -1263,7 +1269,9 @@ async def test_singleflight_different_regions_run_concurrently(aws_provider: AWS
 
 
 @pytest.mark.asyncio
-async def test_singleflight_no_credentials_missing_location_returns_empty(aws_provider: AWSProvider):
+async def test_singleflight_no_credentials_missing_location_returns_empty(
+    aws_provider: AWSProvider,
+):
     """_get_products returns [] when no credentials and filters have no location field.
 
     The bulk path requires a location filter to determine the region code.
