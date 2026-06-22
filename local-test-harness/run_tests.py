@@ -1057,9 +1057,13 @@ def _preview(obj, n=150) -> str:
 
 def _sanitise_tool_call_args(messages: list[dict]) -> list[dict]:
     """Ensure every tool_call arguments field in message history is valid JSON.
-    vLLM will 400 on any malformed arguments string even from prior rounds."""
+    vLLM will 400 on any malformed arguments string even from prior rounds.
+    Also strips reasoning_content from previous assistant turns — thinking tokens
+    accumulated across multiple rounds inflate the context window unnecessarily."""
     out = []
     for msg in messages:
+        if msg.get("reasoning_content"):
+            msg = {k: v for k, v in msg.items() if k != "reasoning_content"}
         if msg.get("role") == "assistant" and msg.get("tool_calls"):
             tcs = []
             for tc in msg["tool_calls"]:
@@ -1273,7 +1277,7 @@ async def run_single(
                 "tools": openai_tools,
                 "tool_choice": "auto",
                 "temperature": 0.3,
-                "max_tokens": 57344,
+                "max_tokens": 32768,
             }
 
             try:
