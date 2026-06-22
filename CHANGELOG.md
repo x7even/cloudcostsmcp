@@ -5,6 +5,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+---
+
+## [0.9.2] — 2026-06-22
+
 ### Added
 - **Harness: HTTP MCP transport** — `run_tests.py` now supports `OCC_MCP_TRANSPORT=http` /
   `OCC_MCP_BASE_URL` to drive a `--transport http` server, enabling multi-client and
@@ -467,7 +471,8 @@ Phase-based rollout:
 - **Phase 5**: GCP managed services (GKE, Memorystore, BigQuery, Vertex AI, Gemini,
   Cloud LB/CDN/NAT/Armor/Monitoring, Cloud SQL); Azure reserved pricing
 
-[Unreleased]: https://github.com/x7even/cloudcostmcp/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/x7even/cloudcostmcp/compare/v0.9.2...HEAD
+[0.9.2]: https://github.com/x7even/cloudcostmcp/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/x7even/cloudcostmcp/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/x7even/cloudcostmcp/compare/v0.8.14...v0.9.0
 [0.8.14]: https://github.com/x7even/cloudcostmcp/compare/v0.8.13...v0.8.14

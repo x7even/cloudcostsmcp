@@ -19,7 +19,7 @@ Supports both **public list pricing** (no credentials needed for AWS and Azure; 
 - "List all c6g instances in eu-west-1 with >= 8 vCPUs"
 - "What's my effective hourly rate on m5.xlarge after Savings Plans?"
 
-## Tools (v0.9.1 — 15 tools)
+## Tools (v0.9.2 — 15 tools)
 
 **Pricing**
 
@@ -334,6 +334,6 @@ With credentials configured: actual spend, contract/negotiated pricing, reservat
 - **v0.8.13** ✅ GCP network contract pricing — Cloud LB, CDN, NAT, Cloud Armor; `effective_price` on `NetworkPricingSpec` when billing account configured
 - **v0.8.14** ✅ GCP internet and inter-region egress (`inter_region_egress` domain) — continent-based rates from SKU catalog with static fallbacks; cross-cloud egress comparison now works across AWS, GCP, and Azure
 - **v0.9.1** ✅ GCP egress contract pricing — `effective_price` on internet egress when billing account configured; fix `PricingResult.source` Literal to include `"catalog+billing_api"`
-- **Unreleased** ✅ Azure OpenAI word-boundary model matching — regex fix prevents GPT-4/GPT-4o/GPT-4.1 prefix collisions; standard-SKU filter reduces lookup noise
-- **Unreleased** ✅ Azure Functions Consumption plan pricing fix; `list_instance_types` default cap (25); AWS bulk pricing streamed via ijson
-- **Unreleased** ✅ Harness: HTTP MCP transport, reasoning-content stripping, MCP restart resilience, 199-prompt suite (up from 169)
+- **v0.9.2** ✅ Azure OpenAI word-boundary model matching — regex fix prevents GPT-4/GPT-4o/GPT-4.1 prefix collisions; standard-SKU filter reduces lookup noise
+- **v0.9.2** ✅ Azure Functions Consumption plan pricing fix; `list_instance_types` default cap (25); AWS bulk pricing streamed via ijson
+- **v0.9.2** ✅ Harness: HTTP MCP transport, reasoning-content stripping, MCP restart resilience, 199-prompt suite (up from 169)
