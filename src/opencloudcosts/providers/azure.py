@@ -1090,19 +1090,20 @@ class AzureProvider(ProviderBase):
             prices = []
             model_normalized = model_lower.replace("-", " ")
             model_compact = model_lower.replace("-", "").replace(" ", "")
-            # Word-boundary regex: model_compact must not be immediately followed by a
-            # lowercase letter — prevents "gpt4o" matching "gpt4omini" while still
-            # allowing version-date suffixes like "gpt4o0513" (digit follows).
-            _wb_pat = re.compile(re.escape(model_compact) + r"(?![a-z])")
+            # Word-boundary patterns: model name must not be immediately followed by a
+            # lowercase letter — prevents "gpt4o" matching "gpt4omini" in sku_compact
+            # and "gpt 4" matching "gpt 4o" in product/meter.
+            _wb_compact = re.compile(re.escape(model_compact) + r"(?![a-z])")
+            _wb_norm = re.compile(re.escape(model_normalized) + r"(?!\w)")
             for item in items:
                 meter = item.get("meterName", "").lower()
                 product = item.get("productName", "").lower()
                 sku = item.get("skuName", "").lower()
                 sku_compact = re.sub(r"[-_ ]", "", sku)
                 if (
-                    model_normalized not in product
-                    and model_normalized not in meter
-                    and not _wb_pat.search(sku_compact)
+                    not _wb_norm.search(product)
+                    and not _wb_norm.search(meter)
+                    and not _wb_compact.search(sku_compact)
                 ):
                     continue
                 p = self._item_to_price(item, region, PricingTerm.ON_DEMAND, "openai")
