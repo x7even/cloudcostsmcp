@@ -62,9 +62,13 @@ def register_availability_tools(mcp: Any) -> None:
         min_vcpu: int | None = None,
         min_memory_gb: float | None = None,
         gpu: bool = False,
+        max_results: int = 25,
     ) -> dict[str, Any]:
         """
         List available compute instance types matching the given filters.
+
+        Returns up to 25 results by default. Use min_vcpu, min_memory_gb, or
+        family filters to narrow results and see more specific matches.
 
         Args:
             provider: Cloud provider — "aws", "gcp", or "azure"
@@ -73,6 +77,7 @@ def register_availability_tools(mcp: Any) -> None:
             min_vcpu: Minimum vCPU count filter
             min_memory_gb: Minimum memory in GB filter
             gpu: If True, only return GPU-enabled instance types
+            max_results: Maximum number of results to return (default 25)
         """
         pvdr = ctx.request_context.lifespan_context["providers"].get(provider)
         if pvdr is None:
@@ -102,12 +107,20 @@ def register_availability_tools(mcp: Any) -> None:
                 entry["gpu_type"] = t.gpu_type
             return entry
 
-        return {
+        total = len(types)
+        capped = types[:max_results]
+        result: dict[str, Any] = {
             "provider": provider,
             "region": region,
-            "count": len(types),
-            "instance_types": [_compact(t) for t in types],
+            "count": len(capped),
+            "instance_types": [_compact(t) for t in capped],
         }
+        if total > max_results:
+            result["note"] = (
+                f"Showing {len(capped)} of {total} results"
+                " — use filters to narrow"
+            )
+        return result
 
     @mcp.tool()
     async def describe_catalog(
