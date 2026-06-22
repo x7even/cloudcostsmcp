@@ -906,20 +906,36 @@ class AzureProvider(ProviderBase):
                 "armRegionName": region,
                 "priceType": "Consumption",
                 "serviceName": "Functions",
+                # Restrict to classic Consumption plan; excludes Flex Consumption and Premium
+                "productName": "Functions",
             }
             items = await asyncio.to_thread(self._fetch_prices, filters, 30)
+            # Further narrow to Standard SKU (Consumption plan); skip Flex/Premium leftovers
+            items = [i for i in items if i.get("skuName", "").lower() == "standard"]
 
             prices = []
             for item in items:
                 meter = item.get("meterName", "").lower()
                 uom = item.get("unitOfMeasure", "").lower()
+                raw_uom = item.get("unitOfMeasure", "").strip()
                 p = self._item_to_price(item, region, PricingTerm.ON_DEMAND, "azure_functions")
                 if p is None:
                     continue
-                if "execution" in meter or "invocation" in meter:
-                    p = p.model_copy(update={"unit": PriceUnit.PER_REQUEST})
-                elif "gb" in uom and "second" in uom:
+                # Check GB-second BEFORE execution: "Standard Execution Time" has uom="1 GB Second"
+                # and would otherwise match "execution in meter" first (wrong unit).
+                if "gb" in uom and "second" in uom:
                     p = p.model_copy(update={"unit": PriceUnit.PER_GB_SECOND})
+                elif "execution" in meter or "invocation" in meter:
+                    # API prices executions per N (e.g. unitOfMeasure="10"); normalise to per-1.
+                    try:
+                        denom = Decimal(raw_uom)
+                        if denom > 1:
+                            p = p.model_copy(
+                                update={"price_per_unit": p.price_per_unit / denom}
+                            )
+                    except Exception:
+                        pass
+                    p = p.model_copy(update={"unit": PriceUnit.PER_REQUEST})
                 elif "vcpu" in meter:
                     # Premium plan: per-vCPU-hour
                     p = p.model_copy(
