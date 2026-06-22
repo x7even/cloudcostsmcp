@@ -5,6 +5,46 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **Harness: HTTP MCP transport** — `run_tests.py` now supports `OCC_MCP_TRANSPORT=http` /
+  `OCC_MCP_BASE_URL` to drive a `--transport http` server, enabling multi-client and
+  remote deployment testing without stdio process management.
+
+### Fixed
+- **Azure OpenAI model matching** — word-boundary regex (`(?![a-z.])` lookahead) prevents
+  prefix collisions where `gpt-4` matched `gpt-4o` and `gpt-4.1` matched `gpt-4` model
+  IDs in both compact (`gpt4o`) and normalised (`gpt-4o`) forms. Also applied to product
+  and meter name fields.
+- **Azure OpenAI standard-SKU filter** — deployment-type classifier now excludes audio,
+  realtime, batch, and cached variants, reducing lookup noise from ~14 to ~4 SKUs.
+- **Azure Functions Consumption plan** — fixed incorrect GB-second rate parsing that was
+  returning the provisioned-plan rate instead of the consumption-plan rate.
+- **`list_instance_types` default cap** — capped at 25 results by default to prevent
+  context overflow on large regions; `max_results` parameter overrides.
+- **Harness: reasoning content stripping** — prior assistant turns now have
+  `reasoning_content` blocks removed before re-sending to the model, preventing context
+  accumulation with thinking-mode models.
+- **Harness: MCP restart resilience** — `session.initialize()` now has a 30s timeout;
+  restart retry extended to 6 attempts (~7.5 min window) to survive pod redeployment.
+- **Harness: tool-call robustness** — XML `arg=obj` syntax fixed; name-less tool calls
+  inferred from context; large tool results truncated before injecting into conversation;
+  dedup cache prevents duplicate calls within a turn.
+- **Harness: AZAI2 prompt** — replaced retired GPT-3.5-Turbo reference with GPT-4o-mini.
+
+### Performance
+- **AWS bulk pricing** — `ijson` streaming parser replaces full in-memory JSON decode for
+  bulk price files; singleflight lock prevents duplicate concurrent downloads.
+
+### Changed
+- **Harness: example configs** — placeholder URLs replace LAN IP examples.
+- **CI** — `ruff format --check` extended to `local-test-harness/` and `tests/`; 15 lint
+  issues resolved across harness scripts and test files.
+- **Project tagline** — "Anchor AI FinOps to real, live cloud pricing" applied consistently
+  to README and `pyproject.toml`.
+- **Harness suite** — expanded from 169 to 199 prompts; new categories: `NET_EGR1-8`
+  (egress tiering), `TRUST1-2` (trust metadata), `EGR_X1-3` (cross-cloud egress),
+  `AZAKS4`, `AZFN6`, `AZAI6`, `FCR1-2`, `BOM_RES1-2`, `REC1`.
+
 ---
 
 ## [0.9.1] — 2026-04-26
@@ -427,7 +467,17 @@ Phase-based rollout:
 - **Phase 5**: GCP managed services (GKE, Memorystore, BigQuery, Vertex AI, Gemini,
   Cloud LB/CDN/NAT/Armor/Monitoring, Cloud SQL); Azure reserved pricing
 
-[Unreleased]: https://github.com/x7even/cloudcostmcp/compare/v0.8.4...HEAD
+[Unreleased]: https://github.com/x7even/cloudcostmcp/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/x7even/cloudcostmcp/compare/v0.9.0...v0.9.1
+[0.9.0]: https://github.com/x7even/cloudcostmcp/compare/v0.8.14...v0.9.0
+[0.8.14]: https://github.com/x7even/cloudcostmcp/compare/v0.8.13...v0.8.14
+[0.8.13]: https://github.com/x7even/cloudcostmcp/compare/v0.8.12...v0.8.13
+[0.8.12]: https://github.com/x7even/cloudcostmcp/compare/v0.8.11...v0.8.12
+[0.8.11]: https://github.com/x7even/cloudcostmcp/compare/v0.8.10...v0.8.11
+[0.8.10]: https://github.com/x7even/cloudcostmcp/compare/v0.8.9...v0.8.10
+[0.8.9]: https://github.com/x7even/cloudcostmcp/compare/v0.8.8...v0.8.9
+[0.8.8]: https://github.com/x7even/cloudcostmcp/compare/v0.8.5...v0.8.8
+[0.8.5]: https://github.com/x7even/cloudcostmcp/compare/v0.8.4...v0.8.5
 [0.8.4]: https://github.com/x7even/cloudcostmcp/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/x7even/cloudcostmcp/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/x7even/cloudcostmcp/compare/v0.8.1...v0.8.2

@@ -1,4 +1,4 @@
-# OpenCloudCosts MCP — Tool Reference (v0.8.8)
+# OpenCloudCosts MCP — Tool Reference
 
 ## Overview
 
@@ -25,7 +25,7 @@
 - Regions: `eastus`, `eastus2`, `westeurope`, `southeastasia`, `australiaeast`, etc.
 - Public pricing — no credentials needed. Uses Azure Retail Prices API.
 - Supported storage types: `premium-ssd`, `standard-ssd`, `standard-hdd`, `ultra-ssd`, `blob`
-- **Supported services (v0.8.8):** compute/vm, storage/managed_disks, storage/blob, database/sql, database/cosmos, container/aks, serverless/azure_functions, ai/openai
+- **Supported services:** compute/vm, storage/managed_disks, storage/blob, database/sql, database/cosmos, container/aks, serverless/azure_functions, ai/openai, inter_region_egress
 - Azure SQL `resource_type` examples: `"General Purpose 4 vCores"`, `"Business Critical 8 vCores"`, `"Hyperscale 2 vCores"`
 - Azure OpenAI models: `gpt-4o`, `gpt-4o-mini`, `gpt-4`, `gpt-35-turbo`, `o1`, `o1-mini`, `text-embedding-3-small`, `text-embedding-3-large`
 
@@ -57,6 +57,7 @@ Use `describe_catalog(provider, domain)` to see required fields and a copy-paste
 | `network` | `service` (`lb`/`cdn`/`nat`/`data_transfer`/`cloud_armor`) | `{"provider": "gcp", "domain": "network", "service": "lb", "region": "us-central1"}` |
 | `observability` | `service` (`cloudwatch`/`cloud_monitoring`) | `{"provider": "aws", "domain": "observability", "service": "cloudwatch", "region": "us-east-1"}` |
 | `container` | `service` (`gke`/`eks`/`aks`) | `{"provider": "gcp", "domain": "container", "service": "gke", "region": "us-central1"}` |
+| `inter_region_egress` | `source_region`, `dest_region` (optional), `data_gb` (optional) | `{"provider": "aws", "domain": "inter_region_egress", "source_region": "us-east-1", "dest_region": "eu-west-1", "data_gb": 1000}` |
 
 **Pricing terms (valid `term` values):**
 
@@ -156,7 +157,7 @@ Use this before `get_price` when unsure of exact field names or values.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `provider` | string | | `"aws"`, `"gcp"`, or `"azure"`. Empty = all providers. |
-| `domain` | string | | `"compute"`, `"storage"`, `"database"`, `"ai"`, `"container"`, `"serverless"`, `"analytics"`, `"network"`, `"observability"`. Empty = all. |
+| `domain` | string | | `"compute"`, `"storage"`, `"database"`, `"ai"`, `"container"`, `"serverless"`, `"analytics"`, `"network"`, `"observability"`, `"inter_region_egress"`. Empty = all. |
 | `service` | string | | e.g. `"bedrock"`, `"rds"`, `"gke"`, `"bigquery"`. Empty = all. |
 
 ---

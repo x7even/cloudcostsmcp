@@ -4,13 +4,13 @@ An end-to-end quality harness that drives an LLM through the full MCP tool-call 
 
 ## What it tests
 
-The harness sends **109 curated prompts** covering every tool and provider combination:
+The harness sends **199 curated prompts** covering every tool and provider combination:
 
 | Category | IDs | What's tested |
 |----------|-----|---------------|
 | Common | C1–C4 | Basic AWS compute + storage |
 | Multi-cloud | M1–M3 | AWS vs GCP vs Azure comparisons |
-| Complex BoM/TCO | CX1–CX10 | Bill of Materials, unit economics |
+| Complex BoM/TCO | CX1–CX14, CX_BOM | Bill of Materials, unit economics, complex TCO |
 | AWS Simple | AS1–AS10 | EC2, EBS, RDS, Lambda, ElastiCache, NAT |
 | GCP Simple | GS1–GS10 | GCE, Persistent Disk, CUDs |
 | GCP GKE | GK1–GK5 | Standard and Autopilot cluster pricing |
@@ -22,11 +22,30 @@ The harness sends **109 curated prompts** covering every tool and provider combi
 | GCP Complex Stacks | GCX1–GCX5 | Multi-service GCP architectures |
 | GCP Cloud Storage | GGCS1–GGCS5 | GCS storage classes |
 | GCP Cloud SQL | GSQL1–GSQL5 | Cloud SQL MySQL and PostgreSQL |
+| GCP Effective Pricing | GCPSTO1–3, GCPDB1–3, GCPNET1–3, GCPEGR1–3 | Contract/effective pricing paths |
 | Multi-product AWS vs GCP | MP1–MP5 | Side-by-side price comparisons |
 | Multi-region | MR1–MR5 | Cross-region price comparisons |
+| Multi-region Stack | MRS1–MRS3 | Multi-region multi-service stacks |
+| Cross-Cloud | CCR1–CCR3 | Cross-cloud comparisons |
 | Azure Simple | AZ1–AZ5 | Azure VM, storage, reserved pricing |
+| Azure Complex | AZX1–AZX3 | Multi-service Azure architectures |
+| Azure SQL | AZSQL1–AZSQL5 | Azure SQL Database vCore tiers, HA, reserved |
+| Azure Cosmos DB | AZCOS1–AZCOS5 | Provisioned, serverless, autoscale |
+| Azure AKS | AZAKS1–AZAKS4 | AKS cluster management, spot nodes |
+| Azure Functions | AZFN1–AZFN6 | Consumption plan, free tier deduction |
+| Azure OpenAI | AZAI1–AZAI6 | GPT-4o, GPT-4o-mini, GPT-4, o1 token pricing |
+| Azure Monitor + CDN | AZMON1–3, AZCDN1, AZFD1–2 | Log Analytics, CDN, Front Door |
+| Azure New Services | NSV1–NSV6 | SQL, Functions, AKS, OpenAI, Monitor, CDN spot-checks |
 | Advanced AWS | AA1–AA5 | Lambda, S3, RDS, reserved instances |
 | Multi-cloud 3-way | MC1–MC5 | AWS + GCP + Azure |
+| Inter-region Egress | EGR1–EGR5 | AWS, GCP, Azure inter-region egress |
+| Azure Egress | AZEGR1–AZEGR3 | Azure bandwidth pricing |
+| Network Egress (tiered) | NET_EGR1–NET_EGR8 | Tiered egress costs, blended rates, cross-region |
+| Cross-cloud Egress | EGR_X1–EGR_X3 | Multi-provider egress comparison, large volumes |
+| Trust Metadata | TRUST1–TRUST2 | `as_of`, `source_url`, `cache_age_seconds` fields |
+| FinOps Cross-region | FCR1–FCR2 | Cheapest-region queries, spot vs reserved |
+| BoM Resources | BOM_RES1–BOM_RES2 | BoM with mixed resource types |
+| Recommendations | REC1 | Basic pricing lookup smoke test |
 
 ## Failure criteria
 
@@ -87,7 +106,7 @@ Azure pricing is fully public — no credentials needed.
 ### 4. Run
 
 ```bash
-# All 109 prompts
+# All 199 prompts
 uv run local-test-harness/run_tests.py
 
 # Specific prompts

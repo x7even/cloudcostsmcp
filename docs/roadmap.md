@@ -356,3 +356,71 @@ T29 (HTTP transport) — independent, no deps
 ```
 
 Quick wins T20, T21, T22, T23, T25 have no dependencies and can be built in any order.
+
+---
+
+## Path to 1.0.0
+
+### What 1.0.0 means
+
+Version 1.0.0 signals a **stable API contract**: the 15-tool surface, spec shapes,
+and response schemas will not break without a major version bump. It also marks the
+completion of the Go rewrite (see below) and the last pending Phase 4 feature (T26).
+
+### Remaining pre-1.0.0 work
+
+| Item | Status | Notes |
+|------|--------|-------|
+| T26 — GCP effective pricing via BigQuery | pending | Last Phase 4 item |
+| Go rewrite | planned | See below |
+| Windows support in CI test matrix | nice-to-have | — |
+
+### Go rewrite rationale
+
+The Python implementation is sound, but a Go rewrite targets three concrete goals:
+
+1. **Memory footprint.** The Python process idles at ~50–100 MB (interpreter +
+   asyncio loop + all provider modules loaded). A Go binary runs at ~5–20 MB. On a
+   home-cluster self-hosted deployment this is the dominant difference.
+
+2. **Cold-start latency.** `uv run opencloudcosts` takes 2–3 s to import the
+   module tree. A Go binary starts in under 100 ms — matters for on-demand or
+   restart-heavy deployments.
+
+3. **Distribution simplicity.** A single statically-linked binary requires no
+   Python runtime, no `uv`, no virtual environment. The Docker image drops from
+   ~200 MB (`python:3.12-slim` + deps) to ~25 MB (`scratch` + binary). This also
+   eliminates Python version compatibility concerns going forward.
+
+**Concurrency** is the weakest argument: asyncio already handles concurrent
+provider HTTP fan-out well. Go goroutines would improve throughput for many
+simultaneous MCP *client connections*, but the current single-client use case
+doesn't feel this bottleneck.
+
+**Go MCP library:** `mark3labs/mcp-go` — actively maintained, mirrors the
+Python `fastmcp` API closely enough to be a natural translation target.
+
+### PyPI distribution after the Go rewrite
+
+The PyPI package does **not** need to be retired. The `ruff` and `uv` projects
+establish the canonical pattern: Rust (or Go) binaries distributed via
+platform-specific PyPI wheels. The same model applies here:
+
+- CI (goreleaser) builds `opencloudcosts` binaries for `linux-x86_64`,
+  `linux-aarch64`, `macos-x86_64`, `macos-arm64`, `windows-x86_64`.
+- A packaging step wraps each binary into a platform-specific wheel
+  (`opencloudcosts-1.0.0-py3-none-linux_x86_64.whl`, etc.). The wheel
+  contains no Python code beyond a thin entry-point shim that `exec()`s the binary.
+- `pip install opencloudcosts` and `uvx opencloudcosts` continue to work
+  unchanged. Existing MCP client configs using `command: uvx` require no updates.
+
+There is no `maturin` equivalent for Go — the wheel build is more bespoke
+than the Rust/PyO3 path — but it is well-understood and used in production
+by projects of this scale.
+
+### Additional 1.0.0 distribution targets
+
+- `go install github.com/x7even/cloudcostmcp@v1.0.0`
+- Homebrew formula (`brew install opencloudcosts`)
+- GitHub Releases with pre-built binaries (linux/mac/win, both arches)
+- Docker image: `ghcr.io/x7even/opencloudcosts:1.0.0` (~25 MB scratch image)
