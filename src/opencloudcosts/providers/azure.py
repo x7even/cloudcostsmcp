@@ -1090,11 +1090,11 @@ class AzureProvider(ProviderBase):
             prices = []
             model_normalized = model_lower.replace("-", " ")
             model_compact = model_lower.replace("-", "").replace(" ", "")
-            # Word-boundary patterns: model name must not be immediately followed by a
-            # lowercase letter — prevents "gpt4o" matching "gpt4omini" in sku_compact
-            # and "gpt 4" matching "gpt 4o" in product/meter.
-            _wb_compact = re.compile(re.escape(model_compact) + r"(?![a-z])")
-            _wb_norm = re.compile(re.escape(model_normalized) + r"(?!\w)")
+            # Word-boundary patterns — prevent prefix collisions between model names:
+            # • "gpt4" must not match "gpt4o" (letter follows) or "gpt4.1" (dot follows)
+            # • "gpt 4" must not match "gpt 4o" (word char follows) or "gpt 4.1" (dot follows)
+            _wb_compact = re.compile(re.escape(model_compact) + r"(?![a-z.])")
+            _wb_norm = re.compile(re.escape(model_normalized) + r"(?![\w.])")
             for item in items:
                 meter = item.get("meterName", "").lower()
                 product = item.get("productName", "").lower()
