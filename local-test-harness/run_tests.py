@@ -70,6 +70,7 @@ MCP_COMMAND = "uv"
 MCP_ARGS = ["run", "--directory", str(PROJECT_DIR), "opencloudcosts"]
 # Absolute safety cap — only fires if loop detection fails to catch a pathological case.
 MAX_TOOL_ROUNDS = 150
+MAX_TOOL_RESULT_CHARS = 6000  # Prevent context overflow from large tool responses
 # Sliding window for loop detection: if the same (tool, args) fingerprint appears
 # twice within this many consecutive calls, the model is in a loop.
 LOOP_DETECT_WINDOW = 6
@@ -1089,6 +1090,10 @@ def _preprocess_json(s: str) -> str:
     """Fix common LLM JSON syntax errors before parsing."""
     # "key="value" → "key": "value"  (model mixes XML attribute and JSON syntax)
     s = re.sub(r'"(\w+)="', r'"\1": "', s)
+    # "key={ → "key": {  (model uses = before a dict value)
+    s = re.sub(r'"(\w+)=(\{)', r'"\1": \2', s)
+    # "key=[ → "key": [  (model uses = before a list value)
+    s = re.sub(r'"(\w+)=(\[)', r'"\1": \2', s)
     return s
 
 
@@ -1150,6 +1155,11 @@ def _extract_xml_tool_calls(content: str) -> list[dict]:
         elif "name" in parsed:
             name = parsed["name"]
             args = parsed.get("arguments") or parsed.get("parameters") or {}
+        elif "arguments" in parsed and "provider" in (parsed.get("arguments") or {}):
+            # Model omitted name but args look like a PricingSpec or catalog query.
+            # Infer tool: if args have "spec" key → get_price, otherwise → describe_catalog.
+            args = parsed["arguments"]
+            name = "get_price" if "spec" in args else "describe_catalog"
         else:
             continue
         if not name:
@@ -1409,6 +1419,23 @@ async def run_single(
                         tool_result = {"error": f"MCP tool error: {e}"}
 
                 print(f"     ← {_preview(tool_result, 120)}")
+
+                # Truncate large results to prevent context overflow
+                result_str = json.dumps(tool_result)
+                if len(result_str) > MAX_TOOL_RESULT_CHARS:
+                    if isinstance(tool_result, dict) and "instance_types" in tool_result:
+                        # Keep summary metadata, truncate the list
+                        truncated = {k: v for k, v in tool_result.items() if k != "instance_types"}
+                        truncated["instance_types"] = tool_result["instance_types"][:20]
+                        truncated["_truncated"] = f"Showing 20 of {tool_result.get('count', '?')} results — use more specific filters"
+                        tool_result = truncated
+                    elif isinstance(tool_result, dict) and "results" in tool_result and isinstance(tool_result["results"], list):
+                        truncated = {k: v for k, v in tool_result.items() if k != "results"}
+                        truncated["results"] = tool_result["results"][:20]
+                        truncated["_truncated"] = f"Showing 20 of {tool_result.get('count', len(tool_result['results']))} results"
+                        tool_result = truncated
+                    else:
+                        tool_result = {"_truncated": True, "preview": result_str[:MAX_TOOL_RESULT_CHARS], "note": "Result too large — use more specific parameters"}
 
                 trace["tool_calls"].append({
                     "round": round_num,
