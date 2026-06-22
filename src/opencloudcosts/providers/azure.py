@@ -1091,23 +1091,49 @@ class AzureProvider(ProviderBase):
             items = await asyncio.to_thread(self._fetch_prices, filters, 100)
 
             prices = []
+            model_normalized = model_lower.replace("-", " ")
+            model_compact = model_lower.replace("-", "").replace(" ", "")
+            # Word-boundary regex: model_compact must not be immediately followed by a
+            # lowercase letter — prevents "gpt4o" matching "gpt4omini" while still
+            # allowing version-date suffixes like "gpt4o0513" (digit follows).
+            _wb_pat = re.compile(re.escape(model_compact) + r"(?![a-z])")
             for item in items:
                 meter = item.get("meterName", "").lower()
                 product = item.get("productName", "").lower()
                 sku = item.get("skuName", "").lower()
-                model_normalized = model_lower.replace("-", " ")
-                model_compact = model_lower.replace("-", "").replace(" ", "")
+                sku_compact = re.sub(r"[-_ ]", "", sku)
                 if (
                     model_normalized not in product
                     and model_normalized not in meter
-                    and model_compact not in sku.replace("-", "").replace(" ", "")
+                    and not _wb_pat.search(sku_compact)
                 ):
                     continue
                 p = self._item_to_price(item, region, PricingTerm.ON_DEMAND, "openai")
                 if p:
-                    prices.append(p.model_copy(update={"unit": PriceUnit.PER_UNIT}))
+                    # Classify deployment variant so we can surface standard text pricing.
+                    combined = meter + " " + sku
+                    if any(k in combined for k in ("realtime", "rtime", "rt-", "-rt-")):
+                        dtype = "realtime"
+                    elif any(k in combined for k in ("audio", "-aud", " aud")):
+                        dtype = "audio"
+                    elif "batch" in combined:
+                        dtype = "batch"
+                    elif any(k in combined for k in ("cached", "cchd")):
+                        dtype = "cached"
+                    else:
+                        dtype = "standard"
+                    prices.append(p.model_copy(update={
+                        "unit": PriceUnit.PER_UNIT,
+                        "attributes": {**p.attributes, "deployment_type": dtype},
+                    }))
 
-            if not prices:
+            # Prefer standard text deployments; non-standard variants (realtime/audio/
+            # batch/cached) are confusing for per-token cost estimates.
+            standard_prices = [p for p in prices if p.attributes.get("deployment_type") == "standard"]
+            if standard_prices:
+                prices = standard_prices
+
+            if not prices or not standard_prices:
                 # Static fallback using known published rates
                 in_rate, out_rate = None, None
                 for key, (ir, or_) in _OPENAI_STATIC_RATES.items():
