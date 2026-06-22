@@ -777,7 +777,7 @@ TEST_PROMPTS = {
         "What does Azure OpenAI GPT-4o cost per 1K input and output tokens in eastus?"
     ),
     "AZAI2": (
-        "Compare Azure OpenAI GPT-4o vs GPT-3.5-Turbo pricing in eastus. "
+        "Compare Azure OpenAI GPT-4o vs GPT-4o-mini pricing in eastus. "
         "For a workload sending 1M input tokens and receiving 500K output tokens per month, "
         "what is the cost difference?"
     ),
