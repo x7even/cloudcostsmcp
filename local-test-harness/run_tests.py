@@ -1553,7 +1553,7 @@ async def _run_prompt_with_fresh_session(pid, prompt, openai_tools, run_dir, res
             transport_ctx = await _make_mcp_session()
             async with transport_ctx as (read, write, *_):
                 async with ClientSession(read, write) as session:
-                    await session.initialize()
+                    await asyncio.wait_for(session.initialize(), timeout=30.0)
                     trace = await run_single(pid, prompt, session, openai_tools, run_dir)
             results[pid] = {
                 "status": "error" if trace["error"] else "ok",
@@ -1566,7 +1566,11 @@ async def _run_prompt_with_fresh_session(pid, prompt, openai_tools, run_dir, res
             return
         except Exception as e:
             err_str = str(e)
-            is_connect_err = "ConnectError" in err_str or "ConnectionRefused" in err_str or "TaskGroup" in err_str
+            is_connect_err = (
+                "ConnectError" in err_str or "ConnectionRefused" in err_str
+                or "TaskGroup" in err_str or "TimeoutError" in err_str
+                or "timed out" in err_str.lower()
+            )
             if is_connect_err and attempt < 2:
                 wait = 30 * (attempt + 1)  # 30s, then 60s — covers typical pod restart time
                 async with print_lock:
@@ -1602,7 +1606,7 @@ async def run_worker(
             transport_ctx = await _make_mcp_session()
             async with transport_ctx as (read, write, *_):
                 async with ClientSession(read, write) as session:
-                    await session.initialize()
+                    await asyncio.wait_for(session.initialize(), timeout=30.0)
                     tools_resp = await session.list_tools()
             break
         except Exception as e:
