@@ -27,6 +27,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -94,7 +95,11 @@ SYSTEM_PROMPT = (
     "3. For multi-cloud comparisons, call tools for EACH provider separately before answering. "
     "If a provider returns no data, write 'Unable to retrieve [provider] pricing' — never fill it in from memory.\n"
     "4. If estimate_bom returns a 'not_included' list, call get_price for each listed item individually. "
-    "Do not estimate or guess any cost that was not returned by a tool."
+    "Do not estimate or guess any cost that was not returned by a tool.\n\n"
+    "TOOL CALL FORMAT — always use this exact format when calling a tool:\n"
+    "<tool_call>\n"
+    "{\"name\": \"TOOL_NAME\", \"arguments\": {\"param\": \"value\"}}\n"
+    "</tool_call>"
 )
 
 # ---------------------------------------------------------------------------
@@ -969,6 +974,62 @@ TEST_PROMPTS = {
         "What is the Azure bandwidth cost for 1 TB/month outbound from East US? "
         "Use domain=network, service=egress and show the tier breakdown."
     ),
+    # ── New coverage: trust metadata, cross-cloud egress, Azure expansion, resilience ──
+    "TRUST1": (
+        "How fresh is the AWS pricing data for EC2 compute in us-east-1? "
+        "Report the as_of date, source URL, and cache age from the tool response."
+    ),
+    "TRUST2": (
+        "Get GCP Compute Engine pricing for n2-standard-4 in us-central1. "
+        "Report the as_of date, source_url, and cache_age_seconds from the tool response."
+    ),
+    "EGR_X1": (
+        "I'm moving 50 TB/month of data from AWS us-east-1 to the internet. "
+        "What is the tiered egress cost breakdown? Use domain=network, service=egress."
+    ),
+    "EGR_X2": (
+        "Compare internet egress costs for 10 TB/month from: AWS us-east-1, "
+        "GCP us-central1, and Azure eastus. Which is cheapest? "
+        "Use domain=network, service=egress for each provider."
+    ),
+    "EGR_X3": (
+        "What does inter-region data transfer cost within AWS from us-east-1 to us-west-2 "
+        "for 5 TB/month? Use domain=inter_region_egress with source_region=us-east-1 "
+        "and dest_region=us-west-2."
+    ),
+    "AZAKS4": (
+        "What does an AKS cluster with a spot node pool cost in eastus? "
+        "I want 3x Standard_D4s_v3 spot VMs as worker nodes. "
+        "Compare spot vs on-demand pricing for the same VM size."
+    ),
+    "AZFN6": (
+        "What does Azure Functions Premium plan (EP1) cost per month in eastus? "
+        "I need always-on execution with 1 pre-warmed instance and expect 5 million "
+        "additional executions. How does this compare to the Consumption plan cost?"
+    ),
+    "AZAI6": (
+        "What is the Azure OpenAI o3-mini pricing in eastus for a reasoning workload "
+        "sending 2 million input tokens and receiving 1 million output tokens per month?"
+    ),
+    "FCR1": (
+        "Which AWS region is cheapest for a c6g.4xlarge Linux on-demand instance? "
+        "Check only these regions: us-east-1, us-west-2, eu-west-1, ap-southeast-1."
+    ),
+    "FCR2": (
+        "Find the cheapest GCP region for an n2-standard-8 VM. "
+        "Limit to: us-central1, us-east1, europe-west1, asia-east1."
+    ),
+    "BOM_RES1": (
+        "What is the 1-year No Upfront reserved price for 3x m5.xlarge Linux in us-east-1? "
+        "Compare it to on-demand and tell me the annual savings."
+    ),
+    "BOM_RES2": (
+        "Estimate monthly cost for a 3-tier AWS stack with 1-year No Upfront reservations: "
+        "2x c5.2xlarge Linux web (us-east-1), 1x r6i.xlarge Linux DB (us-east-1), 500 GB gp3 EBS."
+    ),
+    "REC1": (
+        "Price a t3.medium Linux instance."
+    ),
 }
 
 
@@ -993,9 +1054,150 @@ def _preview(obj, n=150) -> str:
     return s[:n] + ("…" if len(s) > n else "")
 
 
+def _sanitise_tool_call_args(messages: list[dict]) -> list[dict]:
+    """Ensure every tool_call arguments field in message history is valid JSON.
+    vLLM will 400 on any malformed arguments string even from prior rounds."""
+    out = []
+    for msg in messages:
+        if msg.get("role") == "assistant" and msg.get("tool_calls"):
+            tcs = []
+            for tc in msg["tool_calls"]:
+                fn = tc.get("function", {})
+                raw = fn.get("arguments", "{}")
+                try:
+                    json.loads(raw)
+                    tcs.append(tc)
+                except json.JSONDecodeError:
+                    try:
+                        repaired = _repair_json(_preprocess_json(raw))
+                        json.loads(repaired)  # validate before accepting
+                    except json.JSONDecodeError:
+                        repaired = json.dumps({})
+                    fixed = {**tc, "function": {**fn, "arguments": repaired}}
+                    tcs.append(fixed)
+            out.append({**msg, "tool_calls": tcs})
+        else:
+            out.append(msg)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Loop detection
 # ---------------------------------------------------------------------------
+
+def _preprocess_json(s: str) -> str:
+    """Fix common LLM JSON syntax errors before parsing."""
+    # "key="value" → "key": "value"  (model mixes XML attribute and JSON syntax)
+    s = re.sub(r'"(\w+)="', r'"\1": "', s)
+    return s
+
+
+def _repair_json(s: str) -> str:
+    """Close any unclosed braces/brackets in truncated JSON."""
+    depth_brace = depth_bracket = 0
+    in_string = escaped = False
+    for c in s:
+        if escaped:
+            escaped = False
+            continue
+        if c == "\\" and in_string:
+            escaped = True
+            continue
+        if c == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if c == "{":
+            depth_brace += 1
+        elif c == "}":
+            depth_brace -= 1
+        elif c == "[":
+            depth_bracket += 1
+        elif c == "]":
+            depth_bracket -= 1
+    return s + "]" * max(0, depth_bracket) + "}" * max(0, depth_brace)
+
+
+def _extract_xml_tool_calls(content: str) -> list[dict]:
+    """Parse tool calls embedded as XML in content when vLLM didn't intercept them.
+
+    Handles multiple formats the model may produce:
+    1. JSON inside <tool_call> (OpenAI definition echoed back or hermes):
+         <tool_call>{"type":"function","function":{"name":X,"parameters":Y}}</tool_call>
+         <tool_call>{"name":X,"arguments":Y}</tool_call>
+    2. Anthropic/Claude-style <tool_calls><invoke>:
+         <tool_calls><invoke name="X"><parameter name="k">v</parameter></invoke></tool_calls>
+    3. Qwen3 native <tool_call><function=X><parameter=k>v</parameter></function></tool_call>
+    """
+    results = []
+    idx = 0
+
+    # Format 1: JSON inside <tool_call>...</tool_call> (may be truncated before closing tag)
+    for m in re.finditer(r"<tool_call>\s*(\{.*?)\s*(?:</tool_call>|$)", content, re.DOTALL):
+        raw = _preprocess_json(m.group(1).strip())
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            try:
+                parsed = json.loads(_repair_json(raw))
+            except json.JSONDecodeError:
+                continue
+        if parsed.get("type") == "function" and "function" in parsed:
+            fn = parsed["function"]
+            name = fn.get("name", "")
+            args = fn.get("arguments") or fn.get("parameters") or {}
+        elif "name" in parsed:
+            name = parsed["name"]
+            args = parsed.get("arguments") or parsed.get("parameters") or {}
+        else:
+            continue
+        if not name:
+            continue
+        results.append({
+            "id": f"xml-tool-{idx}",
+            "type": "function",
+            "function": {"name": name, "arguments": json.dumps(args) if isinstance(args, dict) else str(args)},
+        })
+        idx += 1
+
+    # Format 2: Anthropic <tool_calls><invoke name="X"><parameter name="k">v</parameter></invoke>
+    # (also handles truncated — only extracts complete <invoke>...</invoke> blocks)
+    for m in re.finditer(r'<invoke\s+name="([^"]+)">(.*?)</invoke>', content, re.DOTALL):
+        name = m.group(1)
+        args = {}
+        for pm in re.finditer(r'<parameter\s+name="([^"]+)">(.*?)</parameter>', m.group(2), re.DOTALL):
+            key, val = pm.group(1), pm.group(2).strip()
+            try:
+                args[key] = json.loads(val)
+            except json.JSONDecodeError:
+                args[key] = val
+        results.append({
+            "id": f"xml-tool-{idx}",
+            "type": "function",
+            "function": {"name": name, "arguments": json.dumps(args)},
+        })
+        idx += 1
+
+    # Format 3: Qwen3 native <tool_call><function=X><parameter=k>v</parameter></function></tool_call>
+    for m in re.finditer(r"<tool_call>\s*<function=([^>]+)>(.*?)</function>\s*</tool_call>", content, re.DOTALL):
+        name = m.group(1).strip()
+        args = {}
+        for pm in re.finditer(r"<parameter=([^>]+)>(.*?)</parameter>", m.group(2), re.DOTALL):
+            key, val = pm.group(1).strip(), pm.group(2).strip()
+            try:
+                args[key] = json.loads(val)
+            except json.JSONDecodeError:
+                args[key] = val
+        results.append({
+            "id": f"xml-tool-{idx}",
+            "type": "function",
+            "function": {"name": name, "arguments": json.dumps(args)},
+        })
+        idx += 1
+
+    return results
+
 
 def _call_fingerprint(tool_name: str, args: dict) -> str:
     """Canonical string for a (tool, args) pair — used to detect repeated calls."""
@@ -1033,6 +1235,8 @@ async def run_single(
     ]
 
     recent_fingerprints: list[str] = []  # sliding window for loop detection
+    mcp_session_ok = True  # set False after a timeout; stops further MCP calls
+    _call_cache: dict[str, object] = {}  # (tool, args) → result; dedup within one conversation
 
     trace = {
         "prompt_id": prompt_id,
@@ -1046,13 +1250,13 @@ async def run_single(
         "error": None,
     }
 
-    async with httpx.AsyncClient(timeout=180.0) as client:
+    async with httpx.AsyncClient(timeout=120.0) as client:
         for round_num in range(MAX_TOOL_ROUNDS):
             trace["rounds"] = round_num + 1
 
             payload = {
                 "model": LLM_MODEL,
-                "messages": messages,
+                "messages": _sanitise_tool_call_args(messages),
                 "tools": openai_tools,
                 "tool_choice": "auto",
                 "temperature": 0.3,
@@ -1069,8 +1273,13 @@ async def run_single(
                 resp.raise_for_status()
                 data = resp.json()
             except Exception as e:
-                trace["error"] = f"LLM API error (round {round_num+1}): {e}"
-                print(f"  ERROR: {e}")
+                body = ""
+                try:
+                    body = resp.text[:300]
+                except Exception:
+                    pass
+                trace["error"] = f"LLM API error (round {round_num+1}): {e} | {body}"
+                print(f"  ERROR: {e} | {body}")
                 break
 
             choice = data["choices"][0]
@@ -1084,6 +1293,22 @@ async def run_single(
             # back to reasoning_content so we at least capture something.
             content = assistant_msg.get("content") or ""
             reasoning = assistant_msg.get("reasoning_content") or ""
+
+            # When vLLM's qwen3_xml parser misses tool calls, the model outputs them
+            # as plain-text XML in various formats. Rescue them so the loop can still
+            # execute them via MCP.
+            _xml_markers = ("<tool_call>", "<tool_calls>", "<invoke ", "<function=")
+            if not (assistant_msg.get("tool_calls") or []) and any(m in content for m in _xml_markers):
+                synthetic = _extract_xml_tool_calls(content)
+                if synthetic:
+                    stripped = re.sub(
+                        r"<tool_calls?>.*?</tool_calls?>|<tool_call>.*?</tool_call>",
+                        "", content, flags=re.DOTALL,
+                    ).strip()
+                    assistant_msg = {**assistant_msg, "content": stripped or None, "tool_calls": synthetic}
+                    content = stripped
+                    finish_reason = "tool_calls"
+
             thinking_only = finish_reason == "stop" and not content.strip() and reasoning
 
             if thinking_only:
@@ -1098,7 +1323,7 @@ async def run_single(
                     headers = {"Authorization": f"Bearer {LLM_API_KEY}"} if LLM_API_KEY else {}
                     recovery_resp = await client.post(
                         f"{LLM_BASE_URL}/v1/chat/completions",
-                        json={**payload, "messages": messages, "tool_choice": "none"},
+                        json={**payload, "messages": _sanitise_tool_call_args(messages), "tool_choice": "none"},
                         headers=headers,
                     )
                     recovery_resp.raise_for_status()
@@ -1136,10 +1361,15 @@ async def run_single(
             for tc in tool_calls:
                 fn = tc["function"]
                 tool_name = fn["name"]
+                raw_args = fn.get("arguments") or "{}"
                 try:
-                    tool_args = json.loads(fn.get("arguments") or "{}")
+                    tool_args = json.loads(raw_args)
                 except json.JSONDecodeError:
-                    tool_args = {}
+                    try:
+                        tool_args = json.loads(_repair_json(_preprocess_json(raw_args)))
+                    except json.JSONDecodeError:
+                        tool_args = {}
+                fn["arguments"] = json.dumps(tool_args)  # always normalise — ensures history is clean JSON
 
                 print(f"  → {tool_name}({_preview(tool_args, 100)})")
 
@@ -1149,19 +1379,34 @@ async def run_single(
                 if len(recent_fingerprints) > LOOP_DETECT_WINDOW:
                     recent_fingerprints.pop(0)
 
-                try:
-                    mcp_result = await mcp_session.call_tool(tool_name, tool_args)
-                    # MCP returns a list of content items; join text parts
-                    text_parts = [
-                        c.text for c in mcp_result.content if hasattr(c, "text")
-                    ]
-                    raw_text = "".join(text_parts)
+                _cache_key = f"{tool_name}:{json.dumps(tool_args, sort_keys=True)}"
+                if _cache_key in _call_cache:
+                    tool_result = _call_cache[_cache_key]
+                    print(f"     ↩ (cached — same call already made this conversation)")
+                elif not mcp_session_ok:
+                    tool_result = {"error": "MCP session unavailable (prior timeout) — pricing unavailable"}
+                else:
                     try:
-                        tool_result = json.loads(raw_text)
-                    except json.JSONDecodeError:
-                        tool_result = {"text": raw_text}
-                except Exception as e:
-                    tool_result = {"error": f"MCP tool error: {e}"}
+                        mcp_result = await asyncio.wait_for(
+                            mcp_session.call_tool(tool_name, tool_args),
+                            timeout=45.0,
+                        )
+                        # MCP returns a list of content items; join text parts
+                        text_parts = [
+                            c.text for c in mcp_result.content if hasattr(c, "text")
+                        ]
+                        raw_text = "".join(text_parts)
+                        try:
+                            tool_result = json.loads(raw_text)
+                        except json.JSONDecodeError:
+                            tool_result = {"text": raw_text}
+                        _call_cache[_cache_key] = tool_result
+                    except asyncio.TimeoutError:
+                        tool_result = {"error": "MCP tool timed out after 45s — pricing unavailable"}
+                        mcp_session_ok = False
+                        print(f"  ⚠ {tool_name} timed out — session poisoned, no more MCP calls this prompt")
+                    except Exception as e:
+                        tool_result = {"error": f"MCP tool error: {e}"}
 
                 print(f"     ← {_preview(tool_result, 120)}")
 
@@ -1201,7 +1446,7 @@ async def run_single(
                     headers = {"Authorization": f"Bearer {LLM_API_KEY}"} if LLM_API_KEY else {}
                     loop_resp = await client.post(
                         f"{LLM_BASE_URL}/v1/chat/completions",
-                        json={**payload, "messages": messages, "tool_choice": "none"},
+                        json={**payload, "messages": _sanitise_tool_call_args(messages), "tool_choice": "none"},
                         headers=headers,
                     )
                     loop_resp.raise_for_status()
@@ -1237,13 +1482,49 @@ async def run_single(
 # Entry point
 # ---------------------------------------------------------------------------
 
-async def _run_prompts(items, session, run_dir, results, print_lock):
-    """Inner loop: run a list of (pid, prompt) pairs against an already-initialised session."""
-    tools_resp = await session.list_tools()
-    openai_tools = [mcp_tool_to_openai(t) for t in tools_resp.tools]
-    for pid, prompt in items:
+async def _make_mcp_session():
+    """Context manager factory — yields an initialised MCP session."""
+    if MCP_URL:
+        return streamablehttp_client(MCP_URL)
+    server_params = StdioServerParameters(command=MCP_COMMAND, args=MCP_ARGS, env={**os.environ})
+    return stdio_client(server_params)
+
+
+async def _mcp_connect_with_retry(max_wait: int = 120) -> tuple:
+    """Try to open an MCP session, retrying with backoff if the server is down.
+
+    Returns (read, write) streams from a connected, initialised session context.
+    Caller must use these inside `async with ClientSession(read, write) as session`.
+    Raises RuntimeError if the server doesn't come back within max_wait seconds.
+    """
+    delay = 5
+    elapsed = 0
+    last_err = None
+    while elapsed < max_wait:
         try:
-            trace = await run_single(pid, prompt, session, openai_tools, run_dir)
+            transport_ctx = await _make_mcp_session()
+            return transport_ctx
+        except Exception as e:
+            last_err = e
+            print(f"  ⚠ MCP unavailable ({e.__class__.__name__}), retrying in {delay}s…")
+            await asyncio.sleep(delay)
+            elapsed += delay
+            delay = min(delay * 2, 30)
+    raise RuntimeError(f"MCP did not come back within {max_wait}s: {last_err}")
+
+
+async def _run_prompt_with_fresh_session(pid, prompt, openai_tools, run_dir, results, print_lock):
+    """Open a fresh MCP session for a single prompt, run it, close the session.
+
+    Retries the connection if the MCP pod has just restarted (e.g. after an OOMKill).
+    """
+    for attempt in range(3):
+        try:
+            transport_ctx = await _make_mcp_session()
+            async with transport_ctx as (read, write, *_):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    trace = await run_single(pid, prompt, session, openai_tools, run_dir)
             results[pid] = {
                 "status": "error" if trace["error"] else "ok",
                 "rounds": trace["rounds"],
@@ -1252,16 +1533,26 @@ async def _run_prompts(items, session, run_dir, results, print_lock):
                 "error": trace["error"],
                 "answer_preview": (trace["final_answer"] or "")[:200],
             }
+            return
         except Exception as e:
-            async with print_lock:
-                print(f"  FATAL [{pid}]: {e}")
-            results[pid] = {
-                "status": "fatal",
-                "error": str(e),
-                "rounds": 0,
-                "tool_calls": 0,
-                "tools_used": [],
-            }
+            err_str = str(e)
+            is_connect_err = "ConnectError" in err_str or "ConnectionRefused" in err_str or "TaskGroup" in err_str
+            if is_connect_err and attempt < 2:
+                wait = 30 * (attempt + 1)  # 30s, then 60s — covers typical pod restart time
+                async with print_lock:
+                    print(f"  ⚠ [{pid}] MCP connect error (attempt {attempt+1}), waiting {wait}s for pod restart…")
+                await asyncio.sleep(wait)
+            else:
+                async with print_lock:
+                    print(f"  FATAL [{pid}]: {e}")
+                results[pid] = {
+                    "status": "fatal",
+                    "error": str(e),
+                    "rounds": 0,
+                    "tool_calls": 0,
+                    "tools_used": [],
+                }
+                return
 
 
 async def run_worker(
@@ -1272,24 +1563,29 @@ async def run_worker(
 ) -> None:
     """Run a subset of prompts sequentially, each with its own MCP session.
 
-    Uses HTTP transport when OCC_MCP_URL is set (shared containerised server),
-    falls back to stdio (spawns a local uv process) when it is not.
+    A fresh session per prompt means a timed-out tool call can't corrupt
+    the connection for subsequent prompts.
     """
-    if MCP_URL:
-        async with streamablehttp_client(MCP_URL) as (read, write, _):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                await _run_prompts(items, session, run_dir, results, print_lock)
+    # Fetch tool list once — retry if server is mid-restart.
+    for attempt in range(10):
+        try:
+            transport_ctx = await _make_mcp_session()
+            async with transport_ctx as (read, write, *_):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    tools_resp = await session.list_tools()
+            break
+        except Exception as e:
+            wait = 10 * (attempt + 1)
+            print(f"  ⚠ Tool list fetch failed ({e.__class__.__name__}), retrying in {wait}s…")
+            await asyncio.sleep(wait)
     else:
-        server_params = StdioServerParameters(
-            command=MCP_COMMAND,
-            args=MCP_ARGS,
-            env={**os.environ},
-        )
-        async with stdio_client(server_params) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                await _run_prompts(items, session, run_dir, results, print_lock)
+        raise RuntimeError("Could not fetch MCP tool list after 10 attempts")
+
+    openai_tools = [mcp_tool_to_openai(t) for t in tools_resp.tools]
+
+    for pid, prompt in items:
+        await _run_prompt_with_fresh_session(pid, prompt, openai_tools, run_dir, results, print_lock)
 
 
 async def main(ids: list[str], parallel: int = 1):
