@@ -1548,7 +1548,7 @@ async def _run_prompt_with_fresh_session(pid, prompt, openai_tools, run_dir, res
 
     Retries the connection if the MCP pod has just restarted (e.g. after an OOMKill).
     """
-    for attempt in range(3):
+    for attempt in range(6):
         try:
             transport_ctx = await _make_mcp_session()
             async with transport_ctx as (read, write, *_):
@@ -1571,10 +1571,10 @@ async def _run_prompt_with_fresh_session(pid, prompt, openai_tools, run_dir, res
                 or "TaskGroup" in err_str or "TimeoutError" in err_str
                 or "timed out" in err_str.lower()
             )
-            if is_connect_err and attempt < 2:
-                wait = 30 * (attempt + 1)  # 30s, then 60s — covers typical pod restart time
+            if is_connect_err and attempt < 5:
+                wait = 30 * (attempt + 1)  # 30s, 60s, 90s, 120s, 150s — covers ~5min pod restart
                 async with print_lock:
-                    print(f"  ⚠ [{pid}] MCP connect error (attempt {attempt+1}), waiting {wait}s for pod restart…")
+                    print(f"  ⚠ [{pid}] MCP connect error (attempt {attempt+1}/6), waiting {wait}s for pod restart…")
                 await asyncio.sleep(wait)
             else:
                 async with print_lock:
