@@ -1094,6 +1094,9 @@ def _preprocess_json(s: str) -> str:
     s = re.sub(r'"(\w+)=(\{)', r'"\1": \2', s)
     # "key=[ → "key": [  (model uses = before a list value)
     s = re.sub(r'"(\w+)=(\[)', r'"\1": \2', s)
+    # {"function_name", "key": ...} → {"name": "function_name", "key": ...}
+    # Model emits the function name as a bare first string instead of "name": "..."
+    s = re.sub(r'^\{\s*"([^"]+)",\s*"', r'{"name": "\1", "', s.strip())
     return s
 
 
