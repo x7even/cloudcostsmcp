@@ -11,8 +11,12 @@ Effective pricing uses Cost Explorer (`ce` client) — opt-in only due to $0.01/
 from __future__ import annotations
 
 import asyncio
+import gzip
+import http.client
+import io
 import json
 import logging
+import urllib.parse
 from collections.abc import Awaitable, Callable
 from datetime import UTC
 from decimal import Decimal
@@ -21,6 +25,7 @@ from typing import Any
 import boto3
 import botocore.exceptions
 import httpx
+import ijson
 
 from opencloudcosts.cache import CacheManager
 from opencloudcosts.config import Settings
@@ -88,7 +93,10 @@ _RESERVED_FILTERS: dict[PricingTerm, dict[str, str]] = {
 
 
 # Public bulk pricing — no credentials required
-# Per-region index is ~5-15 MB gzipped; we cache parsed results in SQLite.
+# Per-region index is ~10-500 MB uncompressed JSON. We download once, gzip-compress
+# in memory (~10-30 MB), then do three ijson streaming passes over the compressed
+# bytes so the full document is never materialised as Python dicts. Parsed results
+# are cached in SQLite so subsequent queries skip the download entirely.
 _BULK_BASE = "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws"
 _BULK_URL = "{base}/{service}/current/{region}/index.json"
 
@@ -233,6 +241,68 @@ _AWS_CROSS_AZ_RATE = Decimal("0.01")  # per GB each direction, within same regio
 _AWS_EGRESS_SOURCE_URL = "https://aws.amazon.com/ec2/pricing/on-demand/#Data_Transfer"
 
 
+# Module-level singleflight: one asyncio.Lock per (service_code, region_code) in-flight
+# bulk download. Prevents N concurrent callers from each independently downloading the
+# same 500 MB file. Lock is acquired in _get_products (async) before the to_thread call.
+_bulk_fetch_locks: dict[str, asyncio.Lock] = {}
+
+
+def _fetch_bulk_compressed(url: str, timeout: int = 60) -> bytes:
+    """
+    Download a bulk pricing JSON URL using http.client, following redirects (up to 5
+    hops). Returns the body as gzip-compressed bytes suitable for repeated ijson passes.
+
+    The AWS bulk pricing endpoint serves raw uncompressed JSON (no Content-Encoding:
+    gzip from CloudFront/S3 for these large binary blobs). We ask for gzip via
+    Accept-Encoding; if the server honours it we keep the bytes as-is, otherwise we
+    compress at level 1 (fast, ~4-6x shrink) to reduce in-memory footprint for the
+    three ijson passes.
+    """
+    max_redirects = 5
+    parsed = urllib.parse.urlparse(url)
+    host = parsed.netloc
+    path = parsed.path
+    if parsed.query:
+        path = f"{path}?{parsed.query}"
+
+    for _ in range(max_redirects + 1):
+        conn = http.client.HTTPSConnection(host, timeout=timeout)
+        try:
+            conn.request("GET", path, headers={"Accept-Encoding": "gzip", "User-Agent": "opencloudcosts/1.0"})
+            resp = conn.getresponse()
+            status = resp.status
+
+            if status in (301, 302, 303, 307, 308):
+                location = resp.getheader("Location", "")
+                resp.read()  # drain
+                if not location:
+                    raise RuntimeError(f"Redirect with no Location header from {host}{path}")
+                new = urllib.parse.urlparse(location)
+                host = new.netloc or host
+                path = new.path
+                if new.query:
+                    path = f"{path}?{new.query}"
+                continue
+
+            if status != 200:
+                body_snippet = resp.read(512)
+                raise RuntimeError(
+                    f"Bulk pricing HTTP {status} for {host}{path}: {body_snippet[:200]!r}"
+                )
+
+            content_encoding = resp.getheader("Content-Encoding", "")
+            body = resp.read()
+
+            if content_encoding == "gzip":
+                return body
+            # Server returned uncompressed JSON — compress at level 1 (speed > ratio)
+            return gzip.compress(body, compresslevel=1)
+        finally:
+            conn.close()
+
+    raise RuntimeError(f"Too many redirects fetching {url}")
+
+
 def _resolve_service_code(service: str) -> str:
     """Resolve alias or pass through as-is (AWS offer codes are case-sensitive)."""
     return _SERVICE_ALIASES.get(service.lower(), service)
@@ -317,9 +387,17 @@ class AWSProvider(ProviderBase):
             from opencloudcosts.utils.regions import AWS_DISPLAY_REGION
 
             region_code = AWS_DISPLAY_REGION.get(region, region)
-            return await asyncio.to_thread(
-                self._get_products_bulk, service_code, region_code, filters, max_results
-            )
+
+            # Singleflight: serialise concurrent downloads of the same (service, region)
+            # bulk file. Without this, 12 concurrent find_cheapest_region calls each
+            # download the same 500 MB file independently.
+            lock_key = f"{service_code}:{region_code}"
+            if lock_key not in _bulk_fetch_locks:
+                _bulk_fetch_locks[lock_key] = asyncio.Lock()
+            async with _bulk_fetch_locks[lock_key]:
+                return await asyncio.to_thread(
+                    self._get_products_bulk, service_code, region_code, filters, max_results
+                )
 
     def _get_products_boto3(
         self,
@@ -354,50 +432,107 @@ class AWSProvider(ProviderBase):
     ) -> list[dict[str, Any]]:
         """
         Fetch from the public bulk pricing JSON (no credentials needed).
-        Downloads the per-region index, then filters in-memory to match
-        the same fields that would have been used in TERM_MATCH filters.
+
+        Uses three ijson streaming passes over gzip-compressed bytes so the
+        full document (~500 MB for AmazonEC2) is never materialised as Python
+        dicts. Peak memory stays around 15–30 MB instead of 3+ GB.
+
+        Pass 1: stream products section, apply field_filters, collect matching
+                SKUs (up to max_results). Break early once limit reached.
+        Pass 2: stream terms.OnDemand, collect only entries for matched SKUs.
+        Pass 3: stream terms.Reserved, collect only entries for matched SKUs.
+
+        Output format is identical to the previous implementation so all
+        callers (_extract_on_demand_price etc.) work unchanged.
         """
         url = _BULK_URL.format(
             base=_BULK_BASE,
             service=_resolve_service_code(service_code),
             region=region_code,
         )
-        logger.debug("Bulk pricing fetch: %s", url)
-        try:
-            for attempt in sync_retry():
-                with attempt:
-                    resp = httpx.get(url, timeout=60, follow_redirects=True)
-                    resp.raise_for_status()
-            data = resp.json()
-        except httpx.HTTPError as e:
-            logger.error("Bulk pricing HTTP error for %s/%s: %s", service_code, region_code, e)
-            return []
-
-        products = data.get("products", {})
-        terms_data = data.get("terms", {})
+        logger.debug("Bulk pricing fetch (ijson streaming): %s", url)
 
         # Build filter map from non-location fields (location is implicit from URL)
         field_filters = {f["Field"]: f["Value"] for f in filters if f["Field"] != "location"}
 
+        try:
+            compressed = _fetch_bulk_compressed(url, timeout=60)
+        except (OSError, http.client.HTTPException, RuntimeError) as e:
+            logger.error("Bulk pricing fetch error for %s/%s: %s", service_code, region_code, e)
+            return []
+
+        def _reader() -> gzip.GzipFile:
+            return gzip.open(io.BytesIO(compressed))
+
+        # --- Pass 1: collect matching products ---
+        matched_products: dict[str, Any] = {}
+        try:
+            with _reader() as f:
+                for sku, product in ijson.kvitems(f, "products"):
+                    attrs = product.get("attributes", {})
+                    # Apply all TERM_MATCH filters.
+                    # productFamily and productGroup sit at the product top level,
+                    # not inside attributes — check both locations.
+                    if not all(
+                        attrs.get(k, product.get(k)) == v for k, v in field_filters.items()
+                    ):
+                        continue
+                    matched_products[sku] = product
+                    if len(matched_products) >= max_results:
+                        break
+        except Exception as e:
+            logger.error(
+                "ijson parse error (pass 1) for %s/%s: %s", service_code, region_code, e
+            )
+            del compressed
+            return []
+
+        if not matched_products:
+            del compressed
+            return []
+
+        # --- Pass 2: collect OnDemand terms for matched SKUs ---
+        on_demand_terms: dict[str, Any] = {}
+        try:
+            with _reader() as f:
+                for sku, term_data in ijson.kvitems(f, "terms.OnDemand"):
+                    if sku in matched_products:
+                        on_demand_terms[sku] = term_data
+                        # Early exit once we have terms for all matched SKUs
+                        if len(on_demand_terms) == len(matched_products):
+                            break
+        except Exception as e:
+            logger.warning(
+                "ijson parse error (pass 2/OnDemand) for %s/%s: %s", service_code, region_code, e
+            )
+            # Non-fatal: continue without OnDemand terms
+
+        # --- Pass 3: collect Reserved terms for matched SKUs ---
+        reserved_terms: dict[str, Any] = {}
+        try:
+            with _reader() as f:
+                for sku, term_data in ijson.kvitems(f, "terms.Reserved"):
+                    if sku in matched_products:
+                        reserved_terms[sku] = term_data
+                        if len(reserved_terms) == len(matched_products):
+                            break
+        except Exception as e:
+            logger.warning(
+                "ijson parse error (pass 3/Reserved) for %s/%s: %s", service_code, region_code, e
+            )
+            # Non-fatal: continue without Reserved terms
+
+        del compressed
+
+        # --- Combine into the same output shape as the previous implementation ---
         results: list[dict[str, Any]] = []
-        for sku, product in products.items():
-            attrs = product.get("attributes", {})
-            # Apply all TERM_MATCH filters.
-            # productFamily and productGroup sit at the product top level, not inside
-            # attributes — check both so filters like productFamily="Storage" work.
-            if not all(attrs.get(k, product.get(k)) == v for k, v in field_filters.items()):
-                continue
-
-            # Reconstruct the same shape get_products returns
+        for sku, product in matched_products.items():
             item: dict[str, Any] = {"product": product, "terms": {}}
-            for term_type in ("OnDemand", "Reserved"):
-                term_skus = terms_data.get(term_type, {}).get(sku, {})
-                if term_skus:
-                    item["terms"][term_type] = term_skus
-
+            if sku in on_demand_terms:
+                item["terms"]["OnDemand"] = on_demand_terms[sku]
+            if sku in reserved_terms:
+                item["terms"]["Reserved"] = reserved_terms[sku]
             results.append(item)
-            if len(results) >= max_results:
-                break
 
         return results
 

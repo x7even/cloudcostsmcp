@@ -888,3 +888,396 @@ async def test_network_egress_supports_check(aws_provider: AWSProvider):
     from opencloudcosts.models import PricingDomain
 
     assert aws_provider.supports(PricingDomain.NETWORK, "egress")
+
+
+# ---------------------------------------------------------------------------
+# ijson streaming bulk path tests (_get_products_bulk)
+# ---------------------------------------------------------------------------
+
+import gzip as _gzip
+import json as _json
+import time as _time
+
+
+def _make_bulk_json(products: dict, on_demand: dict | None = None, reserved: dict | None = None) -> bytes:
+    """Build a minimal AWS bulk pricing JSON and return it gzip-compressed.
+
+    This matches the format _fetch_bulk_compressed returns, which is what
+    _get_products_bulk feeds to its three ijson passes.
+    All attribute values must be strings to match the real AWS format.
+    """
+    data = {
+        "formatVersion": "aws_v1",
+        "products": products,
+        "terms": {
+            "OnDemand": on_demand or {},
+            "Reserved": reserved or {},
+        },
+    }
+    return _gzip.compress(_json.dumps(data).encode(), compresslevel=1)
+
+
+# Minimal product + term structures for bulk tests — mirrors _M5_XLARGE_PRICE_ITEM shape
+_BULK_SKU = "JRTCKXETXF8Z6NMQ"
+_BULK_PRODUCTS = {
+    _BULK_SKU: {
+        "sku": _BULK_SKU,
+        "productFamily": "Compute Instance",
+        "attributes": {
+            "instanceType": "m5.xlarge",
+            "vcpu": "4",
+            "memory": "16 GiB",
+            "operatingSystem": "Linux",
+            "tenancy": "Shared",
+            "preInstalledSw": "NA",
+            "capacitystatus": "Used",
+        },
+    }
+}
+_BULK_ON_DEMAND = {
+    _BULK_SKU: {
+        _BULK_SKU + ".JRTCKXETXF": {
+            "priceDimensions": {
+                _BULK_SKU + ".JRTCKXETXF.6YS6EN2CT7": {
+                    "unit": "Hrs",
+                    "pricePerUnit": {"USD": "0.1920000000"},
+                    "description": "$0.192 per On Demand Linux m5.xlarge Instance Hour",
+                }
+            },
+            "termAttributes": {},
+        }
+    }
+}
+
+
+def test_get_products_bulk_streaming_match(aws_provider: AWSProvider):
+    """_get_products_bulk returns matching product with OnDemand terms via ijson streaming."""
+    compressed = _make_bulk_json(_BULK_PRODUCTS, _BULK_ON_DEMAND)
+    filters = [
+        {"Field": "location", "Value": "US East (N. Virginia)"},
+        {"Field": "instanceType", "Value": "m5.xlarge"},
+        {"Field": "operatingSystem", "Value": "Linux"},
+    ]
+
+    with patch("opencloudcosts.providers.aws._fetch_bulk_compressed", return_value=compressed):
+        results = aws_provider._get_products_bulk("AmazonEC2", "us-east-1", filters, max_results=10)
+
+    assert len(results) == 1
+    item = results[0]
+    assert item["product"]["sku"] == _BULK_SKU
+    assert item["product"]["attributes"]["instanceType"] == "m5.xlarge"
+    # OnDemand terms should be present; the value is the offer-term dict keyed by offer-term code
+    assert "OnDemand" in item["terms"]
+    on_demand_value = item["terms"]["OnDemand"]
+    # The offer-term key has the format SKU.OFFERCODE — we verify the dict is non-empty
+    assert len(on_demand_value) > 0
+    # The outer offer-term key contains the SKU as a prefix
+    first_term_key = next(iter(on_demand_value))
+    assert first_term_key.startswith(_BULK_SKU)
+
+
+def test_get_products_bulk_no_match(aws_provider: AWSProvider):
+    """_get_products_bulk returns [] when no product matches the filter."""
+    compressed = _make_bulk_json(_BULK_PRODUCTS, _BULK_ON_DEMAND)
+    filters = [
+        {"Field": "location", "Value": "US East (N. Virginia)"},
+        {"Field": "instanceType", "Value": "c99.nonexistent"},
+    ]
+
+    with patch("opencloudcosts.providers.aws._fetch_bulk_compressed", return_value=compressed):
+        results = aws_provider._get_products_bulk("AmazonEC2", "us-east-1", filters, max_results=10)
+
+    assert results == []
+
+
+def test_get_products_bulk_max_results_early_exit(aws_provider: AWSProvider):
+    """_get_products_bulk stops collecting products once max_results is reached."""
+    # Build a bulk JSON with 5 distinct SKUs that all match the filter
+    products = {}
+    on_demand = {}
+    for i in range(5):
+        sku = f"SKU{i:04d}"
+        products[sku] = {
+            "sku": sku,
+            "productFamily": "Compute Instance",
+            "attributes": {
+                "instanceType": f"m5.{i}xlarge",
+                "operatingSystem": "Linux",
+                "tenancy": "Shared",
+                "preInstalledSw": "NA",
+                "capacitystatus": "Used",
+            },
+        }
+        on_demand[sku] = {
+            sku + ".TERM": {
+                "priceDimensions": {
+                    sku + ".DIM": {
+                        "unit": "Hrs",
+                        "pricePerUnit": {"USD": f"0.{i + 1}000000000"},
+                        "description": f"${i + 1} per hour",
+                    }
+                },
+                "termAttributes": {},
+            }
+        }
+
+    compressed = _make_bulk_json(products, on_demand)
+    # Only operatingSystem filter — all 5 match
+    filters = [
+        {"Field": "location", "Value": "US East (N. Virginia)"},
+        {"Field": "operatingSystem", "Value": "Linux"},
+    ]
+
+    with patch("opencloudcosts.providers.aws._fetch_bulk_compressed", return_value=compressed):
+        results = aws_provider._get_products_bulk("AmazonEC2", "us-east-1", filters, max_results=2)
+
+    # Should stop at max_results=2, not return all 5
+    assert len(results) == 2
+
+
+def test_get_products_bulk_productfamily_filter(aws_provider: AWSProvider):
+    """productFamily filter works because _get_products_bulk checks product top-level fields."""
+    products = {
+        "STORAGE_SKU": {
+            "sku": "STORAGE_SKU",
+            "productFamily": "Storage",
+            "attributes": {
+                "volumeApiName": "gp3",
+                "operatingSystem": "Linux",  # not used for storage, but present
+            },
+        },
+        "COMPUTE_SKU": {
+            "sku": "COMPUTE_SKU",
+            "productFamily": "Compute Instance",
+            "attributes": {
+                "instanceType": "m5.xlarge",
+                "operatingSystem": "Linux",
+            },
+        },
+    }
+    on_demand = {
+        "STORAGE_SKU": {
+            "STORAGE_SKU.TERM": {
+                "priceDimensions": {
+                    "STORAGE_SKU.DIM": {
+                        "unit": "GB-Mo",
+                        "pricePerUnit": {"USD": "0.0800000000"},
+                        "description": "$0.08 per GB-month",
+                    }
+                },
+                "termAttributes": {},
+            }
+        }
+    }
+
+    compressed = _make_bulk_json(products, on_demand)
+    filters = [
+        {"Field": "location", "Value": "US East (N. Virginia)"},
+        {"Field": "productFamily", "Value": "Storage"},
+    ]
+
+    with patch("opencloudcosts.providers.aws._fetch_bulk_compressed", return_value=compressed):
+        results = aws_provider._get_products_bulk("AmazonEC2", "us-east-1", filters, max_results=10)
+
+    assert len(results) == 1
+    assert results[0]["product"]["sku"] == "STORAGE_SKU"
+    assert results[0]["product"]["productFamily"] == "Storage"
+
+
+def test_get_products_bulk_fetch_error_returns_empty(aws_provider: AWSProvider):
+    """When _fetch_bulk_compressed raises RuntimeError, _get_products_bulk returns []."""
+    filters = [{"Field": "location", "Value": "US East (N. Virginia)"}]
+
+    with patch(
+        "opencloudcosts.providers.aws._fetch_bulk_compressed",
+        side_effect=RuntimeError("HTTP 503 for us-east-1"),
+    ):
+        results = aws_provider._get_products_bulk("AmazonEC2", "us-east-1", filters, max_results=10)
+
+    assert results == []
+
+
+def test_get_products_bulk_oserror_returns_empty(aws_provider: AWSProvider):
+    """When _fetch_bulk_compressed raises OSError (network error), returns []."""
+    filters = [{"Field": "location", "Value": "US East (N. Virginia)"}]
+
+    with patch(
+        "opencloudcosts.providers.aws._fetch_bulk_compressed",
+        side_effect=OSError("Connection refused"),
+    ):
+        results = aws_provider._get_products_bulk("AmazonEC2", "us-east-1", filters, max_results=10)
+
+    assert results == []
+
+
+def test_get_products_bulk_reserved_terms_collected(aws_provider: AWSProvider):
+    """_get_products_bulk collects Reserved terms in pass 3."""
+    reserved = {
+        _BULK_SKU: {
+            _BULK_SKU + ".RESERVED": {
+                "priceDimensions": {
+                    _BULK_SKU + ".R.DIM": {
+                        "unit": "Hrs",
+                        "pricePerUnit": {"USD": "0.0500000000"},
+                        "description": "Reserved hourly",
+                    }
+                },
+                "termAttributes": {
+                    "LeaseContractLength": "1yr",
+                    "PurchaseOption": "No Upfront",
+                    "OfferingClass": "standard",
+                },
+            }
+        }
+    }
+
+    compressed = _make_bulk_json(_BULK_PRODUCTS, None, reserved)
+    filters = [
+        {"Field": "location", "Value": "US East (N. Virginia)"},
+        {"Field": "instanceType", "Value": "m5.xlarge"},
+    ]
+
+    with patch("opencloudcosts.providers.aws._fetch_bulk_compressed", return_value=compressed):
+        results = aws_provider._get_products_bulk("AmazonEC2", "us-east-1", filters, max_results=10)
+
+    assert len(results) == 1
+    item = results[0]
+    # Pass 2 (OnDemand) returned nothing since on_demand is empty; Pass 3 should get Reserved
+    assert "Reserved" in item["terms"]
+    reserved_value = item["terms"]["Reserved"]
+    assert len(reserved_value) > 0
+    # Reserved offer-term key has format SKU.OFFERCODE — verify the dict is non-empty
+    # and the key starts with the SKU prefix
+    first_reserved_key = next(iter(reserved_value))
+    assert first_reserved_key.startswith(_BULK_SKU)
+
+
+# ---------------------------------------------------------------------------
+# Singleflight lock tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_singleflight_serialises_concurrent_downloads(aws_provider: AWSProvider, tmp_path):
+    """Concurrent _get_products calls with same (service, region) are serialised by the lock.
+
+    The lock prevents *simultaneous* downloads of the same bulk file. However it does NOT
+    deduplicate: N callers still do N downloads (just sequentially, not concurrently).
+    This test confirms: (a) lock serialises, (b) bulk download is called once per caller
+    (i.e. call_count == N, not 1 — it's a mutex, not a singleflight with shared result).
+    """
+    import asyncio
+    import botocore.exceptions
+    from opencloudcosts.providers import aws as aws_module
+
+    # Clear module-level lock cache so this test starts clean
+    aws_module._bulk_fetch_locks.clear()
+
+    call_count = 0
+    call_times: list[float] = []
+
+    def slow_bulk(service_code, region_code, filters, max_results):
+        nonlocal call_count
+        call_count += 1
+        call_times.append(_time.monotonic())
+        _time.sleep(0.05)  # blocking sleep in thread — correct for asyncio.to_thread
+        return []
+
+    filters = [
+        {"Field": "location", "Value": "US East (N. Virginia)"},
+        {"Field": "instanceType", "Value": "m5.xlarge"},
+    ]
+
+    def raise_no_creds(*a, **kw):
+        raise botocore.exceptions.NoCredentialsError()
+
+    with patch.object(aws_provider, "_get_products_boto3", side_effect=raise_no_creds):
+        with patch.object(aws_provider, "_get_products_bulk", side_effect=slow_bulk):
+            tasks = [
+                aws_provider._get_products("AmazonEC2", filters, 10),
+                aws_provider._get_products("AmazonEC2", filters, 10),
+            ]
+            results = await asyncio.gather(*tasks)
+
+    # Both calls return (empty) results
+    assert results[0] == []
+    assert results[1] == []
+
+    # Lock serialises: call_count == 2 (no dedup — the lock is a mutex, not a once-cell).
+    # If the lock were NOT present, both could run concurrently (still count==2 but overlap);
+    # the sequential ordering of call_times proves serialisation.
+    assert call_count == 2, (
+        f"Expected 2 sequential calls (mutex semantics), got {call_count}. "
+        "Design note: the singleflight lock serialises concurrent downloads of the same "
+        "bulk file but does NOT deduplicate results — N callers still trigger N downloads."
+    )
+
+    # With serialisation the second call starts after the first finishes:
+    # gap between start times should be >= sleep duration (0.05 s)
+    if len(call_times) == 2:
+        gap = call_times[1] - call_times[0]
+        assert gap >= 0.04, (
+            f"Call start gap {gap:.3f}s < 0.04s — calls appear to have overlapped, "
+            "suggesting the singleflight lock is not working."
+        )
+
+
+@pytest.mark.asyncio
+async def test_singleflight_different_regions_run_concurrently(aws_provider: AWSProvider):
+    """Calls for DIFFERENT (service, region) pairs are NOT blocked by the same lock."""
+    import asyncio
+    import botocore.exceptions
+    from opencloudcosts.providers import aws as aws_module
+
+    aws_module._bulk_fetch_locks.clear()
+
+    started: list[float] = []
+
+    def slow_bulk(service_code, region_code, filters, max_results):
+        started.append(_time.monotonic())
+        _time.sleep(0.05)
+        return []
+
+    def raise_no_creds(*a, **kw):
+        raise botocore.exceptions.NoCredentialsError()
+
+    filters_east = [{"Field": "location", "Value": "US East (N. Virginia)"}]
+    filters_west = [{"Field": "location", "Value": "US West (Oregon)"}]
+
+    with patch.object(aws_provider, "_get_products_boto3", side_effect=raise_no_creds):
+        with patch.object(aws_provider, "_get_products_bulk", side_effect=slow_bulk):
+            t0 = _time.monotonic()
+            await asyncio.gather(
+                aws_provider._get_products("AmazonEC2", filters_east, 10),
+                aws_provider._get_products("AmazonEC2", filters_west, 10),
+            )
+            elapsed = _time.monotonic() - t0
+
+    # Two separate locks — they can run in parallel, so total time should be
+    # much closer to 0.05 s (one sleep) than 0.10 s (two sequential sleeps).
+    # We allow up to 0.09 s to avoid flakiness on slow CI.
+    assert elapsed < 0.09, (
+        f"Different-region calls took {elapsed:.3f}s — expected near-concurrent execution "
+        f"(~0.05s), but got nearly sequential time, suggesting over-serialisation."
+    )
+
+
+@pytest.mark.asyncio
+async def test_singleflight_no_credentials_missing_location_returns_empty(aws_provider: AWSProvider):
+    """_get_products returns [] when no credentials and filters have no location field.
+
+    The bulk path requires a location filter to determine the region code.
+    Without it, _get_products should bail early and return [].
+    """
+    import botocore.exceptions
+
+    def raise_no_creds(*a, **kw):
+        raise botocore.exceptions.NoCredentialsError()
+
+    # No location field in filters
+    filters = [{"Field": "instanceType", "Value": "m5.xlarge"}]
+
+    with patch.object(aws_provider, "_get_products_boto3", side_effect=raise_no_creds):
+        result = await aws_provider._get_products("AmazonEC2", filters, 10)
+
+    assert result == []
