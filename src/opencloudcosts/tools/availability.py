@@ -116,10 +116,7 @@ def register_availability_tools(mcp: Any) -> None:
             "instance_types": [_compact(t) for t in capped],
         }
         if total > max_results:
-            result["note"] = (
-                f"Showing {len(capped)} of {total} results"
-                " — use filters to narrow"
-            )
+            result["note"] = f"Showing {len(capped)} of {total} results — use filters to narrow"
         return result
 
     @mcp.tool()

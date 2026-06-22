@@ -54,7 +54,6 @@ from opencloudcosts.models import (
 )
 from opencloudcosts.providers.base import NotConfiguredError, NotSupportedError, ProviderBase
 from opencloudcosts.utils.egress_tiers import EgressTier, compute_tiered_cost
-from opencloudcosts.utils.http_retry import sync_retry
 from opencloudcosts.utils.regions import aws_region_to_display, list_aws_regions
 from opencloudcosts.utils.units import parse_aws_unit
 
@@ -268,7 +267,9 @@ def _fetch_bulk_compressed(url: str, timeout: int = 60) -> bytes:
     for _ in range(max_redirects + 1):
         conn = http.client.HTTPSConnection(host, timeout=timeout)
         try:
-            conn.request("GET", path, headers={"Accept-Encoding": "gzip", "User-Agent": "opencloudcosts/1.0"})
+            conn.request(
+                "GET", path, headers={"Accept-Encoding": "gzip", "User-Agent": "opencloudcosts/1.0"}
+            )
             resp = conn.getresponse()
             status = resp.status
 
@@ -462,7 +463,7 @@ class AWSProvider(ProviderBase):
             return []
 
         def _reader() -> gzip.GzipFile:
-            return gzip.open(io.BytesIO(compressed))
+            return gzip.open(io.BytesIO(compressed))  # noqa: F821 — valid closure over line above
 
         # --- Pass 1: collect matching products ---
         matched_products: dict[str, Any] = {}
@@ -473,17 +474,13 @@ class AWSProvider(ProviderBase):
                     # Apply all TERM_MATCH filters.
                     # productFamily and productGroup sit at the product top level,
                     # not inside attributes — check both locations.
-                    if not all(
-                        attrs.get(k, product.get(k)) == v for k, v in field_filters.items()
-                    ):
+                    if not all(attrs.get(k, product.get(k)) == v for k, v in field_filters.items()):
                         continue
                     matched_products[sku] = product
                     if len(matched_products) >= max_results:
                         break
         except Exception as e:
-            logger.error(
-                "ijson parse error (pass 1) for %s/%s: %s", service_code, region_code, e
-            )
+            logger.error("ijson parse error (pass 1) for %s/%s: %s", service_code, region_code, e)
             del compressed
             return []
 

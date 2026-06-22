@@ -130,7 +130,6 @@ _AZURE_CAPABILITIES: dict[tuple[str, str | None], bool] = {
     (PricingDomain.OBSERVABILITY.value, None): True,
     (PricingDomain.OBSERVABILITY.value, "azure_monitor"): True,
     # Azure CDN + Front Door (Network domain)
-    (PricingDomain.NETWORK.value, None): True,
     (PricingDomain.NETWORK.value, "azure_cdn"): True,
     (PricingDomain.NETWORK.value, "azure_front_door"): True,
 }
@@ -279,11 +278,11 @@ _CDN_ZONE: dict[str, str] = {
 # Zone 1: Americas + Europe. Zone 2: APAC + ME. Zone 3: India/South Asia.
 # Zone 4: South America. Zone 5: Australia/Pacific.
 # Source: https://azure.microsoft.com/en-us/pricing/details/cdn/
-_CDN_STATIC_RATE_ZONE1 = Decimal("0.081")   # Zone 1, 0-10 TB tier
-_CDN_STATIC_RATE_ZONE2 = Decimal("0.163")   # Zone 2
-_CDN_STATIC_RATE_ZONE3 = Decimal("0.163")   # Zone 3
-_CDN_STATIC_RATE_ZONE4 = Decimal("0.200")   # Zone 4
-_CDN_STATIC_RATE_ZONE5 = Decimal("0.220")   # Zone 5
+_CDN_STATIC_RATE_ZONE1 = Decimal("0.081")  # Zone 1, 0-10 TB tier
+_CDN_STATIC_RATE_ZONE2 = Decimal("0.163")  # Zone 2
+_CDN_STATIC_RATE_ZONE3 = Decimal("0.163")  # Zone 3
+_CDN_STATIC_RATE_ZONE4 = Decimal("0.200")  # Zone 4
+_CDN_STATIC_RATE_ZONE5 = Decimal("0.220")  # Zone 5
 _CDN_STATIC_RATES: dict[str, Decimal] = {
     "Zone 1": _CDN_STATIC_RATE_ZONE1,
     "Zone 2": _CDN_STATIC_RATE_ZONE2,
@@ -930,9 +929,7 @@ class AzureProvider(ProviderBase):
                     try:
                         denom = Decimal(raw_uom)
                         if denom > 1:
-                            p = p.model_copy(
-                                update={"price_per_unit": p.price_per_unit / denom}
-                            )
+                            p = p.model_copy(update={"price_per_unit": p.price_per_unit / denom})
                     except Exception:
                         pass
                     p = p.model_copy(update={"unit": PriceUnit.PER_REQUEST})
@@ -1122,14 +1119,20 @@ class AzureProvider(ProviderBase):
                         dtype = "cached"
                     else:
                         dtype = "standard"
-                    prices.append(p.model_copy(update={
-                        "unit": PriceUnit.PER_UNIT,
-                        "attributes": {**p.attributes, "deployment_type": dtype},
-                    }))
+                    prices.append(
+                        p.model_copy(
+                            update={
+                                "unit": PriceUnit.PER_UNIT,
+                                "attributes": {**p.attributes, "deployment_type": dtype},
+                            }
+                        )
+                    )
 
             # Prefer standard text deployments; non-standard variants (realtime/audio/
             # batch/cached) are confusing for per-token cost estimates.
-            standard_prices = [p for p in prices if p.attributes.get("deployment_type") == "standard"]
+            standard_prices = [
+                p for p in prices if p.attributes.get("deployment_type") == "standard"
+            ]
             if standard_prices:
                 prices = standard_prices
 
@@ -2369,10 +2372,9 @@ class AzureProvider(ProviderBase):
                 "container": ["aks"],
                 "serverless": ["azure_functions"],
                 "ai": ["openai"],
-                "network": ["egress"],
+                "network": ["egress", "azure_cdn", "azure_front_door"],
                 "inter_region_egress": [],
                 "observability": ["azure_monitor"],
-                "network": ["azure_cdn", "azure_front_door"],
             },
             supported_terms={
                 "compute/vm": ["on_demand", "spot", "reserved_1yr", "reserved_3yr"],

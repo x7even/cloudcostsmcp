@@ -112,7 +112,9 @@ _GCP_INTRA_EGRESS_RATE: dict[str, Decimal] = {
 # Used as static fallback for the tiered network/egress path.
 _GCP_INTERNET_EGRESS_TIERS: dict[str, list[EgressTier]] = {
     "americas": [
-        EgressTier(threshold_gb=0, rate=Decimal("0.080"), label="0-1 TB"),  # matches _GCP_INTERNET_EGRESS_RATE["americas"]
+        EgressTier(
+            threshold_gb=0, rate=Decimal("0.080"), label="0-1 TB"
+        ),  # matches _GCP_INTERNET_EGRESS_RATE["americas"]
         EgressTier(threshold_gb=1_024, rate=Decimal("0.065"), label="1-10 TB"),
         EgressTier(threshold_gb=10_240, rate=Decimal("0.045"), label=">10 TB"),
     ],
@@ -3084,8 +3086,15 @@ class GCPProvider(ProviderBase):
             return self._annotate_fresh([price], _GCP_EGRESS_SOURCE_URL), tier_result
 
         # Validate destination_type before falling through to internet egress
-        if dest_type not in ("internet", "cross_az", "cross_region", "cross_continent", "same_zone"):
+        if dest_type not in (
+            "internet",
+            "cross_az",
+            "cross_region",
+            "cross_continent",
+            "same_zone",
+        ):
             from opencloudcosts.providers.base import NotSupportedError
+
             raise NotSupportedError(
                 provider=self.provider,
                 domain=spec.domain,
