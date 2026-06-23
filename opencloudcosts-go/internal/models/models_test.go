@@ -1516,3 +1516,38 @@ func TestEnumValues_PriceUnit(t *testing.T) {
 		}
 	}
 }
+
+// --------------------------------------------------------------------------
+// TestNormalizedPrice_ZeroValueIsValid — zero price_per_unit is valid (free tier).
+// --------------------------------------------------------------------------
+
+func TestNormalizedPrice_ZeroValueIsValid(t *testing.T) {
+	n := &NormalizedPrice{
+		Provider:      CloudProviderAWS,
+		Service:       "compute",
+		SKUID:         "FREE123",
+		ProductFamily: "Compute Instance",
+		Description:   "free tier t2.micro",
+		Region:        "us-east-1",
+		PricingTerm:   PricingTermOnDemand,
+		PricePerUnit:  0.0,
+		Unit:          PriceUnitPerHour,
+	}
+
+	// Zero price_per_unit is a valid struct — no panic, no error.
+	if n.PricePerUnit != 0.0 {
+		t.Errorf("expected PricePerUnit=0.0, got %v", n.PricePerUnit)
+	}
+
+	// MonthlyCost of a free-tier item should be 0.
+	mc := n.MonthlyCost()
+	if mc != 0.0 {
+		t.Errorf("MonthlyCost() for zero price = %v, want 0.0", mc)
+	}
+
+	// HourlyCost of a free-tier item should also be 0.
+	hc := n.HourlyCost()
+	if hc != 0.0 {
+		t.Errorf("HourlyCost() for zero price = %v, want 0.0", hc)
+	}
+}
