@@ -1083,6 +1083,55 @@ func TestGetComputePrice_LinuxExcludesWindowsSKUs(t *testing.T) {
 	}
 }
 
+func TestGetComputePrice_WindowsExcludesLinuxSKUs(t *testing.T) {
+	// When OS=Windows is requested, only Windows productName SKUs must appear in results.
+	linuxItem := azureItem{
+		"retailPrice":   0.384,
+		"armSkuName":    "Standard_D8s_v3",
+		"productName":   "Virtual Machines DSv3 Series",
+		"skuName":       "D8s v3",
+		"serviceName":   "Virtual Machines",
+		"serviceFamily": "Compute",
+		"meterId":       "linux-meter",
+		"meterName":     "D8s v3",
+		"armRegionName": "eastus",
+		"unitOfMeasure": "1 Hour",
+	}
+	windowsItem := azureItem{
+		"retailPrice":   0.752,
+		"armSkuName":    "Standard_D8s_v3",
+		"productName":   "Virtual Machines DSv3 Series Windows",
+		"skuName":       "D8s v3",
+		"serviceName":   "Virtual Machines",
+		"serviceFamily": "Compute",
+		"meterId":       "windows-meter",
+		"meterName":     "D8s v3",
+		"armRegionName": "eastus",
+		"unitOfMeasure": "1 Hour",
+	}
+	srv := mockServer(t, []azureItem{linuxItem, windowsItem})
+	defer srv.Close()
+	p := newTestProvider(t, srv)
+
+	prices, err := p.GetComputePrice(context.Background(), "Standard_D8s_v3", "eastus", "Windows", models.PricingTermOnDemand)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(prices) != 1 {
+		t.Fatalf("expected 1 Windows price, got %d", len(prices))
+	}
+	if prices[0].PricePerUnit != 0.752 {
+		t.Errorf("expected Windows price 0.752, got %f", prices[0].PricePerUnit)
+	}
+	for _, price := range prices {
+		if productName, ok := price.Attributes["productName"]; ok {
+			if !strings.Contains(productName, "Windows") {
+				t.Errorf("Windows result should contain Windows SKU: %s", productName)
+			}
+		}
+	}
+}
+
 func TestMain(m *testing.M) {
 	// Ensure tests don't need real network.
 	fmt.Println("Running Azure provider tests with mock HTTP server...")
