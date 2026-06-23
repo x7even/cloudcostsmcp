@@ -429,3 +429,55 @@ func TestPriceNetworkNAT_GatewayRateFromSKU(t *testing.T) {
 		t.Error("expected no fallback when NAT SKUs are present")
 	}
 }
+
+// TestPriceNetworkNAT_CostMath verifies:
+//
+//	gateway_count=2, data_gb=500, hours=730
+//	→ monthly_gateway_cost = 2 * $0.044 * 730 = $64.24
+//	→ monthly_data_cost    = 500 * $0.045     = $22.50
+//	→ monthly_total                            = $86.74
+func TestPriceNetworkNAT_CostMath(t *testing.T) {
+	skus := fakeNATSKUs()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(networkingSKUResponse(skus))
+	}))
+	defer ts.Close()
+
+	p := newNetworkingTestProvider(t, ts)
+	ctx := context.Background()
+
+	spec := &models.NetworkPricingSpec{
+		BasePricingSpec: models.BasePricingSpec{
+			Region: "us-central1",
+		},
+		GatewayCount:  2,
+		DataGB:        500.0,
+		HoursPerMonth: 730.0,
+	}
+	_, breakdown, err := p.priceNetworkNAT(ctx, spec)
+	if err != nil {
+		t.Fatalf("priceNetworkNAT: %v", err)
+	}
+
+	// Gateway cost: 2 * $0.044 * 730 = $64.24
+	wantGateway := 2.0 * 0.044 * 730.0
+	got := toFloat64(breakdown["monthly_gateway_cost"])
+	if abs(got-wantGateway) > 1e-6 {
+		t.Errorf("monthly_gateway_cost = %.4f, want %.4f", got, wantGateway)
+	}
+
+	// Data cost: 500 * $0.045 = $22.50
+	wantData := 500.0 * 0.045
+	got = toFloat64(breakdown["monthly_data_cost"])
+	if abs(got-wantData) > 1e-6 {
+		t.Errorf("monthly_data_cost = %.4f, want %.4f", got, wantData)
+	}
+
+	// Total: $64.24 + $22.50 = $86.74
+	wantTotal := wantGateway + wantData
+	got = toFloat64(breakdown["monthly_total"])
+	if abs(got-wantTotal) > 1e-6 {
+		t.Errorf("monthly_total = %.4f, want %.4f", got, wantTotal)
+	}
+}
