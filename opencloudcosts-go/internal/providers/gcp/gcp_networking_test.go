@@ -518,3 +518,30 @@ func TestGetEgressPrice_InternetAmericas(t *testing.T) {
 		t.Errorf("service = %q, want inter_region_egress", prices[0].Service)
 	}
 }
+
+// TestGetEgressPrice_CrossContinent verifies that egress between us-east1
+// (americas) and eu-west1 (emea) returns the cross-continent rate ($0.08/GB).
+func TestGetEgressPrice_CrossContinent(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(networkingSKUResponse(nil))
+	}))
+	defer ts.Close()
+
+	p := newNetworkingTestProvider(t, ts)
+	ctx := context.Background()
+
+	// us-east1 (americas) → eu-west1 (emea): cross-continent rate = $0.08/GB.
+	prices, err := p.GetEgressPrice(ctx, "us-east1", "eu-west1", 0)
+	if err != nil {
+		t.Fatalf("GetEgressPrice (cross-continent): %v", err)
+	}
+	if len(prices) == 0 {
+		t.Fatal("expected at least one price")
+	}
+
+	wantRate := gcpIntraEgressRate["cross"] // 0.08
+	if abs(prices[0].PricePerUnit-wantRate) > 1e-9 {
+		t.Errorf("cross-continent egress rate = %.4f, want %.4f", prices[0].PricePerUnit, wantRate)
+	}
+}
