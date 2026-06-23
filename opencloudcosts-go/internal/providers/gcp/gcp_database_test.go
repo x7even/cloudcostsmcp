@@ -290,6 +290,56 @@ func TestGetCloudSQLPrice_EngineNormalization(t *testing.T) {
 	}
 }
 
+// TestGetCloudSQLPrice_HAMultiplier verifies that high-availability (Regional)
+// pricing is greater than single-zone (Zonal) pricing for the same instance.
+func TestGetCloudSQLPrice_HAMultiplier(t *testing.T) {
+	// db-n1-standard-4: Zonal $0.2702/hr, Regional (HA) $0.5404/hr (~2x).
+	zonalDesc := "Cloud SQL for MySQL: Zonal - 4 vCPU + 15GB RAM in Americas"
+	regionalDesc := "Cloud SQL for MySQL: Regional - 4 vCPU + 15GB RAM in Americas"
+	skus := []map[string]any{
+		makeSKU(zonalDesc, "OnDemand", "us-central1", "0", 270_200_000),    // $0.2702/hr
+		makeSKU(regionalDesc, "OnDemand", "us-central1", "0", 540_400_000), // $0.5404/hr
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(skuResponse(skus))
+	}))
+	defer ts.Close()
+
+	p := newTestProviderDB(t, ts)
+
+	zonal, err := p.getCloudSQLPrice(context.Background(), "db-n1-standard-4", "us-central1", "mysql", false)
+	if err != nil {
+		t.Fatalf("getCloudSQLPrice (zonal): %v", err)
+	}
+	if len(zonal) != 1 {
+		t.Fatalf("expected 1 zonal price, got %d", len(zonal))
+	}
+
+	// Regional lookup reuses the cached index (both SKUs were served above).
+	regional, err := p.getCloudSQLPrice(context.Background(), "db-n1-standard-4", "us-central1", "mysql", true)
+	if err != nil {
+		t.Fatalf("getCloudSQLPrice (regional): %v", err)
+	}
+	if len(regional) != 1 {
+		t.Fatalf("expected 1 regional price, got %d", len(regional))
+	}
+
+	if regional[0].PricePerUnit <= zonal[0].PricePerUnit {
+		t.Errorf("HA price (%.6f) should be greater than zonal price (%.6f)",
+			regional[0].PricePerUnit, zonal[0].PricePerUnit)
+	}
+
+	// Verify the ha attribute is set correctly on each result.
+	if zonal[0].Attributes["ha"] != "false" {
+		t.Errorf("zonal ha attribute = %q, want 'false'", zonal[0].Attributes["ha"])
+	}
+	if regional[0].Attributes["ha"] != "true" {
+		t.Errorf("regional ha attribute = %q, want 'true'", regional[0].Attributes["ha"])
+	}
+}
+
 // --------------------------------------------------------------------------
 // Memorystore tests
 // --------------------------------------------------------------------------
