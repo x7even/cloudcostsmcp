@@ -522,11 +522,26 @@ func (h *Handler) HandleGetPrice(
 	}
 
 	if result == nil {
-		return jsonText(map[string]any{
-			"provider": string(spec.GetProvider()),
-			"data":     []any{},
-			"note":     "no pricing data returned",
-		}), nil, nil
+		provName := string(spec.GetProvider())
+		svc := spec.GetService()
+		region := spec.GetRegion()
+		out := map[string]any{
+			"result":          "no_results",
+			"provider":        provName,
+			"service":         svc,
+			"region":          region,
+			"filters_applied": map[string]any{},
+			"message": fmt.Sprintf(
+				"No pricing found for service '%s' in %s with the provided filters.", svc, region,
+			),
+			"tip": fmt.Sprintf(
+				"Try search_pricing(provider='%s', service='%s', query='...') "+
+					"to explore available products and valid filter attribute names. "+
+					"Use list_services() to verify the service code exists.",
+				provName, svc,
+			),
+		}
+		return jsonText(out), nil, nil
 	}
 	return jsonText(pricingResultSummary(result)), nil, nil
 }
@@ -876,14 +891,40 @@ func (h *Handler) HandleSearchPricing(
 		}), nil, nil
 	}
 
-	summaries := make([]map[string]any, len(prices))
-	for i, p := range prices {
-		summaries[i] = normalizedPriceSummary(p)
-	}
-
 	regionOut := in.Region
 	if regionOut == "" {
 		regionOut = "all"
+	}
+
+	if len(prices) == 0 {
+		domain := in.Domain
+		if domain == "" {
+			domain = "compute"
+		}
+		tip := "Check the service code with list_services(). " +
+			"Try a broader query (e.g. the product family name). "
+		if in.Domain != "" {
+			tip += fmt.Sprintf("Verify that '%s' is a valid domain or service alias.", in.Domain)
+		}
+		msg := fmt.Sprintf("No pricing found matching '%s'", in.Query)
+		if in.Domain != "" {
+			msg += fmt.Sprintf(" in domain '%s'", in.Domain)
+		}
+		msg += "."
+		return jsonText(map[string]any{
+			"result":   "no_results",
+			"provider": in.Provider,
+			"domain":   domain,
+			"query":    in.Query,
+			"region":   regionOut,
+			"message":  msg,
+			"tip":      tip,
+		}), nil, nil
+	}
+
+	summaries := make([]map[string]any, len(prices))
+	for i, p := range prices {
+		summaries[i] = normalizedPriceSummary(p)
 	}
 	return jsonText(map[string]any{
 		"provider": in.Provider,
