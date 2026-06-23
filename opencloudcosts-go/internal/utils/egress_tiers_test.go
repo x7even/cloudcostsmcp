@@ -307,3 +307,54 @@ func TestEgressTiers_ZeroBytes(t *testing.T) {
 		t.Errorf("tiers: got %d entries want 0", len(result.Tiers))
 	}
 }
+
+// ---------------------------------------------------------------------------
+// TestEgressTiers_ExactBreakpoint: cost at exactly the 10240 GB paid boundary
+// ---------------------------------------------------------------------------
+
+// TestEgressTiers_ExactBreakpoint verifies that pricing at exactly the 10 TB
+// (10240 GB paid = 10340 GB cumulative including the free 100 GB) boundary
+// uses only the first paid tier rate ($0.090) and does not bleed into the
+// lower tier. This corresponds to the Python comment in
+// test_aws_internet_egress_5000gb_crosses_tiers: "10 TB boundary at 10,240 GB
+// is not crossed here".
+//
+// At exactly 10340 GB total:
+//   - Tier 0: 100 GB free  → $0.00
+//   - Tier 1: 10240 GB at $0.090 → $921.60
+//   - Tier 2: 0 GB consumed → not emitted
+func TestEgressTiers_ExactBreakpoint(t *testing.T) {
+	// 10340 GB = 100 GB free + exactly 10240 GB paid (the full first paid tier).
+	const dataGB = 10_340.0
+	result := ComputeEgressTieredCost(awsInternetEgressTiers, dataGB)
+
+	expectedCost := 10_240.0 * 0.090 // $921.60
+	got, _ := strconv.ParseFloat(result.TotalCost, 64)
+	if math.Abs(got-expectedCost) > 1e-9 {
+		t.Errorf("total_cost: got %q (%.4f) want %.4f", result.TotalCost, got, expectedCost)
+	}
+
+	// Exactly two tiers consumed: free then first paid; the $0.085 tier must
+	// not appear because there is no remaining volume.
+	if len(result.Tiers) != 2 {
+		t.Fatalf("expected exactly 2 tiers at boundary, got %d: %v", len(result.Tiers), result.Tiers)
+	}
+
+	// Tier 0: free
+	if rate := result.Tiers[0]["rate"]; rate != "0.000" {
+		t.Errorf("tier[0] rate: got %q want 0.000", rate)
+	}
+	freeGB := result.Tiers[0]["gb"].(float64)
+	if math.Abs(freeGB-100.0) > 1e-9 {
+		t.Errorf("tier[0] gb: got %v want 100.0", freeGB)
+	}
+
+	// Tier 1: exactly 10240 GB at $0.090
+	if rate := result.Tiers[1]["rate"]; rate != "0.090" {
+		t.Errorf("tier[1] rate: got %q want 0.090", rate)
+	}
+	paidGB := result.Tiers[1]["gb"].(float64)
+	if math.Abs(paidGB-10_240.0) > 1e-9 {
+		t.Errorf("tier[1] gb: got %v want 10240.0", paidGB)
+	}
+}
