@@ -50,9 +50,12 @@ spec:
               cpu: "500m"
               memory: "512Mi"
 
+          # The Go server serves health on /healthz and /readyz (the MCP handler
+          # owns "/", so a plain GET /health returns 400). README says /health —
+          # that is incorrect for the Go binary.
           livenessProbe:
             httpGet:
-              path: /health
+              path: /healthz
               port: 8080
             initialDelaySeconds: 10
             periodSeconds: 30
@@ -61,7 +64,7 @@ spec:
 
           readinessProbe:
             httpGet:
-              path: /health
+              path: /readyz
               port: 8080
             initialDelaySeconds: 5
             periodSeconds: 10

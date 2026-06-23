@@ -18,8 +18,6 @@ jobs:
     defaults:
       run:
         working-directory: opencloudcosts-go
-    env:
-      CGO_ENABLED: "0"
     steps:
       - uses: actions/checkout@v4
 
@@ -27,7 +25,9 @@ jobs:
         with:
           go-version-file: opencloudcosts-go/go.mod
 
-      - run: go build ./...
+      # Validate the static (no-cgo) binary build the Dockerfile actually ships.
+      - run: CGO_ENABLED=0 go build ./...
+      # The race detector requires cgo, so run tests with cgo enabled (default).
       - run: go test -race ./...
       - run: go vet ./...
 
