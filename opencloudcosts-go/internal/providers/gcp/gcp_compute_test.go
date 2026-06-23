@@ -998,6 +998,55 @@ func TestGetComputePrice_SpotCheaperThanOnDemand(t *testing.T) {
 	}
 }
 
+// TestGetComputePrice_CUD1YrCheaperThanOnDemand verifies the price ordering
+// invariant: 1-year committed-use discount must be cheaper than on_demand for
+// the same instance type.
+func TestGetComputePrice_CUD1YrCheaperThanOnDemand(t *testing.T) {
+	// n2-standard-4: 4 vCPU, 16 GB RAM.
+	// OnDemand:  $0.031611/vCPU-hr, $0.004237/GB-hr
+	// Commit1Yr: $0.019560/vCPU-hr, $0.002626/GB-hr
+	skus := []map[string]any{
+		// OnDemand SKUs
+		makeSKU("N2 Instance Core", "OnDemand", "us-central1", "0", 31_611_000),
+		makeSKU("N2 Instance Ram", "OnDemand", "us-central1", "0", 4_237_000),
+		// CUD 1-year SKUs
+		makeSKU("Commitment v1: N2 Cpu in Americas for 1 Year", "Commit1Yr", "us-central1", "0", 19_560_000),
+		makeSKU("Commitment v1: N2 Ram in Americas for 1 Year", "Commit1Yr", "us-central1", "0", 2_626_000),
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(skuResponse(skus))
+	}))
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	ctx := context.Background()
+
+	cud1YrPrices, err := p.GetComputePrice(ctx, "n2-standard-4", "us-central1", "Linux", models.PricingTermCUD1Yr)
+	if err != nil {
+		t.Fatalf("GetComputePrice (cud_1yr): %v", err)
+	}
+	if len(cud1YrPrices) != 1 {
+		t.Fatalf("expected 1 cud_1yr price, got %d", len(cud1YrPrices))
+	}
+
+	onDemandPrices, err := p.GetComputePrice(ctx, "n2-standard-4", "us-central1", "Linux", models.PricingTermOnDemand)
+	if err != nil {
+		t.Fatalf("GetComputePrice (on_demand): %v", err)
+	}
+	if len(onDemandPrices) != 1 {
+		t.Fatalf("expected 1 on_demand price, got %d", len(onDemandPrices))
+	}
+
+	cud1YrPrice := cud1YrPrices[0].PricePerUnit
+	onDemandPrice := onDemandPrices[0].PricePerUnit
+
+	if cud1YrPrice >= onDemandPrice {
+		t.Errorf("price invariant violated: cud_1yr ($%.6f) must be < on_demand ($%.6f)", cud1YrPrice, onDemandPrice)
+	}
+}
+
 // --------------------------------------------------------------------------
 // Helpers
 // --------------------------------------------------------------------------
