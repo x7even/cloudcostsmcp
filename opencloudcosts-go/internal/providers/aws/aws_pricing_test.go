@@ -1468,6 +1468,94 @@ func TestGetComputePrice_ReservedCheaperThanOnDemand(t *testing.T) {
 	}
 }
 
+// TestGetComputePrice_Reserved3YrCheaperThan1Yr verifies the price ordering
+// invariant: reserved_3yr must be cheaper than reserved_1yr for the same
+// instance type. Both terms are served from a single bulk SKU fixture.
+func TestGetComputePrice_Reserved3YrCheaperThan1Yr(t *testing.T) {
+	const bulkFixture = `{
+  "formatVersion": "aws_v1",
+  "products": {
+    "INVSKU2": {
+      "sku": "INVSKU2",
+      "productFamily": "Compute Instance",
+      "attributes": {
+        "instanceType":    "m5.xlarge",
+        "operatingSystem": "Linux",
+        "tenancy":         "Shared",
+        "preInstalledSw":  "NA",
+        "capacitystatus":  "Used",
+        "location":        "US East (N. Virginia)"
+      }
+    }
+  },
+  "terms": {
+    "OnDemand": {},
+    "Reserved": {
+      "INVSKU2.R1NOTERM": {
+        "priceDimensions": {
+          "INVSKU2.R1NOTERM.DIM": {
+            "unit": "Hrs",
+            "pricePerUnit": {"USD": "0.1140000000"},
+            "description": "$0.114 per Reserved 1yr No-Upfront m5.xlarge Instance Hour"
+          }
+        },
+        "termAttributes": {
+          "LeaseContractLength": "1yr",
+          "PurchaseOption":      "No Upfront"
+        }
+      },
+      "INVSKU2.R3NOTERM": {
+        "priceDimensions": {
+          "INVSKU2.R3NOTERM.DIM": {
+            "unit": "Hrs",
+            "pricePerUnit": {"USD": "0.0750000000"},
+            "description": "$0.075 per Reserved 3yr No-Upfront m5.xlarge Instance Hour"
+          }
+        },
+        "termAttributes": {
+          "LeaseContractLength": "3yr",
+          "PurchaseOption":      "No Upfront"
+        }
+      }
+    }
+  }
+}`
+
+	newBulkServer(t, bulkFixture)
+	p := newBulkProvider(t)
+	ctx := context.Background()
+
+	r1Prices, err := p.GetComputePrice(ctx, "m5.xlarge", "us-east-1", "Linux", models.PricingTermReserved1Yr)
+	if err != nil {
+		t.Fatalf("GetComputePrice(reserved_1yr): %v", err)
+	}
+	if len(r1Prices) == 0 {
+		t.Fatal("GetComputePrice(reserved_1yr): expected at least one price, got none")
+	}
+
+	r3Prices, err := p.GetComputePrice(ctx, "m5.xlarge", "us-east-1", "Linux", models.PricingTermReserved3Yr)
+	if err != nil {
+		t.Fatalf("GetComputePrice(reserved_3yr): %v", err)
+	}
+	if len(r3Prices) == 0 {
+		t.Fatal("GetComputePrice(reserved_3yr): expected at least one price, got none")
+	}
+
+	r1Price := r1Prices[0].PricePerUnit
+	r3Price := r3Prices[0].PricePerUnit
+
+	const tolerance = 1e-6
+	if r1Price < 0.114-tolerance || r1Price > 0.114+tolerance {
+		t.Errorf("reserved_1yr price = %v, want ~0.114", r1Price)
+	}
+	if r3Price < 0.075-tolerance || r3Price > 0.075+tolerance {
+		t.Errorf("reserved_3yr price = %v, want ~0.075", r3Price)
+	}
+	if r3Price >= r1Price {
+		t.Errorf("invariant violation: reserved_3yr (%v) must be cheaper than reserved_1yr (%v)", r3Price, r1Price)
+	}
+}
+
 // --------------------------------------------------------------------------
 // TestPricingResult_AuthGating (provider-contract)
 // --------------------------------------------------------------------------
