@@ -305,3 +305,69 @@ func TestPriceObservability_TieredCostLarge(t *testing.T) {
 		t.Errorf("expected breakdown['fallback'] = true, got %v", breakdown["fallback"])
 	}
 }
+
+// TestPriceObservability_FallbackOnFetchError verifies that when the SKU fetch fails,
+// Cloud Monitoring uses fallback rates and sets breakdown["fallback"] = true,
+// with the expected free tier and tier rate strings present.
+func TestPriceObservability_FallbackOnFetchError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "service not found", http.StatusInternalServerError)
+	}))
+	defer ts.Close()
+
+	p := newTestProviderAnalytics(t, ts)
+	spec := &models.ObservabilityPricingSpec{
+		BasePricingSpec: models.BasePricingSpec{
+			Provider: models.CloudProviderGCP,
+			Domain:   models.PricingDomainObservability,
+			Service:  "cloud_monitoring",
+			Region:   "global",
+		},
+		IngestionMiB: 0.0,
+	}
+
+	_, breakdown, err := p.priceObservability(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("priceObservability: unexpected error: %v", err)
+	}
+
+	// Must set fallback = true.
+	fallback, ok := breakdown["fallback"].(bool)
+	if !ok || !fallback {
+		t.Errorf("expected breakdown['fallback'] = true, got %v", breakdown["fallback"])
+	}
+
+	// free_tier_mib must be present and equal to 150.
+	freeTier, ok := breakdown["free_tier_mib"].(float64)
+	if !ok {
+		t.Fatalf("free_tier_mib missing or wrong type: %v", breakdown["free_tier_mib"])
+	}
+	if abs(freeTier-150.0) > 1e-9 {
+		t.Errorf("free_tier_mib = %v, want 150", freeTier)
+	}
+
+	// Tier rates must contain the expected values.
+	tier1Str, ok := breakdown["tier1_rate_per_mib"].(string)
+	if !ok {
+		t.Fatalf("tier1_rate_per_mib missing or wrong type: %v", breakdown["tier1_rate_per_mib"])
+	}
+	if !strings.Contains(tier1Str, "0.258") {
+		t.Errorf("tier1_rate_per_mib = %q, want to contain '0.258'", tier1Str)
+	}
+
+	tier2Str, ok := breakdown["tier2_rate_per_mib"].(string)
+	if !ok {
+		t.Fatalf("tier2_rate_per_mib missing or wrong type: %v", breakdown["tier2_rate_per_mib"])
+	}
+	if !strings.Contains(tier2Str, "0.151") {
+		t.Errorf("tier2_rate_per_mib = %q, want to contain '0.151'", tier2Str)
+	}
+
+	tier3Str, ok := breakdown["tier3_rate_per_mib"].(string)
+	if !ok {
+		t.Fatalf("tier3_rate_per_mib missing or wrong type: %v", breakdown["tier3_rate_per_mib"])
+	}
+	if !strings.Contains(tier3Str, "0.062") {
+		t.Errorf("tier3_rate_per_mib = %q, want to contain '0.062'", tier3Str)
+	}
+}
