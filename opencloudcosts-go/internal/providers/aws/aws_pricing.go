@@ -61,7 +61,7 @@ var _regionToLocation = map[string]string{
 func regionToLocation(region string) (string, error) {
 	loc, ok := _regionToLocation[region]
 	if !ok {
-		return "", fmt.Errorf("Unknown AWS region: %s", region)
+		return "", fmt.Errorf("unknown AWS region: %s", region)
 	}
 	return loc, nil
 }

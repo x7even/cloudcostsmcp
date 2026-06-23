@@ -139,18 +139,18 @@ func (cm *CacheManager) flushLocked() {
 	tmpName := tmp.Name()
 
 	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
 		slog.Error("cache: failed to write temp file", "error", err)
 		return
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmpName)
+		_ = os.Remove(tmpName)
 		slog.Error("cache: failed to close temp file", "error", err)
 		return
 	}
 	if err := os.Rename(tmpName, cm.filePath); err != nil {
-		os.Remove(tmpName)
+		_ = os.Remove(tmpName)
 		slog.Error("cache: failed to rename temp file", "path", cm.filePath, "error", err)
 		return
 	}

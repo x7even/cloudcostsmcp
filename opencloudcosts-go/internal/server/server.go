@@ -206,7 +206,7 @@ func (s *AppServer) RunHTTP(host, port string) error {
 func (s *AppServer) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, `{"status":"ok","version":%q}`, Version)
+	_, _ = fmt.Fprintf(w, `{"status":"ok","version":%q}`, Version)
 }
 
 // handleReadyz is the readiness probe — 503 until cache+providers are ready.
@@ -214,16 +214,16 @@ func (s *AppServer) handleReadyz(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if s.cacheReady.Load() == 0 {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		fmt.Fprintf(w, `{"status":"not_ready","reason":"cache not initialised"}`)
+		_, _ = fmt.Fprintf(w, `{"status":"not_ready","reason":"cache not initialised"}`)
 		return
 	}
 	if len(s.providers) == 0 {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		fmt.Fprintf(w, `{"status":"not_ready","reason":"no providers available"}`)
+		_, _ = fmt.Fprintf(w, `{"status":"not_ready","reason":"no providers available"}`)
 		return
 	}
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, `{"status":"ok"}`)
+	_, _ = fmt.Fprintf(w, `{"status":"ok"}`)
 }
 
 // withAPIKey is a middleware that enforces the Bearer token when cfg.APIKey is set.
@@ -242,7 +242,7 @@ func (s *AppServer) withAPIKey(next http.Handler) http.Handler {
 		if subtle.ConstantTimeCompare([]byte(token), expected) != 1 {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
-			fmt.Fprintf(w, `{"error":"unauthorized"}`)
+			_, _ = fmt.Fprintf(w, `{"error":"unauthorized"}`)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -260,7 +260,7 @@ func (s *AppServer) withRateLimit(next http.Handler) http.Handler {
 			w.Header().Set("Retry-After", "1")
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusTooManyRequests)
-			fmt.Fprintf(w, `{"error":"rate_limit_exceeded","retry_after_seconds":1}`)
+			_, _ = fmt.Fprintf(w, `{"error":"rate_limit_exceeded","retry_after_seconds":1}`)
 			return
 		}
 		next.ServeHTTP(w, r)

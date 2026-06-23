@@ -131,7 +131,7 @@ func (p *Provider) fetchSKUs(ctx context.Context, serviceID string) ([]map[strin
 			return nil, fmt.Errorf("gcp: SKU fetch: %w", err)
 		}
 		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if err != nil {
 			return nil, fmt.Errorf("gcp: SKU read body: %w", err)
 		}

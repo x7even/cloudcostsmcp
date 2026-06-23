@@ -493,7 +493,7 @@ func (p *Provider) fetchPrices(ctx context.Context, filters map[string]string, m
 			return nil, fmt.Errorf("azure: http get: %w", err)
 		}
 		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if err != nil {
 			return nil, fmt.Errorf("azure: read body: %w", err)
 		}

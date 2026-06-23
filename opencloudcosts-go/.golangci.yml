@@ -1,0 +1,28 @@
+# golangci-lint v2 config for opencloudcosts-go.
+# The CI workflow (.github/workflows/opencloudcosts-go.yml) runs:
+#   golangci-lint run --enable=errcheck,staticcheck,gosec,gocritic
+# This file only narrows the noise; it does not change the enabled linter set.
+version: "2"
+
+linters:
+  exclusions:
+    rules:
+      # Test files: unchecked Close/RemoveAll and file-inclusion (G304) are
+      # acceptable noise in tests, not production risks.
+      - path: _test\.go
+        linters:
+          - errcheck
+          - gosec
+
+      # gosec G101 false positive: the Azure pricing metadata describes LLM
+      # "input_tokens"/"output_tokens" — token *counts*, not credentials.
+      - path: internal/providers/azure/azure\.go
+        linters:
+          - gosec
+        text: "G101"
+
+      # staticcheck QF* are optional refactor suggestions (tagged switch, De
+      # Morgan's law), not correctness issues — silence the quickfix category.
+      - linters:
+          - staticcheck
+        text: 'QF\d+'

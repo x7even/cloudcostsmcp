@@ -36,8 +36,9 @@ import (
 // errCENotConfigured is returned when Cost Explorer auth is not configured.
 // It wraps providers.ErrNotSupported so callers can use errors.Is.
 var errCENotConfigured = fmt.Errorf(
-	"Cost Explorer is disabled — set OCC_AWS_ENABLE_COST_EXPLORER=true to enable "+
-		"effective pricing (note: each API call costs $0.01): %w",
+	"effective pricing requires Cost Explorer, which is disabled — set "+
+		"OCC_AWS_ENABLE_COST_EXPLORER=true to enable it (note: each API call "+
+		"costs $0.01): %w",
 	providers.ErrNotSupported,
 )
 
