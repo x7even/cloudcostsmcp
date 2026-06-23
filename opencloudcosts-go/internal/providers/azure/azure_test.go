@@ -454,7 +454,7 @@ func TestGetOpenAIPrice_CostEstimate(t *testing.T) {
 }
 
 func TestGetMonitorPrice_LogEstimate(t *testing.T) {
-	// 100 GB log - 5 GB free = 95 GB × $2.30 = $218.50.
+	// 100 GB log - 5 GB free = 95 GB × $2.76 = $262.20 (updated Analytics Logs rate).
 	srv := mockServer(t, nil)
 	defer srv.Close()
 	p := newTestProvider(t, srv)
@@ -471,7 +471,7 @@ func TestGetMonitorPrice_LogEstimate(t *testing.T) {
 			break
 		}
 	}
-	expected := 95.0 * 2.30 // = 218.50
+	expected := 95.0 * 2.76 // = 262.20
 	diff := estimatePrice - expected
 	if diff < 0 {
 		diff = -diff
@@ -1562,6 +1562,398 @@ func TestGetComputePrice_Reserved3YrCheaperThan1Yr(t *testing.T) {
 	// Invariant: 3yr commitment must yield a lower hourly rate than 1yr.
 	if got3Yr >= got1Yr {
 		t.Errorf("price ordering violated: reserved_3yr (%f) must be < reserved_1yr (%f)", got3Yr, got1Yr)
+	}
+}
+
+// --------------------------------------------------------------------------
+// Cosmos DB tests
+// --------------------------------------------------------------------------
+
+func TestGetCosmosPrice_ProvisionedFallback(t *testing.T) {
+	// When API returns no items, static fallback must include provisioned rate ($0.00008/RU-hr)
+	// and storage rate ($0.25/GB-month).
+	srv := mockServer(t, nil)
+	defer srv.Close()
+	p := newTestProvider(t, srv)
+
+	prices, err := p.GetCosmosPrice(context.Background(), "eastus", "provisioned", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(prices) < 2 {
+		t.Fatalf("expected at least 2 fallback prices (throughput + storage), got %d", len(prices))
+	}
+
+	var throughputPrice, storagePrice float64
+	for _, pr := range prices {
+		if pr.Unit == models.PriceUnitPerUnit {
+			throughputPrice = pr.PricePerUnit
+		}
+		if pr.Unit == models.PriceUnitPerGBMonth {
+			storagePrice = pr.PricePerUnit
+		}
+	}
+	if throughputPrice != 0.00008 {
+		t.Errorf("cosmos provisioned throughput fallback: expected $0.00008/RU-hr, got $%.6f", throughputPrice)
+	}
+	if storagePrice != 0.25 {
+		t.Errorf("cosmos storage fallback: expected $0.25/GB-month, got $%.4f", storagePrice)
+	}
+}
+
+func TestGetCosmosPrice_ServerlessFallback(t *testing.T) {
+	// When API returns no items, serverless fallback must be $0.25/million RUs.
+	srv := mockServer(t, nil)
+	defer srv.Close()
+	p := newTestProvider(t, srv)
+
+	prices, err := p.GetCosmosPrice(context.Background(), "eastus", "serverless", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(prices) < 2 {
+		t.Fatalf("expected at least 2 fallback prices, got %d", len(prices))
+	}
+
+	var ruPrice float64
+	for _, pr := range prices {
+		if pr.Unit == models.PriceUnitPerUnit {
+			ruPrice = pr.PricePerUnit
+		}
+	}
+	if ruPrice != 0.25 {
+		t.Errorf("cosmos serverless fallback: expected $0.25/M RUs, got $%.4f", ruPrice)
+	}
+}
+
+func TestGetCosmosPrice_API500_ReturnsError(t *testing.T) {
+	// When API returns 500, GetCosmosPrice should return an error.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"error": "internal server error"}`)) //nolint
+	}))
+	defer srv.Close()
+	p := newTestProvider(t, srv)
+
+	_, err := p.GetCosmosPrice(context.Background(), "eastus", "provisioned", false)
+	if err == nil {
+		t.Error("expected error when API returns 500, got nil")
+	}
+}
+
+func TestGetCosmosPrice_AutoscaleFallback(t *testing.T) {
+	// Autoscale fallback should include throughput and storage prices.
+	srv := mockServer(t, nil)
+	defer srv.Close()
+	p := newTestProvider(t, srv)
+
+	prices, err := p.GetCosmosPrice(context.Background(), "eastus", "autoscale", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(prices) < 2 {
+		t.Fatalf("expected at least 2 autoscale fallback prices, got %d", len(prices))
+	}
+
+	hasPrice := false
+	for _, pr := range prices {
+		if pr.PricePerUnit > 0 {
+			hasPrice = true
+		}
+	}
+	if !hasPrice {
+		t.Error("autoscale fallback must have non-zero prices")
+	}
+}
+
+func TestGetCosmosPrice_RoutingAliases(t *testing.T) {
+	// Routing via GetPrice with service="cosmos_db" and "cosmosdb" must work.
+	srv := mockServer(t, nil)
+	defer srv.Close()
+	p := newTestProvider(t, srv)
+	ctx := context.Background()
+
+	for _, svc := range []string{"cosmos", "cosmos_db", "cosmosdb"} {
+		spec := &models.DatabasePricingSpec{
+			BasePricingSpec: models.BasePricingSpec{
+				Provider: models.CloudProviderAzure,
+				Domain:   models.PricingDomainDatabase,
+				Region:   "eastus",
+				Service:  svc,
+			},
+			Deployment: "provisioned",
+		}
+		result, err := p.GetPrice(ctx, spec)
+		if err != nil {
+			t.Errorf("GetPrice with database service=%q: unexpected error: %v", svc, err)
+			continue
+		}
+		if result == nil || len(result.PublicPrices) == 0 {
+			t.Errorf("GetPrice with database service=%q: expected prices, got none", svc)
+		}
+	}
+}
+
+// --------------------------------------------------------------------------
+// Azure Monitor tests
+// --------------------------------------------------------------------------
+
+func TestGetMonitorPrice_UpdatedAnalyticsRate(t *testing.T) {
+	// 100 GB log - 5 GB free = 95 GB × $2.76 = $262.20 (updated Analytics Logs rate).
+	srv := mockServer(t, nil)
+	defer srv.Close()
+	p := newTestProvider(t, srv)
+
+	prices, err := p.GetMonitorPrice(context.Background(), "eastus", 100.0, 0, 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var estimatePrice float64
+	for _, price := range prices {
+		if price.SKUID == "monitor-estimate" {
+			estimatePrice = price.PricePerUnit
+			break
+		}
+	}
+	expected := 95.0 * 2.76 // = 262.20
+	diff := estimatePrice - expected
+	if diff < 0 {
+		diff = -diff
+	}
+	if diff > 0.01 {
+		t.Errorf("monitor log estimate: expected $%.2f, got $%.4f", expected, estimatePrice)
+	}
+}
+
+func TestGetMonitorPrice_StaticFallbackIncludesBasicLogs(t *testing.T) {
+	// Static fallback must include: Analytics Logs ($2.76/GB), Basic Logs ($0.50/GB), Metrics.
+	srv := mockServer(t, nil)
+	defer srv.Close()
+	p := newTestProvider(t, srv)
+
+	prices, err := p.GetMonitorPrice(context.Background(), "eastus", 0, 0, 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(prices) < 3 {
+		t.Fatalf("expected at least 3 fallback prices, got %d", len(prices))
+	}
+
+	var analyticsRate, basicLogsRate float64
+	for _, pr := range prices {
+		if pr.SKUID == "monitor-analytics-logs" {
+			analyticsRate = pr.PricePerUnit
+		}
+		if pr.SKUID == "monitor-basic-logs" {
+			basicLogsRate = pr.PricePerUnit
+		}
+	}
+	if analyticsRate != 2.76 {
+		t.Errorf("analytics logs fallback: expected $2.76/GB, got $%.4f/GB", analyticsRate)
+	}
+	if basicLogsRate != 0.50 {
+		t.Errorf("basic logs fallback: expected $0.50/GB, got $%.4f/GB", basicLogsRate)
+	}
+}
+
+func TestGetMonitorPrice_API500_ReturnsError(t *testing.T) {
+	// When API returns 500, GetMonitorPrice should return an error.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"error": "server error"}`)) //nolint
+	}))
+	defer srv.Close()
+	p := newTestProvider(t, srv)
+
+	_, err := p.GetMonitorPrice(context.Background(), "eastus", 0, 0, 0)
+	if err == nil {
+		t.Error("expected error when API returns 500, got nil")
+	}
+}
+
+func TestGetMonitorPrice_AlertRulesFreeThreshold(t *testing.T) {
+	// First 10 alert rules are free. Only rules above 10 are billed.
+	// With 15 rules at $0.10/rule: (15-10) × $0.10 = $0.50.
+	srv := mockServer(t, nil)
+	defer srv.Close()
+	p := newTestProvider(t, srv)
+
+	prices, err := p.GetMonitorPrice(context.Background(), "eastus", 0, 0, 15)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var estimatePrice float64
+	for _, pr := range prices {
+		if pr.SKUID == "monitor-estimate" {
+			estimatePrice = pr.PricePerUnit
+			break
+		}
+	}
+	// 15 rules - 10 free = 5 billable × $0.10/rule = $0.50.
+	expected := 5.0 * 0.10
+	diff := estimatePrice - expected
+	if diff < 0 {
+		diff = -diff
+	}
+	if diff > 0.01 {
+		t.Errorf("monitor alert rules estimate: expected $%.2f, got $%.4f", expected, estimatePrice)
+	}
+}
+
+func TestGetMonitorPrice_RoutingAliases(t *testing.T) {
+	// Routing via GetPrice with service="monitor" and "log_analytics" must work.
+	srv := mockServer(t, nil)
+	defer srv.Close()
+	p := newTestProvider(t, srv)
+	ctx := context.Background()
+
+	for _, svc := range []string{"", "azure_monitor", "monitor", "log_analytics"} {
+		spec := &models.ObservabilityPricingSpec{
+			BasePricingSpec: models.BasePricingSpec{
+				Provider: models.CloudProviderAzure,
+				Domain:   models.PricingDomainObservability,
+				Region:   "eastus",
+				Service:  svc,
+			},
+		}
+		result, err := p.GetPrice(ctx, spec)
+		if err != nil {
+			t.Errorf("GetPrice with observability service=%q: unexpected error: %v", svc, err)
+			continue
+		}
+		if result == nil || len(result.PublicPrices) == 0 {
+			t.Errorf("GetPrice with observability service=%q: expected prices, got none", svc)
+		}
+	}
+}
+
+// --------------------------------------------------------------------------
+// Azure Front Door tests
+// --------------------------------------------------------------------------
+
+func TestGetFrontDoorPrice_BaseFeeInFallback(t *testing.T) {
+	// Static fallback must include the $35/month base fee.
+	srv := mockServer(t, nil)
+	defer srv.Close()
+	p := newTestProvider(t, srv)
+
+	prices, err := p.GetFrontDoorPrice(context.Background(), "eastus", 0, 0, "standard")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(prices) < 3 {
+		t.Fatalf("expected at least 3 prices (base fee + DT + requests), got %d", len(prices))
+	}
+
+	var baseFee float64
+	for _, pr := range prices {
+		if pr.Unit == models.PriceUnitPerMonth {
+			baseFee = pr.PricePerUnit
+		}
+	}
+	if baseFee != 35.0 {
+		t.Errorf("front door base fee: expected $35/month, got $%.4f", baseFee)
+	}
+}
+
+func TestGetFrontDoorPrice_API500_ReturnsError(t *testing.T) {
+	// When API returns 500, GetFrontDoorPrice should return an error.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"error": "server error"}`)) //nolint
+	}))
+	defer srv.Close()
+	p := newTestProvider(t, srv)
+
+	_, err := p.GetFrontDoorPrice(context.Background(), "eastus", 0, 0, "standard")
+	if err == nil {
+		t.Error("expected error when API returns 500, got nil")
+	}
+}
+
+func TestGetFrontDoorPrice_CostEstimate(t *testing.T) {
+	// With 1000 GB data + 10M requests (standard zone 1):
+	// DT cost: 1000 GB × $0.0825/GB = $82.50
+	// Request cost: 10M req / 10K × $0.009/10K = 1000 × $0.009 = $9.00
+	// Total: $91.50
+	srv := mockServer(t, nil)
+	defer srv.Close()
+	p := newTestProvider(t, srv)
+
+	prices, err := p.GetFrontDoorPrice(context.Background(), "eastus", 1000.0, 10.0, "standard")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var estimatePrice float64
+	for _, pr := range prices {
+		if pr.SKUID == "frontdoor-estimate" {
+			estimatePrice = pr.PricePerUnit
+			break
+		}
+	}
+	expectedDT := 1000.0 * 0.0825
+	expectedReq := 10.0 * 1_000_000 / 10_000 * 0.009
+	expected := expectedDT + expectedReq
+	diff := estimatePrice - expected
+	if diff < 0 {
+		diff = -diff
+	}
+	if diff > 0.01 {
+		t.Errorf("front door cost estimate: expected $%.2f, got $%.4f", expected, estimatePrice)
+	}
+}
+
+func TestGetFrontDoorPrice_RoutingAliases(t *testing.T) {
+	// Routing via GetPrice with service="frontdoor" and "front_door" must work.
+	srv := mockServer(t, nil)
+	defer srv.Close()
+	p := newTestProvider(t, srv)
+	ctx := context.Background()
+
+	for _, svc := range []string{"azure_front_door", "frontdoor", "front_door"} {
+		spec := &models.NetworkPricingSpec{
+			BasePricingSpec: models.BasePricingSpec{
+				Provider: models.CloudProviderAzure,
+				Domain:   models.PricingDomainNetwork,
+				Region:   "eastus",
+				Service:  svc,
+			},
+		}
+		result, err := p.GetPrice(ctx, spec)
+		if err != nil {
+			t.Errorf("GetPrice with network service=%q: unexpected error: %v", svc, err)
+			continue
+		}
+		if result == nil || len(result.PublicPrices) == 0 {
+			t.Errorf("GetPrice with network service=%q: expected prices, got none", svc)
+		}
+	}
+}
+
+func TestGetCDNPrice_CDNAlias(t *testing.T) {
+	// service="cdn" should route to CDN pricing and must not error.
+	srv := mockServer(t, nil)
+	defer srv.Close()
+	p := newTestProvider(t, srv)
+	ctx := context.Background()
+
+	spec := &models.NetworkPricingSpec{
+		BasePricingSpec: models.BasePricingSpec{
+			Provider: models.CloudProviderAzure,
+			Domain:   models.PricingDomainNetwork,
+			Region:   "eastus",
+			Service:  "cdn",
+		},
+	}
+	result, err := p.GetPrice(ctx, spec)
+	if err != nil {
+		t.Fatalf("GetPrice with service=cdn: unexpected error: %v", err)
+	}
+	if result == nil || len(result.PublicPrices) == 0 {
+		t.Error("GetPrice with service=cdn: expected prices")
 	}
 }
 
