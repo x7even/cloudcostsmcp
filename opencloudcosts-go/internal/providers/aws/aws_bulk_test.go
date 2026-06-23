@@ -405,6 +405,22 @@ func TestGetProductsBulk_ProductFamilyFilter(t *testing.T) {
 	}
 }
 
+// TestGetProductsBulk_MalformedJSON verifies that malformed bulk JSON returns an
+// error gracefully without panicking.
+func TestGetProductsBulk_MalformedJSON(t *testing.T) {
+	const malformed = `{"products":{invalid json here`
+
+	server := newBulkTestServer(t, []byte(malformed), map[string]string{"Content-Type": "application/json"}, http.StatusOK)
+	defer server.Close()
+	overrideBulkBaseURL(t, server.URL)
+
+	p := &Provider{}
+	_, err := p.getProductsBulk(context.Background(), "AmazonEC2", nil, 10, "us-east-1")
+	if err == nil {
+		t.Fatal("expected error for malformed JSON, got nil")
+	}
+}
+
 // TestExtractRegionFromFilters tests the helper that maps location display
 // names to AWS region codes.
 func TestExtractRegionFromFilters(t *testing.T) {
