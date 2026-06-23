@@ -706,6 +706,74 @@ func TestEstimateBOM_NullFields(t *testing.T) {
 // Monthly cost math
 // --------------------------------------------------------------------------
 
+// --------------------------------------------------------------------------
+// estimate_bom — partial failure
+// --------------------------------------------------------------------------
+
+// TestEstimateBOM_PartialFailure verifies that when one item fails pricing and
+// another succeeds, the response includes the successful line item AND an errors
+// field describing the failed item (not a top-level error).
+func TestEstimateBOM_PartialFailure(t *testing.T) {
+	callNum := 0
+	pvdr := &mockProvider{
+		name:          "aws",
+		defaultRegion: "us-east-1",
+		supportsFunc:  func(_ models.PricingDomain, _ string) bool { return true },
+		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
+			callNum++
+			if callNum == 1 {
+				// First item succeeds.
+				price := makeComputePrice("aws", spec.GetRegion(), "m5.xlarge", 0.192)
+				return &models.PricingResult{PublicPrices: []models.NormalizedPrice{price}}, nil
+			}
+			// Second item fails.
+			return nil, errors.New("pricing lookup failed")
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"aws": pvdr})
+
+	items := []map[string]any{
+		{
+			"provider":      "aws",
+			"domain":        "compute",
+			"resource_type": "m5.xlarge",
+			"region":        "us-east-1",
+		},
+		{
+			"provider":      "aws",
+			"domain":        "compute",
+			"resource_type": "m5.2xlarge",
+			"region":        "us-east-1",
+		},
+	}
+	resp := callEstimateBOM(t, h, items)
+
+	// Must NOT have a top-level "error" key — only partial failures.
+	if topErr, ok := resp["error"]; ok {
+		t.Fatalf("expected no top-level error for partial failure, got: %v", topErr)
+	}
+
+	// Must have exactly 1 successful line item.
+	lineItems, ok := resp["line_items"].([]any)
+	if !ok || len(lineItems) != 1 {
+		t.Fatalf("expected 1 line item from partial success, got: %v", resp["line_items"])
+	}
+
+	// Must have errors field set (not nil) with one entry.
+	errsVal := resp["errors"]
+	if errsVal == nil {
+		t.Fatal("expected errors field to be set for the failed item, got nil")
+	}
+	errs, ok := errsVal.([]any)
+	if !ok || len(errs) == 0 {
+		t.Fatalf("expected non-empty errors slice, got: %v", errsVal)
+	}
+}
+
+// --------------------------------------------------------------------------
+// Monthly cost math
+// --------------------------------------------------------------------------
+
 // TestBOMMonthlyCostMath verifies per_hour, per_gb_month, and per_month
 // unit routing produces correct monthly costs.
 func TestBOMMonthlyCostMath(t *testing.T) {
