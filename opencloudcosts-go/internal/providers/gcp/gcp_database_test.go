@@ -206,6 +206,48 @@ func TestGetCloudSQLPrice_NoMatchReturnsNil(t *testing.T) {
 	}
 }
 
+// TestGetCloudSQLPrice_PricingMathDecomposed verifies that the returned price for a
+// Cloud SQL instance equals cpu_count*cpu_rate + mem_gb*ram_rate, matching the GCP
+// SKU-level total which encodes that decomposed math.
+func TestGetCloudSQLPrice_PricingMathDecomposed(t *testing.T) {
+	// db-n1-standard-8: 8 vCPU, 30 GB RAM.
+	// cpu_rate = $0.0413/vCPU-hr, ram_rate = $0.007/GB-hr
+	// expected = 8*0.0413 + 30*0.007 = 0.3304 + 0.21 = 0.5404
+	cpuRate := 0.0413
+	ramRate := 0.007
+	vcpus := 8.0
+	memGB := 30.0
+	expectedPrice := vcpus*cpuRate + memGB*ramRate // 0.5404
+
+	// GCP encodes the total into a single SKU; nanos = round(0.5404 * 1e9)
+	totalNanos := int(expectedPrice * 1e9) // 540_400_000
+
+	skuDesc := "Cloud SQL for MySQL: Zonal - 8 vCPU + 30GB RAM in Americas"
+	skus := []map[string]any{
+		makeSKU(skuDesc, "OnDemand", "us-central1", "0", totalNanos),
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(skuResponse(skus))
+	}))
+	defer ts.Close()
+
+	p := newTestProviderDB(t, ts)
+	prices, err := p.getCloudSQLPrice(context.Background(), "db-n1-standard-8", "us-central1", "mysql", false)
+	if err != nil {
+		t.Fatalf("getCloudSQLPrice: %v", err)
+	}
+	if len(prices) != 1 {
+		t.Fatalf("expected 1 price, got %d", len(prices))
+	}
+
+	if abs(prices[0].PricePerUnit-expectedPrice) > 1e-6 {
+		t.Errorf("PricePerUnit = %.6f, want %.6f (= %g*%g + %g*%g)",
+			prices[0].PricePerUnit, expectedPrice, vcpus, cpuRate, memGB, ramRate)
+	}
+}
+
 // --------------------------------------------------------------------------
 // Memorystore tests
 // --------------------------------------------------------------------------
@@ -422,6 +464,27 @@ func TestGetGKEPrice_Autopilot(t *testing.T) {
 	}
 	if breakdown["mode"] != "autopilot" {
 		t.Errorf("breakdown mode = %v, want 'autopilot'", breakdown["mode"])
+	}
+}
+
+// TestGetGKEPrice_AutopilotNegativeVCPU verifies that autopilot mode with a negative
+// vCPU count returns an error rather than producing a negative cost.
+func TestGetGKEPrice_AutopilotNegativeVCPU(t *testing.T) {
+	skus := []map[string]any{
+		makeSKU("Autopilot Balanced Pod mCPU Requests", "OnDemand", "us-central1", "0", 64_000),
+		makeSKU("Autopilot Balanced Pod Memory Requests", "OnDemand", "us-central1", "0", 9_982_000),
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(skuResponse(skus))
+	}))
+	defer ts.Close()
+
+	p := newTestProviderDB(t, ts)
+	_, _, err := p.getGKEPrice(context.Background(), "us-central1", "autopilot", "", 0, -1.0, 4.0, 730.0)
+	if err == nil {
+		t.Error("expected error for negative vCPU, got nil")
 	}
 }
 
