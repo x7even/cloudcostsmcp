@@ -953,7 +953,9 @@ func TestSupports_Part2Domains(t *testing.T) {
 		{models.PricingDomainContainer, "", true},
 		{models.PricingDomainContainer, "gke", true},
 		{models.PricingDomainAI, "", true},
+		{models.PricingDomainAI, "vertex", true},
 		{models.PricingDomainAI, "vertex_ai", true},
+		{models.PricingDomainAI, "vertexai", true},
 		{models.PricingDomainAI, "gemini", true},
 		{models.PricingDomainAnalytics, "", true},
 		{models.PricingDomainAnalytics, "bigquery", true},
@@ -1060,5 +1062,46 @@ func TestGetPrice_AnalyticsSpec_BigQuery(t *testing.T) {
 	}
 	if result.Breakdown["service"] != "bigquery" {
 		t.Errorf("breakdown service = %v, want 'bigquery'", result.Breakdown["service"])
+	}
+}
+
+// TestGetPrice_VertexServiceAlias verifies that GetPrice with domain=ai and
+// service="vertex" (the short alias) reaches priceVertexAI, not ErrNotSupported.
+// This is a regression test for the routing bug where Supports() accepted "vertex"
+// but the GetPrice dispatch did not wire it through.
+func TestGetPrice_VertexServiceAlias(t *testing.T) {
+	// priceVertexAI falls back to hardcoded rates when the SKU fetch fails,
+	// so we can use a server that always returns 500 without breaking the test.
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer ts.Close()
+
+	p := newTestProviderDB(t, ts)
+
+	spec := &models.AiPricingSpec{
+		BasePricingSpec: models.BasePricingSpec{
+			Provider: models.CloudProviderGCP,
+			Domain:   models.PricingDomainAI,
+			Service:  "vertex",
+			Region:   "us-central1",
+			Term:     models.PricingTermOnDemand,
+		},
+		MachineType: "n1-standard-4",
+		Task:        "training",
+	}
+
+	result, err := p.GetPrice(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("GetPrice with service='vertex' returned error: %v (want nil)", err)
+	}
+	if result == nil {
+		t.Fatal("GetPrice with service='vertex' returned nil result (want non-nil)")
+	}
+	if result.Breakdown == nil {
+		t.Fatal("GetPrice with service='vertex' returned nil breakdown")
+	}
+	if result.Breakdown["service"] != "vertex_ai" {
+		t.Errorf("breakdown service = %v, want 'vertex_ai'", result.Breakdown["service"])
 	}
 }
