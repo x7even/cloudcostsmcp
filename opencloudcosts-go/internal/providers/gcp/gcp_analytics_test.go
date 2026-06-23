@@ -3,6 +3,7 @@ package gcp
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -195,5 +196,54 @@ func TestPriceNetworkArmor_FallbackOnFetchError(t *testing.T) {
 	}
 	if abs(requestPrice.PricePerUnit-0.75) > 1e-9 {
 		t.Errorf("fallback request rate = %.4f, want 0.75", requestPrice.PricePerUnit)
+	}
+}
+
+// --------------------------------------------------------------------------
+// Cloud Monitoring (Observability) tests
+// --------------------------------------------------------------------------
+
+// TestPriceObservability_TieredCostSmall verifies that small ingestion volumes
+// (below 100K MiB/month) are priced using the tier-1 rate only.
+//
+// With ingestion_mib=200.0:
+//
+//	free tier = 150 MiB
+//	billable = 200 - 150 = 50 MiB
+//	cost = 50 × $0.258 = $12.90
+func TestPriceObservability_TieredCostSmall(t *testing.T) {
+	monitoringSKU := makeGlobalSKU("Cloud Monitoring Metric Ingestion", "0", 258_000_000) // $0.258/MiB
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(skuResponse([]map[string]any{monitoringSKU}))
+	}))
+	defer ts.Close()
+
+	p := newTestProviderAnalytics(t, ts)
+	spec := &models.ObservabilityPricingSpec{
+		BasePricingSpec: models.BasePricingSpec{
+			Provider: models.CloudProviderGCP,
+			Domain:   models.PricingDomainObservability,
+			Service:  "cloud_monitoring",
+			Region:   "global",
+		},
+		IngestionMiB: 200.0,
+	}
+
+	_, breakdown, err := p.priceObservability(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("priceObservability: %v", err)
+	}
+
+	// 200 - 150 free = 50 MiB billable × $0.258 = $12.90
+	// Go formats as "$12.9000/month"
+	costStr, ok := breakdown["estimated_monthly_cost"].(string)
+	if !ok {
+		t.Fatalf("estimated_monthly_cost missing or wrong type: %v", breakdown["estimated_monthly_cost"])
+	}
+	expected := fmt.Sprintf("$%.4f/month", 50.0*0.258)
+	if costStr != expected {
+		t.Errorf("estimated_monthly_cost = %q, want %q", costStr, expected)
 	}
 }
