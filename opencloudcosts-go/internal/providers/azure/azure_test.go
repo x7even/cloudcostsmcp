@@ -1338,6 +1338,233 @@ func TestGetFrontDoorPrice_Zone2(t *testing.T) {
 	}
 }
 
+func TestGetComputePrice_SpotCheaperThanOnDemand(t *testing.T) {
+	// A single mock server returns both a Spot item and an on-demand item for
+	// the same SKU. Spot filtering (skuName contains "Spot") partitions them:
+	// the spot call keeps only the spot item; the on-demand call keeps only the
+	// non-spot item. We then assert the ordering invariant: spot < on-demand.
+	spotItem := azureItem{
+		"retailPrice":   0.038,
+		"armSkuName":    "Standard_D4s_v3",
+		"productName":   "Virtual Machines DSv3 Series",
+		"skuName":       "D4s v3 Spot",
+		"serviceName":   "Virtual Machines",
+		"serviceFamily": "Compute",
+		"meterId":       "spot-meter-invariant",
+		"meterName":     "D4s v3 Spot",
+		"armRegionName": "eastus",
+		"unitOfMeasure": "1 Hour",
+		"type":          "Consumption",
+	}
+	onDemandItem := azureItem{
+		"retailPrice":   0.152,
+		"armSkuName":    "Standard_D4s_v3",
+		"productName":   "Virtual Machines DSv3 Series",
+		"skuName":       "D4s v3",
+		"serviceName":   "Virtual Machines",
+		"serviceFamily": "Compute",
+		"meterId":       "on-demand-meter-invariant",
+		"meterName":     "D4s v3",
+		"armRegionName": "eastus",
+		"unitOfMeasure": "1 Hour",
+		"type":          "Consumption",
+	}
+	srv := mockServer(t, []azureItem{spotItem, onDemandItem})
+	defer srv.Close()
+
+	// Use separate providers so cache keys don't collide between term calls.
+	spotProvider := newTestProvider(t, srv)
+	odProvider := newTestProvider(t, srv)
+
+	spotPrices, err := spotProvider.GetComputePrice(context.Background(), "Standard_D4s_v3", "eastus", "Linux", models.PricingTermSpot)
+	if err != nil {
+		t.Fatalf("spot call unexpected error: %v", err)
+	}
+	if len(spotPrices) == 0 {
+		t.Fatal("expected at least one spot price")
+	}
+	gotSpot := spotPrices[0].PricePerUnit
+	if gotSpot != 0.038 {
+		t.Errorf("spot price: expected 0.038, got %f", gotSpot)
+	}
+
+	odPrices, err := odProvider.GetComputePrice(context.Background(), "Standard_D4s_v3", "eastus", "Linux", models.PricingTermOnDemand)
+	if err != nil {
+		t.Fatalf("on-demand call unexpected error: %v", err)
+	}
+	if len(odPrices) == 0 {
+		t.Fatal("expected at least one on-demand price")
+	}
+	gotOD := odPrices[0].PricePerUnit
+	if gotOD != 0.152 {
+		t.Errorf("on-demand price: expected 0.152, got %f", gotOD)
+	}
+
+	// Invariant: spot must be cheaper than on-demand.
+	if gotSpot >= gotOD {
+		t.Errorf("price ordering violated: spot (%f) must be < on-demand (%f)", gotSpot, gotOD)
+	}
+}
+
+func TestGetComputePrice_Reserved1YrCheaperThanOnDemand(t *testing.T) {
+	// Two providers, each backed by a single-item server, so that the mock's
+	// lack of query-param filtering does not contaminate the results.
+	//
+	// Reserved 1yr: API returns total annual cost 1016.16; GetComputePrice
+	// divides by 8760 → hourly ≈ 0.116. On-demand: 0.192/hr as-is.
+	// Invariant: reserved_1yr < on_demand.
+	reservedItem := azureItem{
+		"retailPrice":   1016.16,
+		"armSkuName":    "Standard_D4s_v3",
+		"productName":   "Virtual Machines DSv3 Series",
+		"skuName":       "D4s v3 1 Year",
+		"serviceName":   "Virtual Machines",
+		"serviceFamily": "Compute",
+		"meterId":       "reserved-1yr-invariant",
+		"meterName":     "D4s v3",
+		"armRegionName": "eastus",
+		"unitOfMeasure": "1 Year",
+		"type":          "Reservation",
+	}
+	onDemandItem := azureItem{
+		"retailPrice":   0.192,
+		"armSkuName":    "Standard_D4s_v3",
+		"productName":   "Virtual Machines DSv3 Series",
+		"skuName":       "D4s v3",
+		"serviceName":   "Virtual Machines",
+		"serviceFamily": "Compute",
+		"meterId":       "on-demand-meter-res1yr",
+		"meterName":     "D4s v3",
+		"armRegionName": "eastus",
+		"unitOfMeasure": "1 Hour",
+		"type":          "Consumption",
+	}
+
+	srvReserved := mockServer(t, []azureItem{reservedItem})
+	defer srvReserved.Close()
+	srvOD := mockServer(t, []azureItem{onDemandItem})
+	defer srvOD.Close()
+
+	reservedProvider := newTestProvider(t, srvReserved)
+	odProvider := newTestProvider(t, srvOD)
+
+	reservedPrices, err := reservedProvider.GetComputePrice(context.Background(), "Standard_D4s_v3", "eastus", "Linux", models.PricingTermReserved1Yr)
+	if err != nil {
+		t.Fatalf("reserved_1yr call unexpected error: %v", err)
+	}
+	if len(reservedPrices) == 0 {
+		t.Fatal("expected at least one reserved_1yr price")
+	}
+	gotReserved := reservedPrices[0].PricePerUnit
+	expectedReserved := 1016.16 / 8760.0
+	diff := gotReserved - expectedReserved
+	if diff < 0 {
+		diff = -diff
+	}
+	if diff > 0.001 {
+		t.Errorf("reserved_1yr price: expected ~%.6f (1016.16/8760), got %.6f", expectedReserved, gotReserved)
+	}
+
+	odPrices, err := odProvider.GetComputePrice(context.Background(), "Standard_D4s_v3", "eastus", "Linux", models.PricingTermOnDemand)
+	if err != nil {
+		t.Fatalf("on-demand call unexpected error: %v", err)
+	}
+	if len(odPrices) == 0 {
+		t.Fatal("expected at least one on-demand price")
+	}
+	gotOD := odPrices[0].PricePerUnit
+	if gotOD != 0.192 {
+		t.Errorf("on-demand price: expected 0.192, got %f", gotOD)
+	}
+
+	// Invariant: reserved_1yr must be cheaper than on-demand.
+	if gotReserved >= gotOD {
+		t.Errorf("price ordering violated: reserved_1yr (%f) must be < on_demand (%f)", gotReserved, gotOD)
+	}
+}
+
+func TestGetComputePrice_Reserved3YrCheaperThan1Yr(t *testing.T) {
+	// Two providers, each backed by a single-item server with the respective
+	// reservation term. The invariant is that committing for 3 years gives a
+	// lower effective hourly rate than committing for 1 year.
+	//
+	// 1yr: API total 1016.16 → 1016.16/8760 ≈ 0.116/hr
+	// 3yr: API total 2625.60 → 2625.60/26280 ≈ 0.09992/hr
+	reserved1YrItem := azureItem{
+		"retailPrice":   1016.16,
+		"armSkuName":    "Standard_D4s_v3",
+		"productName":   "Virtual Machines DSv3 Series",
+		"skuName":       "D4s v3 1 Year",
+		"serviceName":   "Virtual Machines",
+		"serviceFamily": "Compute",
+		"meterId":       "reserved-1yr-3yr-cmp",
+		"meterName":     "D4s v3",
+		"armRegionName": "eastus",
+		"unitOfMeasure": "1 Year",
+		"type":          "Reservation",
+	}
+	reserved3YrItem := azureItem{
+		"retailPrice":   2625.60,
+		"armSkuName":    "Standard_D4s_v3",
+		"productName":   "Virtual Machines DSv3 Series",
+		"skuName":       "D4s v3 3 Years",
+		"serviceName":   "Virtual Machines",
+		"serviceFamily": "Compute",
+		"meterId":       "reserved-3yr-3yr-cmp",
+		"meterName":     "D4s v3",
+		"armRegionName": "eastus",
+		"unitOfMeasure": "3 Years",
+		"type":          "Reservation",
+	}
+
+	srv1Yr := mockServer(t, []azureItem{reserved1YrItem})
+	defer srv1Yr.Close()
+	srv3Yr := mockServer(t, []azureItem{reserved3YrItem})
+	defer srv3Yr.Close()
+
+	provider1Yr := newTestProvider(t, srv1Yr)
+	provider3Yr := newTestProvider(t, srv3Yr)
+
+	prices1Yr, err := provider1Yr.GetComputePrice(context.Background(), "Standard_D4s_v3", "eastus", "Linux", models.PricingTermReserved1Yr)
+	if err != nil {
+		t.Fatalf("reserved_1yr call unexpected error: %v", err)
+	}
+	if len(prices1Yr) == 0 {
+		t.Fatal("expected at least one reserved_1yr price")
+	}
+	got1Yr := prices1Yr[0].PricePerUnit
+	expected1Yr := 1016.16 / 8760.0
+	diff1 := got1Yr - expected1Yr
+	if diff1 < 0 {
+		diff1 = -diff1
+	}
+	if diff1 > 0.001 {
+		t.Errorf("reserved_1yr price: expected ~%.6f, got %.6f", expected1Yr, got1Yr)
+	}
+
+	prices3Yr, err := provider3Yr.GetComputePrice(context.Background(), "Standard_D4s_v3", "eastus", "Linux", models.PricingTermReserved3Yr)
+	if err != nil {
+		t.Fatalf("reserved_3yr call unexpected error: %v", err)
+	}
+	if len(prices3Yr) == 0 {
+		t.Fatal("expected at least one reserved_3yr price")
+	}
+	got3Yr := prices3Yr[0].PricePerUnit
+	expected3Yr := 2625.60 / 26280.0
+	diff3 := got3Yr - expected3Yr
+	if diff3 < 0 {
+		diff3 = -diff3
+	}
+	if diff3 > 0.001 {
+		t.Errorf("reserved_3yr price: expected ~%.6f, got %.6f", expected3Yr, got3Yr)
+	}
+
+	// Invariant: 3yr commitment must yield a lower hourly rate than 1yr.
+	if got3Yr >= got1Yr {
+		t.Errorf("price ordering violated: reserved_3yr (%f) must be < reserved_1yr (%f)", got3Yr, got1Yr)
+	}
+}
+
 func TestMain(m *testing.M) {
 	// Ensure tests don't need real network.
 	fmt.Println("Running Azure provider tests with mock HTTP server...")

@@ -946,6 +946,59 @@ func TestGetComputePrice_CustomMachineType(t *testing.T) {
 }
 
 // --------------------------------------------------------------------------
+// Cross-term price invariant tests
+// --------------------------------------------------------------------------
+
+// TestGetComputePrice_SpotCheaperThanOnDemand verifies the price ordering
+// invariant: Preemptible (spot) must always be cheaper than OnDemand for the
+// same instance type.
+func TestGetComputePrice_SpotCheaperThanOnDemand(t *testing.T) {
+	// n2-standard-4: 4 vCPU, 16 GB RAM.
+	// OnDemand:    $0.019560/vCPU-hr, $0.002626/GB-hr
+	// Preemptible: $0.004000/vCPU-hr, $0.000540/GB-hr
+	skus := []map[string]any{
+		// OnDemand SKUs
+		makeSKU("N2 Instance Core", "OnDemand", "us-central1", "0", 19_560_000),
+		makeSKU("N2 Instance Ram", "OnDemand", "us-central1", "0", 2_626_000),
+		// Preemptible (spot) SKUs
+		makeSKU("Preemptible N2 Instance Core", "Preemptible", "us-central1", "0", 4_000_000),
+		makeSKU("Preemptible N2 Instance Ram", "Preemptible", "us-central1", "0", 540_000),
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(skuResponse(skus))
+	}))
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	ctx := context.Background()
+
+	spotPrices, err := p.GetComputePrice(ctx, "n2-standard-4", "us-central1", "Linux", models.PricingTermSpot)
+	if err != nil {
+		t.Fatalf("GetComputePrice (spot): %v", err)
+	}
+	if len(spotPrices) != 1 {
+		t.Fatalf("expected 1 spot price, got %d", len(spotPrices))
+	}
+
+	onDemandPrices, err := p.GetComputePrice(ctx, "n2-standard-4", "us-central1", "Linux", models.PricingTermOnDemand)
+	if err != nil {
+		t.Fatalf("GetComputePrice (on_demand): %v", err)
+	}
+	if len(onDemandPrices) != 1 {
+		t.Fatalf("expected 1 on_demand price, got %d", len(onDemandPrices))
+	}
+
+	spotPrice := spotPrices[0].PricePerUnit
+	onDemandPrice := onDemandPrices[0].PricePerUnit
+
+	if spotPrice >= onDemandPrice {
+		t.Errorf("price invariant violated: spot ($%.6f) must be < on_demand ($%.6f)", spotPrice, onDemandPrice)
+	}
+}
+
+// --------------------------------------------------------------------------
 // Helpers
 // --------------------------------------------------------------------------
 
