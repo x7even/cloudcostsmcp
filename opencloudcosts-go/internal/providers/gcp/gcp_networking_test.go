@@ -311,3 +311,54 @@ func TestPriceNetworkCDN_EgressRateFromSKU(t *testing.T) {
 		t.Error("expected no fallback when CDN SKUs are present")
 	}
 }
+
+// TestPriceNetworkCDN_CostMath verifies:
+//
+//	egress_gb=1000, cache_fill_gb=200
+//	→ monthly_egress_cost     = 1000 * $0.02 = $20.00
+//	→ monthly_cache_fill_cost = 200  * $0.01 = $2.00
+//	→ monthly_total                           = $22.00
+func TestPriceNetworkCDN_CostMath(t *testing.T) {
+	skus := fakeCDNSKUs()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(networkingSKUResponse(skus))
+	}))
+	defer ts.Close()
+
+	p := newNetworkingTestProvider(t, ts)
+	ctx := context.Background()
+
+	spec := &models.NetworkPricingSpec{
+		BasePricingSpec: models.BasePricingSpec{
+			Region: "us-central1",
+		},
+		EgressGB:    1000.0,
+		CacheFillGB: 200.0,
+	}
+	_, breakdown, err := p.priceNetworkCDN(ctx, spec)
+	if err != nil {
+		t.Fatalf("priceNetworkCDN: %v", err)
+	}
+
+	// Egress cost: 1000 * $0.02 = $20.00
+	wantEgress := 1000.0 * 0.02
+	got := toFloat64(breakdown["monthly_egress_cost"])
+	if abs(got-wantEgress) > 1e-6 {
+		t.Errorf("monthly_egress_cost = %.4f, want %.4f", got, wantEgress)
+	}
+
+	// Cache fill cost: 200 * $0.01 = $2.00
+	wantFill := 200.0 * 0.01
+	got = toFloat64(breakdown["monthly_cache_fill_cost"])
+	if abs(got-wantFill) > 1e-6 {
+		t.Errorf("monthly_cache_fill_cost = %.4f, want %.4f", got, wantFill)
+	}
+
+	// Total: $20.00 + $2.00 = $22.00
+	wantTotal := wantEgress + wantFill
+	got = toFloat64(breakdown["monthly_total"])
+	if abs(got-wantTotal) > 1e-6 {
+		t.Errorf("monthly_total = %.4f, want %.4f", got, wantTotal)
+	}
+}
