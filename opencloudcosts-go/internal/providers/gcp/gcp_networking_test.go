@@ -148,3 +148,56 @@ func TestPriceNetworkLB_RateFromSKU(t *testing.T) {
 		t.Error("expected fallback=false (SKUs were provided), but fallback=true was set")
 	}
 }
+
+// TestPriceNetworkLB_CostMath verifies that:
+//
+//	rule_count=3, hours=730, data_gb=100
+//	→ monthly_rule_cost = 3 * $0.008 * 730 = $17.52
+//	→ monthly_data_cost = 100 * $0.008    = $0.80
+//	→ monthly_total                        = $18.32
+func TestPriceNetworkLB_CostMath(t *testing.T) {
+	skus := fakeLBSKUs()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(networkingSKUResponse(skus))
+	}))
+	defer ts.Close()
+
+	p := newNetworkingTestProvider(t, ts)
+	ctx := context.Background()
+
+	spec := &models.NetworkPricingSpec{
+		BasePricingSpec: models.BasePricingSpec{
+			Region: "us-central1",
+		},
+		LBType:        "https",
+		RuleCount:     3,
+		DataGB:        100.0,
+		HoursPerMonth: 730.0,
+	}
+	_, breakdown, err := p.priceNetworkLB(ctx, spec)
+	if err != nil {
+		t.Fatalf("priceNetworkLB: %v", err)
+	}
+
+	// Rule cost: 3 * $0.008 * 730 = $17.52
+	wantRuleCost := 3.0 * 0.008 * 730.0
+	got := toFloat64(breakdown["monthly_rule_cost"])
+	if abs(got-wantRuleCost) > 1e-6 {
+		t.Errorf("monthly_rule_cost = %.4f, want %.4f", got, wantRuleCost)
+	}
+
+	// Data cost: 100 * $0.008 = $0.80
+	wantDataCost := 100.0 * 0.008
+	got = toFloat64(breakdown["monthly_data_cost"])
+	if abs(got-wantDataCost) > 1e-6 {
+		t.Errorf("monthly_data_cost = %.4f, want %.4f", got, wantDataCost)
+	}
+
+	// Total: $17.52 + $0.80 = $18.32
+	wantTotal := wantRuleCost + wantDataCost
+	got = toFloat64(breakdown["monthly_total"])
+	if abs(got-wantTotal) > 1e-6 {
+		t.Errorf("monthly_total = %.4f, want %.4f", got, wantTotal)
+	}
+}
