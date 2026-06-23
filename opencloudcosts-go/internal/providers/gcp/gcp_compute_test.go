@@ -902,6 +902,49 @@ func TestGetStoragePrice_PricingOrder(t *testing.T) {
 	}
 }
 
+// TestGetComputePrice_CustomMachineType verifies that a custom machine type
+// (not in the GCPInstanceSpecs table) falls back to naming-convention parsing
+// and returns a valid hourly cost.
+func TestGetComputePrice_CustomMachineType(t *testing.T) {
+	// n2-standard-200 is not in the spec table; ParseInstanceType should fall
+	// back to naming convention: 200 vCPU, 200*4.0 = 800 GB RAM.
+	// Pricing: 200*0.031611 + 800*0.004237 = 6.3222 + 3.3896 = 9.7118
+	skus := []map[string]any{
+		makeSKU("N2 Instance Core", "OnDemand", "us-central1", "0", 31_611_000),
+		makeSKU("N2 Instance Ram", "OnDemand", "us-central1", "0", 4_237_000),
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(skuResponse(skus))
+	}))
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	prices, err := p.GetComputePrice(context.Background(), "n2-standard-200", "us-central1", "Linux", models.PricingTermOnDemand)
+	if err != nil {
+		t.Fatalf("GetComputePrice (custom type): %v", err)
+	}
+	if len(prices) != 1 {
+		t.Fatalf("expected 1 price for custom machine type, got %d", len(prices))
+	}
+
+	// Price must be positive.
+	if prices[0].PricePerUnit <= 0 {
+		t.Errorf("custom machine type price = %v, want > 0", prices[0].PricePerUnit)
+	}
+
+	// 200 vCPU * $0.031611 + 800 GB * $0.004237 = $9.7118
+	want := 200*0.031611 + 800*0.004237
+	if abs(prices[0].PricePerUnit-want) > 1e-4 {
+		t.Errorf("custom machine type PricePerUnit = %.4f, want %.4f", prices[0].PricePerUnit, want)
+	}
+	// Verify the attributes reflect the custom type.
+	if prices[0].Attributes["instanceType"] != "n2-standard-200" {
+		t.Errorf("instanceType attribute = %q, want n2-standard-200", prices[0].Attributes["instanceType"])
+	}
+}
+
 // --------------------------------------------------------------------------
 // Helpers
 // --------------------------------------------------------------------------
