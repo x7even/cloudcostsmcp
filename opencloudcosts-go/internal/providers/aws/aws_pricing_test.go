@@ -1556,6 +1556,140 @@ func TestGetComputePrice_Reserved3YrCheaperThan1Yr(t *testing.T) {
 	}
 }
 
+// TestGetComputePrice_ReservedUpfrontOptions verifies the upfront payment
+// ordering invariant: for the same lease length, more upfront commitment
+// results in a cheaper effective hourly rate.
+//
+// For 1yr reserved instances: all-upfront < partial-upfront < no-upfront.
+//
+// The partial-upfront and all-upfront prices are normalised from a Quantity
+// (upfront) dimension divided by (8760 * years). The fixture values are:
+//   - no-upfront:      $0.114/hr   (hourly only)
+//   - partial-upfront: $0.100/hr   ($0.050/hr + $438 upfront / 8760 = $0.050)
+//   - all-upfront:     $0.089/hr   ($0.000/hr + $779.64 upfront / 8760 ≈ $0.089)
+func TestGetComputePrice_ReservedUpfrontOptions(t *testing.T) {
+	const bulkFixture = `{
+  "formatVersion": "aws_v1",
+  "products": {
+    "INVSKU3": {
+      "sku": "INVSKU3",
+      "productFamily": "Compute Instance",
+      "attributes": {
+        "instanceType":    "m5.xlarge",
+        "operatingSystem": "Linux",
+        "tenancy":         "Shared",
+        "preInstalledSw":  "NA",
+        "capacitystatus":  "Used",
+        "location":        "US East (N. Virginia)"
+      }
+    }
+  },
+  "terms": {
+    "OnDemand": {},
+    "Reserved": {
+      "INVSKU3.NOUPFRONT": {
+        "priceDimensions": {
+          "INVSKU3.NOUPFRONT.DIM": {
+            "unit": "Hrs",
+            "pricePerUnit": {"USD": "0.1140000000"},
+            "description": "$0.114 per Reserved 1yr No-Upfront m5.xlarge Instance Hour"
+          }
+        },
+        "termAttributes": {
+          "LeaseContractLength": "1yr",
+          "PurchaseOption":      "No Upfront"
+        }
+      },
+      "INVSKU3.PARTIAL": {
+        "priceDimensions": {
+          "INVSKU3.PARTIAL.HRS": {
+            "unit": "Hrs",
+            "pricePerUnit": {"USD": "0.0500000000"},
+            "description": "$0.050 per Reserved 1yr Partial-Upfront m5.xlarge Instance Hour"
+          },
+          "INVSKU3.PARTIAL.QTY": {
+            "unit": "Quantity",
+            "pricePerUnit": {"USD": "438.0000000000"},
+            "description": "Upfront Fee"
+          }
+        },
+        "termAttributes": {
+          "LeaseContractLength": "1yr",
+          "PurchaseOption":      "Partial Upfront"
+        }
+      },
+      "INVSKU3.ALL": {
+        "priceDimensions": {
+          "INVSKU3.ALL.HRS": {
+            "unit": "Hrs",
+            "pricePerUnit": {"USD": "0.0000000000"},
+            "description": "$0.000 per Reserved 1yr All-Upfront m5.xlarge Instance Hour"
+          },
+          "INVSKU3.ALL.QTY": {
+            "unit": "Quantity",
+            "pricePerUnit": {"USD": "779.6400000000"},
+            "description": "Upfront Fee"
+          }
+        },
+        "termAttributes": {
+          "LeaseContractLength": "1yr",
+          "PurchaseOption":      "All Upfront"
+        }
+      }
+    }
+  }
+}`
+
+	newBulkServer(t, bulkFixture)
+	p := newBulkProvider(t)
+	ctx := context.Background()
+
+	noPrices, err := p.GetComputePrice(ctx, "m5.xlarge", "us-east-1", "Linux", models.PricingTermReserved1Yr)
+	if err != nil {
+		t.Fatalf("GetComputePrice(reserved_1yr no-upfront): %v", err)
+	}
+	if len(noPrices) == 0 {
+		t.Fatal("GetComputePrice(reserved_1yr): expected at least one price, got none")
+	}
+
+	partialPrices, err := p.GetComputePrice(ctx, "m5.xlarge", "us-east-1", "Linux", models.PricingTermReserved1YrPartial)
+	if err != nil {
+		t.Fatalf("GetComputePrice(reserved_1yr_partial): %v", err)
+	}
+	if len(partialPrices) == 0 {
+		t.Fatal("GetComputePrice(reserved_1yr_partial): expected at least one price, got none")
+	}
+
+	allPrices, err := p.GetComputePrice(ctx, "m5.xlarge", "us-east-1", "Linux", models.PricingTermReserved1YrAll)
+	if err != nil {
+		t.Fatalf("GetComputePrice(reserved_1yr_all): %v", err)
+	}
+	if len(allPrices) == 0 {
+		t.Fatal("GetComputePrice(reserved_1yr_all): expected at least one price, got none")
+	}
+
+	noPrice := noPrices[0].PricePerUnit
+	partialPrice := partialPrices[0].PricePerUnit
+	allPrice := allPrices[0].PricePerUnit
+
+	// Verify absolute values are in the expected ballpark.
+	const tolerance = 1e-4 // wider tolerance for upfront normalisation
+	if noPrice < 0.114-tolerance || noPrice > 0.114+tolerance {
+		t.Errorf("no-upfront price = %v, want ~0.114", noPrice)
+	}
+	if partialPrice < 0.100-tolerance || partialPrice > 0.100+tolerance {
+		t.Errorf("partial-upfront price = %v, want ~0.100 (0.050 + 438/8760)", partialPrice)
+	}
+
+	// Core invariant: all-upfront < partial-upfront < no-upfront.
+	if allPrice >= partialPrice {
+		t.Errorf("invariant violation: all-upfront (%v) must be cheaper than partial-upfront (%v)", allPrice, partialPrice)
+	}
+	if partialPrice >= noPrice {
+		t.Errorf("invariant violation: partial-upfront (%v) must be cheaper than no-upfront (%v)", partialPrice, noPrice)
+	}
+}
+
 // --------------------------------------------------------------------------
 // TestPricingResult_AuthGating (provider-contract)
 // --------------------------------------------------------------------------
