@@ -246,3 +246,68 @@ func TestPriceNetworkLB_Fallback(t *testing.T) {
 		t.Errorf("fallback rule rate = %.6f, want 0.008000", ruleRate)
 	}
 }
+
+// --------------------------------------------------------------------------
+// Cloud CDN helpers and tests
+// --------------------------------------------------------------------------
+
+// fakeCDNSKUs returns SKUs matching the GCP Cloud CDN catalog.
+// CDN egress: $0.02/GB, CDN fill: $0.01/GB.
+func fakeCDNSKUs() []map[string]any {
+	return []map[string]any{
+		makeSKUMultiRegion(
+			"Network CDN Cache Egress from North America",
+			[]string{"us-central1", "global"},
+			"0", 20_000_000, // $0.02
+		),
+		makeSKUMultiRegion(
+			"Network CDN Cache Fill from North America to North America",
+			[]string{"us-central1", "global"},
+			"0", 10_000_000, // $0.01
+		),
+	}
+}
+
+// TestPriceNetworkCDN_EgressRateFromSKU verifies that the CDN egress rate is
+// extracted from the GCP SKU (Network CDN Cache Egress → $0.02/GB).
+func TestPriceNetworkCDN_EgressRateFromSKU(t *testing.T) {
+	skus := fakeCDNSKUs()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(networkingSKUResponse(skus))
+	}))
+	defer ts.Close()
+
+	p := newNetworkingTestProvider(t, ts)
+	ctx := context.Background()
+
+	spec := &models.NetworkPricingSpec{
+		BasePricingSpec: models.BasePricingSpec{
+			Region: "us-central1",
+		},
+	}
+	prices, breakdown, err := p.priceNetworkCDN(ctx, spec)
+	if err != nil {
+		t.Fatalf("priceNetworkCDN: %v", err)
+	}
+	if len(prices) == 0 {
+		t.Fatal("expected at least one price")
+	}
+
+	// Find egress price (SKUID ends with ":egress").
+	var egressRate float64
+	for _, pr := range prices {
+		if len(pr.SKUID) >= 7 && pr.SKUID[len(pr.SKUID)-7:] == ":egress" {
+			egressRate = pr.PricePerUnit
+			break
+		}
+	}
+	if abs(egressRate-0.02) > 1e-9 {
+		t.Errorf("CDN egress rate = %.6f, want 0.020000", egressRate)
+	}
+
+	// No fallback expected.
+	if fb, ok := breakdown["fallback"]; ok && fb == true {
+		t.Error("expected no fallback when CDN SKUs are present")
+	}
+}
