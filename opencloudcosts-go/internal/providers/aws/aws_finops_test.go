@@ -3,8 +3,17 @@ package aws
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/costexplorer"
+	awsec2 "github.com/aws/aws-sdk-go-v2/service/ec2"
+	"github.com/aws/aws-sdk-go-v2/service/savingsplans"
 
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/models"
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/providers"
@@ -542,3 +551,110 @@ func TestLastFullMonthBoundary(t *testing.T) {
 		t.Errorf("start = %s, want 2025-12-01", start.Format("2006-01-02"))
 	}
 }
+
+// --------------------------------------------------------------------------
+// newTestAWSConfig helper (used by httptest-based tests below)
+// --------------------------------------------------------------------------
+
+// newTestAWSConfig returns a minimal aws.Config pointing at the given base URL
+// with static credentials so the SDK does not attempt to look up real credentials.
+func newTestAWSConfig(baseURL string) aws.Config {
+	creds := credentials.NewStaticCredentialsProvider("AKID", "SECRET", "TOKEN")
+	return aws.Config{
+		Region:           "us-east-1",
+		Credentials:      creds,
+		BaseEndpoint:     aws.String(baseURL),
+		RetryMaxAttempts: 1,
+	}
+}
+
+// --------------------------------------------------------------------------
+// TestGetDiscountSummary_EmptyLists
+// --------------------------------------------------------------------------
+
+// TestGetDiscountSummary_EmptyLists verifies that GetDiscountSummary returns
+// a valid response (not error) with sp_count=0 and ri_count=0 when Savings
+// Plans and Reserved Instances APIs both return empty lists.
+//
+// Corresponds to Python test_get_discount_summary_empty in test_phase2.py.
+func TestGetDiscountSummary_EmptyLists(t *testing.T) {
+	// Mock Savings Plans server (REST/JSON, POST /DescribeSavingsPlans).
+	spServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"savingsPlans":[]}`))
+	}))
+	defer spServer.Close()
+
+	// Mock Cost Explorer server (AWS JSON 1.1, distinguished by X-Amz-Target header).
+	ceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-amz-json-1.1")
+		w.WriteHeader(http.StatusOK)
+		target := r.Header.Get("X-Amz-Target")
+		switch {
+		case strings.Contains(target, "GetSavingsPlansUtilization"):
+			// Total=null: ceUtilisation skips the savings_plans field (guarded by != nil).
+			_, _ = w.Write([]byte(`{"Total":null}`))
+		case strings.Contains(target, "GetReservationUtilization"):
+			_, _ = w.Write([]byte(`{"Total":null}`))
+		default:
+			_, _ = w.Write([]byte(`{}`))
+		}
+	}))
+	defer ceServer.Close()
+
+	// Mock EC2 server (EC2 Query/XML) — returns empty reservedInstancesSet.
+	ec2Server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/xml")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`<DescribeReservedInstancesResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/"><requestId>test</requestId><reservedInstancesSet/></DescribeReservedInstancesResponse>`))
+	}))
+	defer ec2Server.Close()
+
+	spCfg := newTestAWSConfig(spServer.URL)
+	spClient := savingsplans.NewFromConfig(spCfg)
+
+	ceCfg := newTestAWSConfig(ceServer.URL)
+	ceClient := costexplorer.NewFromConfig(ceCfg)
+
+	ec2Cfg := newTestAWSConfig(ec2Server.URL)
+	ec2Client := awsec2.NewFromConfig(ec2Cfg)
+
+	p := &Provider{
+		ceClient:  ceClient,
+		spClient:  spClient,
+		ec2Client: ec2Client,
+	}
+
+	summary, err := p.GetDiscountSummary(context.Background())
+	if err != nil {
+		t.Fatalf("GetDiscountSummary returned unexpected error: %v", err)
+	}
+	if summary == nil {
+		t.Fatal("GetDiscountSummary returned nil summary")
+	}
+
+	spCount, ok := summary["sp_count"].(int)
+	if !ok {
+		t.Fatalf("sp_count is not int, got %T (%v)", summary["sp_count"], summary["sp_count"])
+	}
+	if spCount != 0 {
+		t.Errorf("sp_count = %d, want 0", spCount)
+	}
+
+	riCount, ok := summary["ri_count"].(int)
+	if !ok {
+		t.Fatalf("ri_count is not int, got %T (%v)", summary["ri_count"], summary["ri_count"])
+	}
+	if riCount != 0 {
+		t.Errorf("ri_count = %d, want 0", riCount)
+	}
+
+	if _, ok := summary["savings_plans"]; !ok {
+		t.Error("summary missing 'savings_plans' key")
+	}
+	if _, ok := summary["reserved_instances"]; !ok {
+		t.Error("summary missing 'reserved_instances' key")
+	}
+}
+
