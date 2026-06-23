@@ -588,16 +588,8 @@ func (p *Provider) dispatchAIPrice(ctx context.Context, s *models.AiPricingSpec,
 		}
 		return buildResult(prices, breakdown), nil
 
-	default: // vertex_ai, training, prediction, ""
-		hours := 730.0
-		if s.TrainingHours != nil {
-			hours = *s.TrainingHours
-		}
-		task := s.Task
-		if task == "" {
-			task = "training"
-		}
-		prices, breakdown, err := p.getVertexPrice(ctx, s.MachineType, region, hours, task)
+	default: // vertex, vertex_ai, training, prediction, ""
+		prices, breakdown, err := p.priceVertexAI(ctx, s)
 		if err != nil {
 			return nil, err
 		}

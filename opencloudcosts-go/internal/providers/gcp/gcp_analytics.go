@@ -1,9 +1,11 @@
-// gcp_analytics.go — GCP analytics and observability pricing helpers.
+// gcp_analytics.go — GCP analytics, observability, and Vertex AI pricing helpers.
 //
 // Covered domains:
 //   - analytics/bigquery    : BigQuery on-demand analysis, active storage,
 //     long-term storage, streaming inserts
 //   - observability/cloud_monitoring: Custom metric ingestion (tiered MiB pricing)
+//   - ai/vertex             : Vertex AI custom training / prediction pricing with
+//     hardcoded fallback rates when the billing catalog is unavailable
 //
 // Note: BigQuery SKU fetching and index building is implemented in gcp_ai.go
 // (buildBigQueryIndex / getBigQueryPrice). This file provides the _price_analytics
@@ -19,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/models"
+	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/utils"
 )
 
 // GCP service ID for Cloud Monitoring.
@@ -246,5 +249,253 @@ func (p *Provider) priceObservability(
 	if fallback {
 		breakdown["fallback"] = true
 	}
+	return annotateFresh(prices), breakdown, nil
+}
+
+// --------------------------------------------------------------------------
+// Vertex AI training / prediction pricing
+// --------------------------------------------------------------------------
+
+// Fallback Vertex AI rates used when the billing catalog is unavailable.
+const (
+	vertexFallbackVCPURate = 0.049500 // USD per vCPU-hour (custom training)
+	vertexFallbackRAMRate  = 0.006655 // USD per GiB-hour (custom training)
+	vertexFallbackGPURate  = 2.933    // USD per A100 GPU-hour
+)
+
+// gpuCountForMachineType returns the number of GPUs for a given machine type.
+// Currently only a2-highgpu-* variants carry GPUs.
+func gpuCountForMachineType(machineType string) int {
+	mt := strings.ToLower(machineType)
+	if !strings.HasPrefix(mt, "a2-") {
+		return 0
+	}
+	// a2-highgpu-Ng => N GPUs (e.g. "1g" => 1, "2g" => 2, "4g" => 4, "8g" => 8)
+	parts := strings.Split(mt, "-")
+	for _, part := range parts {
+		if strings.HasSuffix(part, "g") && len(part) > 1 {
+			var n int
+			fmt.Sscanf(part, "%dg", &n)
+			if n > 0 {
+				return n
+			}
+		}
+	}
+	return 1 // a2 without explicit count defaults to 1
+}
+
+// priceVertexAI returns Vertex AI custom training / prediction pricing.
+//
+// It fetches live SKU rates from the billing catalog (service ID vertexServiceID).
+// On fetch error or no matching SKUs, it falls back to hardcoded rates and sets
+// breakdown["fallback"] = true.
+//
+// Pricing formula:
+//
+//	total_per_hour = vcpus * vcpuRate + memGB * ramRate + gpuCount * gpuRate
+//	total_cost     = total_per_hour * hours
+func (p *Provider) priceVertexAI(
+	ctx context.Context,
+	spec *models.AiPricingSpec,
+) ([]models.NormalizedPrice, map[string]any, error) {
+	region := spec.Region
+	if region == "" {
+		region = p.DefaultRegion()
+	}
+
+	machineType := spec.MachineType
+	if machineType == "" {
+		machineType = "n1-standard-4"
+	}
+
+	task := strings.ToLower(spec.Task)
+	if task == "" {
+		task = "training"
+	}
+
+	hours := 730.0
+	if spec.TrainingHours != nil {
+		hours = *spec.TrainingHours
+	}
+
+	// Resolve machine shape.
+	vcpus, memGB, ok := utils.ParseInstanceType(machineType)
+	if !ok {
+		// Unknown type — use spec-level defaults and carry on.
+		vcpus = 4
+		memGB = 15.0
+	}
+	gpuCount := gpuCountForMachineType(machineType)
+	family := utils.GetMachineFamily(machineType)
+
+	// Try live catalog rates.
+	vcpuRate := vertexFallbackVCPURate
+	ramRate := vertexFallbackRAMRate
+	gpuRate := vertexFallbackGPURate
+	fallback := false
+
+	skus, err := p.fetchSKUs(ctx, vertexServiceID)
+	if err != nil {
+		slog.Warn("gcp vertex_ai: fetch SKUs failed; using fallback rates", "err", err)
+		fallback = true
+	} else {
+		taskKeyword := "prediction"
+		if strings.Contains(task, "train") {
+			taskKeyword = "training"
+		}
+
+		var foundVCPU, foundRAM bool
+		for _, sku := range skus {
+			regions, _ := sku["serviceRegions"].([]any)
+			if !skuMatchesRegion(regions, region) {
+				continue
+			}
+			desc, _ := sku["description"].(string)
+			dl := strings.ToLower(desc)
+
+			if !strings.Contains(dl, family) {
+				continue
+			}
+			if !strings.Contains(dl, taskKeyword) {
+				continue
+			}
+
+			price := skuPrice(sku)
+			if price <= 0 {
+				continue
+			}
+
+			isVCPU := strings.Contains(dl, "vcpu") || strings.Contains(dl, "core")
+			isRAM := strings.Contains(dl, "ram") || strings.Contains(dl, "memory")
+
+			if isVCPU && !foundVCPU {
+				vcpuRate = price
+				foundVCPU = true
+			} else if isRAM && !foundRAM {
+				ramRate = price
+				foundRAM = true
+			}
+			if foundVCPU && foundRAM {
+				break
+			}
+		}
+
+		if !foundVCPU || !foundRAM {
+			slog.Warn("gcp vertex_ai: no SKU match; using fallback rates",
+				"machine_type", machineType, "family", family, "task", taskKeyword, "region", region)
+			fallback = true
+			// Reset to fallback values.
+			vcpuRate = vertexFallbackVCPURate
+			ramRate = vertexFallbackRAMRate
+		}
+	}
+
+	hourlyRate := float64(vcpus)*vcpuRate + memGB*ramRate + float64(gpuCount)*gpuRate
+	totalCost := hourlyRate * hours
+
+	breakdown := map[string]any{
+		"provider":            "gcp",
+		"service":             "vertex_ai",
+		"machine_type":        machineType,
+		"family":              family,
+		"task":                task,
+		"region":              region,
+		"hours":               hours,
+		"vcpus":               vcpus,
+		"memory_gb":           memGB,
+		"gpu_count":           gpuCount,
+		"vcpu_rate_per_hr":    fmt.Sprintf("$%.6f", vcpuRate),
+		"ram_rate_per_gib_hr": fmt.Sprintf("$%.6f", ramRate),
+		"gpu_rate_per_hr":     fmt.Sprintf("$%.6f", gpuRate),
+		"hourly_rate":         fmt.Sprintf("$%.6f", hourlyRate),
+		"estimated_total":     fmt.Sprintf("$%.4f", totalCost),
+	}
+	if fallback {
+		breakdown["fallback"] = true
+		breakdown["fallback_note"] = "Using hardcoded fallback rates; live SKU catalog unavailable or returned no match."
+	}
+
+	prices := []models.NormalizedPrice{
+		{
+			Provider:      models.CloudProviderGCP,
+			Service:       "ai",
+			SKUID:         fmt.Sprintf("gcp:vertex:vcpu:%s:%s:%s", family, task, region),
+			ProductFamily: "Vertex AI",
+			Description:   fmt.Sprintf("Vertex AI %s %s vCPU in %s", family, task, region),
+			Region:        region,
+			Attributes: map[string]string{
+				"machine_type": machineType,
+				"family":       family,
+				"task":         task,
+				"resource":     "vcpu",
+			},
+			PricingTerm:  models.PricingTermOnDemand,
+			PricePerUnit: vcpuRate,
+			Unit:         models.PriceUnitPerHour,
+			Currency:     "USD",
+		},
+		{
+			Provider:      models.CloudProviderGCP,
+			Service:       "ai",
+			SKUID:         fmt.Sprintf("gcp:vertex:ram:%s:%s:%s", family, task, region),
+			ProductFamily: "Vertex AI",
+			Description:   fmt.Sprintf("Vertex AI %s %s RAM in %s", family, task, region),
+			Region:        region,
+			Attributes: map[string]string{
+				"machine_type": machineType,
+				"family":       family,
+				"task":         task,
+				"resource":     "ram",
+			},
+			PricingTerm:  models.PricingTermOnDemand,
+			PricePerUnit: ramRate,
+			Unit:         models.PriceUnitPerHour,
+			Currency:     "USD",
+		},
+	}
+	if gpuCount > 0 {
+		prices = append(prices, models.NormalizedPrice{
+			Provider:      models.CloudProviderGCP,
+			Service:       "ai",
+			SKUID:         fmt.Sprintf("gcp:vertex:gpu:%s:%s:%s", family, task, region),
+			ProductFamily: "Vertex AI",
+			Description:   fmt.Sprintf("Vertex AI %s %s A100 GPU in %s", family, task, region),
+			Region:        region,
+			Attributes: map[string]string{
+				"machine_type": machineType,
+				"family":       family,
+				"task":         task,
+				"resource":     "gpu",
+				"gpu_count":    fmt.Sprintf("%d", gpuCount),
+			},
+			PricingTerm:  models.PricingTermOnDemand,
+			PricePerUnit: gpuRate,
+			Unit:         models.PriceUnitPerHour,
+			Currency:     "USD",
+		})
+	}
+
+	// Prepend a workload_total composite NormalizedPrice so estimate_bom can
+	// consume the total cost directly (mirrors the analytics priceAnalytics pattern).
+	composite := models.NormalizedPrice{
+		Provider:      models.CloudProviderGCP,
+		Service:       "ai",
+		SKUID:         fmt.Sprintf("gcp:vertex:workload_total:%s:%s:%s", family, task, region),
+		ProductFamily: "Vertex AI",
+		Description: fmt.Sprintf("Vertex AI %s %s workload: %.0f hrs x $%.6f/hr = $%.4f",
+			machineType, task, hours, hourlyRate, totalCost),
+		Region: region,
+		Attributes: map[string]string{
+			"machine_type":      machineType,
+			"billing_dimension": "workload_total",
+			"task":              task,
+		},
+		PricingTerm:  models.PricingTermOnDemand,
+		PricePerUnit: totalCost,
+		Unit:         models.PriceUnitPerUnit,
+		Currency:     "USD",
+	}
+	prices = append([]models.NormalizedPrice{composite}, prices...)
+
 	return annotateFresh(prices), breakdown, nil
 }

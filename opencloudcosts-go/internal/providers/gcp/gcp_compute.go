@@ -73,7 +73,7 @@ func (p *Provider) Supports(domain models.PricingDomain, service string) bool {
 		}
 	case models.PricingDomainAI:
 		switch service {
-		case "", "vertex_ai", "gemini":
+		case "", "vertex", "vertex_ai", "vertexai", "gemini":
 			return true
 		}
 	case models.PricingDomainAnalytics:
