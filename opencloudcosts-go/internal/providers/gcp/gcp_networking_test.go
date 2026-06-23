@@ -201,3 +201,48 @@ func TestPriceNetworkLB_CostMath(t *testing.T) {
 		t.Errorf("monthly_total = %.4f, want %.4f", got, wantTotal)
 	}
 }
+
+// TestPriceNetworkLB_Fallback verifies that when no matching SKUs are found,
+// the LB price uses the hardcoded fallback rate ($0.008/hr) and sets fallback=true.
+func TestPriceNetworkLB_Fallback(t *testing.T) {
+	// Return an empty SKU list → no matching networking SKUs.
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(networkingSKUResponse(nil))
+	}))
+	defer ts.Close()
+
+	p := newNetworkingTestProvider(t, ts)
+	ctx := context.Background()
+
+	spec := &models.NetworkPricingSpec{
+		BasePricingSpec: models.BasePricingSpec{
+			Region: "us-central1",
+		},
+		LBType:        "https",
+		RuleCount:     1,
+		HoursPerMonth: 730,
+	}
+	prices, breakdown, err := p.priceNetworkLB(ctx, spec)
+	if err != nil {
+		t.Fatalf("priceNetworkLB (fallback): %v", err)
+	}
+
+	// Fallback must be true.
+	fb, ok := breakdown["fallback"]
+	if !ok || fb != true {
+		t.Errorf("expected fallback=true, got %v (ok=%v)", fb, ok)
+	}
+
+	// Fallback rule rate must be $0.008/hr.
+	var ruleRate float64
+	for _, pr := range prices {
+		if pr.Attributes["component"] == "forwarding_rule" {
+			ruleRate = pr.PricePerUnit
+			break
+		}
+	}
+	if abs(ruleRate-0.008) > 1e-9 {
+		t.Errorf("fallback rule rate = %.6f, want 0.008000", ruleRate)
+	}
+}
