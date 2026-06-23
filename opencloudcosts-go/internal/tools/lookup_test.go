@@ -876,10 +876,8 @@ func TestSearchPricing_ReturnsResults(t *testing.T) {
 	}
 }
 
-// TestSearchPricing_NoResultsHint verifies that empty results still return the
-// normal structured response (matching Python's search_pricing behaviour):
-// {provider, query, region, count, results, tip}. Python does NOT emit a
-// special "no_results" sentinel; it returns count=0 and results=[].
+// TestSearchPricing_NoResultsHint verifies that empty search results return a
+// structured no_results response with a tip mentioning list_services.
 func TestSearchPricing_NoResultsHint(t *testing.T) {
 	pvdr := &mockProvider{
 		name:          "aws",
@@ -894,34 +892,24 @@ func TestSearchPricing_NoResultsHint(t *testing.T) {
 		Query:    "nonexistent-instance-xyz",
 	})
 
-	// No "result" key — Python returns the normal structured response.
-	if resp["result"] != nil {
-		t.Errorf("result: expected nil, got %v", resp["result"])
-	}
-	if resp["count"] != float64(0) {
-		t.Errorf("count: got %v, want 0", resp["count"])
-	}
-	results, ok := resp["results"].([]any)
-	if !ok {
-		t.Errorf("results: expected []any, got %T %v", resp["results"], resp["results"])
-	} else if len(results) != 0 {
-		t.Errorf("results: expected empty slice, got %d items", len(results))
-	}
-	// With no region specified, region should be "all" (Python: region or "all").
-	if resp["region"] != "all" {
-		t.Errorf("region: got %v, want all", resp["region"])
+	if resp["result"] != "no_results" {
+		t.Errorf("result: got %v, want no_results", resp["result"])
 	}
 	tip, _ := resp["tip"].(string)
-	if !contains(tip, "get_price") {
-		t.Errorf("tip should mention get_price, got: %q", tip)
+	if !contains(tip, "list_services") {
+		t.Errorf("tip should mention list_services, got: %q", tip)
 	}
 	if resp["query"] != "nonexistent-instance-xyz" {
 		t.Errorf("query: got %v, want nonexistent-instance-xyz", resp["query"])
 	}
+	// With no region specified, region should be "all".
+	if resp["region"] != "all" {
+		t.Errorf("region: got %v, want all", resp["region"])
+	}
 }
 
-// TestSearchPricing_NoResultsWithDomain verifies that even with a domain filter
-// and zero results, Python returns the normal structured response — not a hint.
+// TestSearchPricing_NoResultsWithDomain verifies that when a domain is specified
+// and search returns empty results, the tip mentions the domain name.
 func TestSearchPricing_NoResultsWithDomain(t *testing.T) {
 	pvdr := &mockProvider{
 		name:          "aws",
@@ -938,21 +926,19 @@ func TestSearchPricing_NoResultsWithDomain(t *testing.T) {
 		Region:   "us-east-1",
 	})
 
-	// Normal structured response even on empty — no "result" sentinel.
-	if resp["result"] != nil {
-		t.Errorf("result: expected nil, got %v", resp["result"])
-	}
-	if resp["count"] != float64(0) {
-		t.Errorf("count: got %v, want 0", resp["count"])
+	if resp["result"] != "no_results" {
+		t.Errorf("result: got %v, want no_results", resp["result"])
 	}
 	// region was specified, so it should be echoed back.
 	if resp["region"] != "us-east-1" {
 		t.Errorf("region: got %v, want us-east-1", resp["region"])
 	}
-	// tip mentions get_price and describe_catalog.
 	tip, _ := resp["tip"].(string)
-	if !contains(tip, "get_price") {
-		t.Errorf("tip should mention get_price, got: %q", tip)
+	if !contains(tip, "cloudwatch") {
+		t.Errorf("tip should mention domain 'cloudwatch', got: %q", tip)
+	}
+	if !contains(tip, "list_services") {
+		t.Errorf("tip should mention list_services, got: %q", tip)
 	}
 }
 
@@ -1422,6 +1408,68 @@ func TestFillDomain_AzureResourceTypeInference(t *testing.T) {
 	})
 	if capturedDomain != models.PricingDomainCompute {
 		t.Errorf("domain: got %q, want compute", capturedDomain)
+	}
+}
+
+// TestGetPrice_EmptyPublicPrices_NoResultsHint verifies that when GetPrice returns
+// nil (provider found no pricing), the tool emits a no_results response with a
+// tip pointing to search_pricing and list_services.
+func TestGetPrice_EmptyPublicPrices_NoResultsHint(t *testing.T) {
+	pvdr := &mockProvider{
+		name:          "aws",
+		defaultRegion: "us-east-1",
+		getPriceFunc: func(_ context.Context, _ models.PricingSpec) (*models.PricingResult, error) {
+			return nil, nil // provider returned nothing
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"aws": pvdr})
+	resp := callGetPrice(t, h, map[string]any{
+		"provider":      "aws",
+		"domain":        "compute",
+		"resource_type": "m5.xlarge",
+		"region":        "us-east-1",
+	})
+
+	if resp["result"] != "no_results" {
+		t.Errorf("result: got %v, want no_results", resp["result"])
+	}
+	tip, _ := resp["tip"].(string)
+	if !contains(tip, "search_pricing") {
+		t.Errorf("tip should mention search_pricing, got: %q", tip)
+	}
+	if !contains(tip, "list_services") {
+		t.Errorf("tip should mention list_services, got: %q", tip)
+	}
+	if resp["provider"] != "aws" {
+		t.Errorf("provider: got %v, want aws", resp["provider"])
+	}
+}
+
+// TestSearchPricing_NonEmptyUnchanged verifies that non-empty search results
+// return the normal {count, results, tip} structure without a no_results sentinel.
+func TestSearchPricing_NonEmptyUnchanged(t *testing.T) {
+	pvdr := &mockProvider{
+		name:          "aws",
+		defaultRegion: "us-east-1",
+		searchFunc: func(_ context.Context, _, _ string, _ int) ([]models.NormalizedPrice, error) {
+			return []models.NormalizedPrice{makePrice("us-east-1", 0.192)}, nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"aws": pvdr})
+	resp := callSearchPricing(t, h, tools.SearchPricingInput{
+		Provider: "aws",
+		Query:    "m5",
+	})
+
+	if resp["result"] == "no_results" {
+		t.Errorf("non-empty results should not produce no_results sentinel")
+	}
+	if resp["count"] != float64(1) {
+		t.Errorf("count: got %v, want 1", resp["count"])
+	}
+	results, ok := resp["results"].([]any)
+	if !ok || len(results) != 1 {
+		t.Errorf("results: expected 1 item, got %v", resp["results"])
 	}
 }
 
