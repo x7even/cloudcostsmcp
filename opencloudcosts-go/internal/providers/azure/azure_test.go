@@ -1219,6 +1219,30 @@ func TestGetSQLPrice_CacheHit(t *testing.T) {
 	}
 }
 
+func TestGetEgressPrice_SwedenCentral_IsZone1(t *testing.T) {
+	// Sweden Central is not in the azureEgressZone map, so it must default to zone1.
+	// The egress price for swedencentral must use zone1 rate ($0.087/GB fallback).
+	srv := mockServer(t, nil)
+	defer srv.Close()
+	p := newTestProvider(t, srv)
+
+	prices, err := p.GetEgressPrice(context.Background(), "swedencentral", "", 100.0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(prices) == 0 {
+		t.Fatal("expected egress price for swedencentral")
+	}
+	zone := prices[0].Attributes["zone"]
+	if zone != "zone1" {
+		t.Errorf("Sweden Central must map to zone1 (not zone2), got %s", zone)
+	}
+	// Static fallback rate for zone1 is $0.087/GB
+	if prices[0].PricePerUnit != 0.087 {
+		t.Errorf("Sweden Central zone1 rate should be $0.087/GB, got %f", prices[0].PricePerUnit)
+	}
+}
+
 func TestMain(m *testing.M) {
 	// Ensure tests don't need real network.
 	fmt.Println("Running Azure provider tests with mock HTTP server...")
