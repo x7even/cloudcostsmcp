@@ -1075,10 +1075,28 @@ func (h *Handler) HandleDescribeCatalog(
 	if !haTerms && !haHints && !haEx {
 		availSvcs := catalog.Services[in.Domain]
 		out["available_services"] = availSvcs
-		out["tip"] = fmt.Sprintf(
-			"Specify service= to get targeted guidance. Available services for %s: %v",
-			in.Domain, availSvcs,
-		)
+		if in.Service != "" {
+			// Service was specified but not found — guide toward the exact name.
+			out["tip"] = fmt.Sprintf(
+				"Service '%s' was not found in the catalog for domain '%s'. "+
+					"Use one of the exact service names listed in available_services. "+
+					"Example: describe_catalog(provider='%s', domain='%s', service='%s') "+
+					"— then call get_price(spec={provider:'%s', domain:'%s', service:'<name>', ...}).",
+				in.Service, in.Domain,
+				in.Provider, in.Domain, func() string {
+					if len(availSvcs) > 0 {
+						return availSvcs[0]
+					}
+					return "<service>"
+				}(),
+				in.Provider, in.Domain,
+			)
+		} else {
+			out["tip"] = fmt.Sprintf(
+				"Specify service= to get targeted guidance. Available services for %s: %v",
+				in.Domain, availSvcs,
+			)
+		}
 	}
 
 	return jsonText(out), nil, nil
