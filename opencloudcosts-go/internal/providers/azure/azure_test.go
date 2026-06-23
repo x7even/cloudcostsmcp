@@ -1299,6 +1299,45 @@ func TestEgressServiceField_BothDomains(t *testing.T) {
 	}
 }
 
+func TestGetFrontDoorPrice_Zone2(t *testing.T) {
+	// Zone 2 region (southeastasia) returns a different (higher) rate than Zone 1.
+	// southeastasia maps to Zone 2 in cdnZone map.
+	srv := mockServer(t, nil)
+	defer srv.Close()
+	p := newTestProvider(t, srv)
+
+	// Zone 2 region
+	zone2Prices, err := p.GetFrontDoorPrice(context.Background(), "southeastasia", 0, 0, "standard")
+	if err != nil {
+		t.Fatalf("unexpected error for zone2: %v", err)
+	}
+	if len(zone2Prices) == 0 {
+		t.Fatal("expected Front Door Zone 2 prices")
+	}
+
+	// Verify zone label in attributes and price level
+	var dtPrice *models.NormalizedPrice
+	for i := range zone2Prices {
+		if zone2Prices[i].Unit == models.PriceUnitPerGB && zone2Prices[i].PricePerUnit > 0 {
+			dtPrice = &zone2Prices[i]
+			break
+		}
+	}
+	if dtPrice == nil {
+		t.Fatal("expected a per-GB Front Door data transfer price")
+	}
+	if dtPrice.Attributes["cdn_zone"] != "Zone 2" {
+		t.Errorf("southeastasia should map to Zone 2, got %s", dtPrice.Attributes["cdn_zone"])
+	}
+	// Zone 2 rate ($0.160) must differ from Zone 1 ($0.0825)
+	if dtPrice.PricePerUnit == 0.0825 {
+		t.Errorf("Front Door Zone 2 rate must not equal Zone 1 rate ($0.0825), got %f", dtPrice.PricePerUnit)
+	}
+	if dtPrice.PricePerUnit <= 0 {
+		t.Errorf("Front Door Zone 2 rate must be > 0, got %f", dtPrice.PricePerUnit)
+	}
+}
+
 func TestMain(m *testing.M) {
 	// Ensure tests don't need real network.
 	fmt.Println("Running Azure provider tests with mock HTTP server...")
