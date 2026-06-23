@@ -1077,19 +1077,20 @@ func (h *Handler) HandleDescribeCatalog(
 		out["available_services"] = availSvcs
 		if in.Service != "" {
 			// Service was specified but not found — guide toward the exact name.
+			svcList := strings.Join(availSvcs, "', '")
+			if svcList == "" {
+				svcList = "<service>"
+			}
 			out["tip"] = fmt.Sprintf(
-				"Service '%s' was not found in the catalog for domain '%s'. "+
-					"Use one of the exact service names listed in available_services. "+
-					"Example: describe_catalog(provider='%s', domain='%s', service='%s') "+
-					"— then call get_price(spec={provider:'%s', domain:'%s', service:'<name>', ...}).",
+				"Service '%s' is not a catalog key for domain '%s'. "+
+					"Pick one of the exact names from available_services and call: "+
+					"describe_catalog(provider='%s', domain='%s', service='<exact_name>') "+
+					"then get_price(spec={provider:'%s', domain:'%s', service:'<exact_name>', ...}). "+
+					"Valid names: '%s'.",
 				in.Service, in.Domain,
-				in.Provider, in.Domain, func() string {
-					if len(availSvcs) > 0 {
-						return availSvcs[0]
-					}
-					return "<service>"
-				}(),
 				in.Provider, in.Domain,
+				in.Provider, in.Domain,
+				svcList,
 			)
 		} else {
 			out["tip"] = fmt.Sprintf(
