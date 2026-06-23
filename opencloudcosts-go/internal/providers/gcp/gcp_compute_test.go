@@ -946,6 +946,217 @@ func TestGetComputePrice_CustomMachineType(t *testing.T) {
 }
 
 // --------------------------------------------------------------------------
+// Cross-term price invariant tests
+// --------------------------------------------------------------------------
+
+// TestGetComputePrice_SpotCheaperThanOnDemand verifies the price ordering
+// invariant: Preemptible (spot) must always be cheaper than OnDemand for the
+// same instance type.
+func TestGetComputePrice_SpotCheaperThanOnDemand(t *testing.T) {
+	// n2-standard-4: 4 vCPU, 16 GB RAM.
+	// OnDemand:    $0.019560/vCPU-hr, $0.002626/GB-hr
+	// Preemptible: $0.004000/vCPU-hr, $0.000540/GB-hr
+	skus := []map[string]any{
+		// OnDemand SKUs
+		makeSKU("N2 Instance Core", "OnDemand", "us-central1", "0", 19_560_000),
+		makeSKU("N2 Instance Ram", "OnDemand", "us-central1", "0", 2_626_000),
+		// Preemptible (spot) SKUs
+		makeSKU("Preemptible N2 Instance Core", "Preemptible", "us-central1", "0", 4_000_000),
+		makeSKU("Preemptible N2 Instance Ram", "Preemptible", "us-central1", "0", 540_000),
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(skuResponse(skus))
+	}))
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	ctx := context.Background()
+
+	spotPrices, err := p.GetComputePrice(ctx, "n2-standard-4", "us-central1", "Linux", models.PricingTermSpot)
+	if err != nil {
+		t.Fatalf("GetComputePrice (spot): %v", err)
+	}
+	if len(spotPrices) != 1 {
+		t.Fatalf("expected 1 spot price, got %d", len(spotPrices))
+	}
+
+	onDemandPrices, err := p.GetComputePrice(ctx, "n2-standard-4", "us-central1", "Linux", models.PricingTermOnDemand)
+	if err != nil {
+		t.Fatalf("GetComputePrice (on_demand): %v", err)
+	}
+	if len(onDemandPrices) != 1 {
+		t.Fatalf("expected 1 on_demand price, got %d", len(onDemandPrices))
+	}
+
+	spotPrice := spotPrices[0].PricePerUnit
+	onDemandPrice := onDemandPrices[0].PricePerUnit
+
+	if spotPrice >= onDemandPrice {
+		t.Errorf("price invariant violated: spot ($%.6f) must be < on_demand ($%.6f)", spotPrice, onDemandPrice)
+	}
+}
+
+// TestGetComputePrice_CUD1YrCheaperThanOnDemand verifies the price ordering
+// invariant: 1-year committed-use discount must be cheaper than on_demand for
+// the same instance type.
+func TestGetComputePrice_CUD1YrCheaperThanOnDemand(t *testing.T) {
+	// n2-standard-4: 4 vCPU, 16 GB RAM.
+	// OnDemand:  $0.031611/vCPU-hr, $0.004237/GB-hr
+	// Commit1Yr: $0.019560/vCPU-hr, $0.002626/GB-hr
+	skus := []map[string]any{
+		// OnDemand SKUs
+		makeSKU("N2 Instance Core", "OnDemand", "us-central1", "0", 31_611_000),
+		makeSKU("N2 Instance Ram", "OnDemand", "us-central1", "0", 4_237_000),
+		// CUD 1-year SKUs
+		makeSKU("Commitment v1: N2 Cpu in Americas for 1 Year", "Commit1Yr", "us-central1", "0", 19_560_000),
+		makeSKU("Commitment v1: N2 Ram in Americas for 1 Year", "Commit1Yr", "us-central1", "0", 2_626_000),
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(skuResponse(skus))
+	}))
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	ctx := context.Background()
+
+	cud1YrPrices, err := p.GetComputePrice(ctx, "n2-standard-4", "us-central1", "Linux", models.PricingTermCUD1Yr)
+	if err != nil {
+		t.Fatalf("GetComputePrice (cud_1yr): %v", err)
+	}
+	if len(cud1YrPrices) != 1 {
+		t.Fatalf("expected 1 cud_1yr price, got %d", len(cud1YrPrices))
+	}
+
+	onDemandPrices, err := p.GetComputePrice(ctx, "n2-standard-4", "us-central1", "Linux", models.PricingTermOnDemand)
+	if err != nil {
+		t.Fatalf("GetComputePrice (on_demand): %v", err)
+	}
+	if len(onDemandPrices) != 1 {
+		t.Fatalf("expected 1 on_demand price, got %d", len(onDemandPrices))
+	}
+
+	cud1YrPrice := cud1YrPrices[0].PricePerUnit
+	onDemandPrice := onDemandPrices[0].PricePerUnit
+
+	if cud1YrPrice >= onDemandPrice {
+		t.Errorf("price invariant violated: cud_1yr ($%.6f) must be < on_demand ($%.6f)", cud1YrPrice, onDemandPrice)
+	}
+}
+
+// TestGetComputePrice_CUD3YrCheaperThan1Yr verifies the price ordering
+// invariant: 3-year committed-use discount must be cheaper than 1-year for
+// the same instance type.
+func TestGetComputePrice_CUD3YrCheaperThan1Yr(t *testing.T) {
+	// n2-standard-4: 4 vCPU, 16 GB RAM.
+	// Commit1Yr: $0.019560/vCPU-hr, $0.002626/GB-hr
+	// Commit3Yr: $0.013972/vCPU-hr, $0.001874/GB-hr
+	skus := []map[string]any{
+		// CUD 1-year SKUs
+		makeSKU("Commitment v1: N2 Cpu in Americas for 1 Year", "Commit1Yr", "us-central1", "0", 19_560_000),
+		makeSKU("Commitment v1: N2 Ram in Americas for 1 Year", "Commit1Yr", "us-central1", "0", 2_626_000),
+		// CUD 3-year SKUs (same desc substring, different usageType)
+		makeSKU("Commitment v1: N2 Cpu in Americas for 3 Years", "Commit3Yr", "us-central1", "0", 13_972_000),
+		makeSKU("Commitment v1: N2 Ram in Americas for 3 Years", "Commit3Yr", "us-central1", "0", 1_874_000),
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(skuResponse(skus))
+	}))
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	ctx := context.Background()
+
+	cud3YrPrices, err := p.GetComputePrice(ctx, "n2-standard-4", "us-central1", "Linux", models.PricingTermCUD3Yr)
+	if err != nil {
+		t.Fatalf("GetComputePrice (cud_3yr): %v", err)
+	}
+	if len(cud3YrPrices) != 1 {
+		t.Fatalf("expected 1 cud_3yr price, got %d", len(cud3YrPrices))
+	}
+
+	cud1YrPrices, err := p.GetComputePrice(ctx, "n2-standard-4", "us-central1", "Linux", models.PricingTermCUD1Yr)
+	if err != nil {
+		t.Fatalf("GetComputePrice (cud_1yr): %v", err)
+	}
+	if len(cud1YrPrices) != 1 {
+		t.Fatalf("expected 1 cud_1yr price, got %d", len(cud1YrPrices))
+	}
+
+	cud3YrPrice := cud3YrPrices[0].PricePerUnit
+	cud1YrPrice := cud1YrPrices[0].PricePerUnit
+
+	if cud3YrPrice >= cud1YrPrice {
+		t.Errorf("price invariant violated: cud_3yr ($%.6f) must be < cud_1yr ($%.6f)", cud3YrPrice, cud1YrPrice)
+	}
+}
+
+// TestGetComputePrice_AllTermsOrderedCorrectly verifies the full price ladder:
+// spot < cud_3yr < cud_1yr < on_demand for the same instance type.
+func TestGetComputePrice_AllTermsOrderedCorrectly(t *testing.T) {
+	// n2-standard-4: 4 vCPU, 16 GB RAM.
+	// Rates chosen so per-vCPU and per-GB rates are strictly ordered the same way,
+	// guaranteeing the totals are strictly ordered:
+	//   spot < cud_3yr < cud_1yr < on_demand
+	skus := []map[string]any{
+		// OnDemand SKUs:    $0.031611/vCPU, $0.004237/GB
+		makeSKU("N2 Instance Core", "OnDemand", "us-central1", "0", 31_611_000),
+		makeSKU("N2 Instance Ram", "OnDemand", "us-central1", "0", 4_237_000),
+		// CUD 1-year SKUs:  $0.019560/vCPU, $0.002626/GB
+		makeSKU("Commitment v1: N2 Cpu in Americas for 1 Year", "Commit1Yr", "us-central1", "0", 19_560_000),
+		makeSKU("Commitment v1: N2 Ram in Americas for 1 Year", "Commit1Yr", "us-central1", "0", 2_626_000),
+		// CUD 3-year SKUs:  $0.013972/vCPU, $0.001874/GB
+		makeSKU("Commitment v1: N2 Cpu in Americas for 3 Years", "Commit3Yr", "us-central1", "0", 13_972_000),
+		makeSKU("Commitment v1: N2 Ram in Americas for 3 Years", "Commit3Yr", "us-central1", "0", 1_874_000),
+		// Preemptible (spot) SKUs: $0.006700/vCPU, $0.000900/GB
+		makeSKU("Preemptible N2 Instance Core", "Preemptible", "us-central1", "0", 6_700_000),
+		makeSKU("Preemptible N2 Instance Ram", "Preemptible", "us-central1", "0", 900_000),
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(skuResponse(skus))
+	}))
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	ctx := context.Background()
+
+	getPriceForTerm := func(term models.PricingTerm) float64 {
+		t.Helper()
+		prices, err := p.GetComputePrice(ctx, "n2-standard-4", "us-central1", "Linux", term)
+		if err != nil {
+			t.Fatalf("GetComputePrice (term=%s): %v", term, err)
+		}
+		if len(prices) != 1 {
+			t.Fatalf("GetComputePrice (term=%s): expected 1 price, got %d", term, len(prices))
+		}
+		return prices[0].PricePerUnit
+	}
+
+	spotPrice := getPriceForTerm(models.PricingTermSpot)
+	cud3YrPrice := getPriceForTerm(models.PricingTermCUD3Yr)
+	cud1YrPrice := getPriceForTerm(models.PricingTermCUD1Yr)
+	onDemandPrice := getPriceForTerm(models.PricingTermOnDemand)
+
+	// Assert the full price ladder: spot < cud_3yr < cud_1yr < on_demand.
+	if spotPrice >= cud3YrPrice {
+		t.Errorf("price invariant violated: spot ($%.6f) must be < cud_3yr ($%.6f)", spotPrice, cud3YrPrice)
+	}
+	if cud3YrPrice >= cud1YrPrice {
+		t.Errorf("price invariant violated: cud_3yr ($%.6f) must be < cud_1yr ($%.6f)", cud3YrPrice, cud1YrPrice)
+	}
+	if cud1YrPrice >= onDemandPrice {
+		t.Errorf("price invariant violated: cud_1yr ($%.6f) must be < on_demand ($%.6f)", cud1YrPrice, onDemandPrice)
+	}
+}
+
+// --------------------------------------------------------------------------
 // Helpers
 // --------------------------------------------------------------------------
 
