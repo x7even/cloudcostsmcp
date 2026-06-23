@@ -1,0 +1,35 @@
+name: CI
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'opencloudcosts-go/**'
+  pull_request:
+    paths:
+      - 'opencloudcosts-go/**'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: opencloudcosts-go
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: opencloudcosts-go/go.mod
+      - run: go build ./...
+      - run: go test -race ./...
+      - run: go vet ./...
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          working-directory: opencloudcosts-go
+          args: --enable=errcheck,staticcheck,gosec,gocritic

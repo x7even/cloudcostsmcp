@@ -1,0 +1,4 @@
+opencloudcosts
+*.test
+*.out
+coverage.html
