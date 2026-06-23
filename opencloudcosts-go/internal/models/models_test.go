@@ -1518,6 +1518,33 @@ func TestEnumValues_PriceUnit(t *testing.T) {
 }
 
 // --------------------------------------------------------------------------
+// TestPricingSpec_RequiredFields — UnmarshalPricingSpec requires the domain
+// field; without it the call returns an error (mirrors Python Pydantic
+// validation that domain and provider are required on BasePricingSpec).
+// --------------------------------------------------------------------------
+
+func TestPricingSpec_RequiredFields(t *testing.T) {
+	// Missing domain: UnmarshalPricingSpec must return an error because it
+	// cannot determine which concrete spec variant to decode into.
+	t.Run("missing domain returns error", func(t *testing.T) {
+		data := []byte(`{"provider":"aws","region":"us-east-1","term":"on_demand"}`)
+		_, err := UnmarshalPricingSpec(data)
+		if err == nil {
+			t.Error("expected error when domain is absent, got nil")
+		}
+	})
+
+	// Empty domain string: also invalid — no variant matches "".
+	t.Run("empty domain string returns error", func(t *testing.T) {
+		data := []byte(`{"domain":"","provider":"aws","region":"us-east-1"}`)
+		_, err := UnmarshalPricingSpec(data)
+		if err == nil {
+			t.Error("expected error when domain is empty string, got nil")
+		}
+	})
+}
+
+// --------------------------------------------------------------------------
 // TestNormalizedPrice_ZeroValueIsValid — zero price_per_unit is valid (free tier).
 // --------------------------------------------------------------------------
 
