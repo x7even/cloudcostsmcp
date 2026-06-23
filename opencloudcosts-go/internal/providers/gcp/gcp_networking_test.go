@@ -362,3 +362,70 @@ func TestPriceNetworkCDN_CostMath(t *testing.T) {
 		t.Errorf("monthly_total = %.4f, want %.4f", got, wantTotal)
 	}
 }
+
+// --------------------------------------------------------------------------
+// Cloud NAT helpers and tests
+// --------------------------------------------------------------------------
+
+// fakeNATSKUs returns SKUs matching the GCP Cloud NAT catalog.
+// NAT gateway: $0.044/hr, NAT data: $0.045/GB.
+func fakeNATSKUs() []map[string]any {
+	return []map[string]any{
+		makeSKUMultiRegion(
+			"Cloud NAT Gateway",
+			[]string{"us-central1"},
+			"0", 44_000_000, // $0.044
+		),
+		makeSKUMultiRegion(
+			"Cloud NAT Data Processed",
+			[]string{"us-central1"},
+			"0", 45_000_000, // $0.045
+		),
+	}
+}
+
+// TestPriceNetworkNAT_GatewayRateFromSKU verifies that the NAT gateway hourly
+// rate is extracted from the GCP SKU (Cloud NAT Gateway → $0.044/hr).
+func TestPriceNetworkNAT_GatewayRateFromSKU(t *testing.T) {
+	skus := fakeNATSKUs()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(networkingSKUResponse(skus))
+	}))
+	defer ts.Close()
+
+	p := newNetworkingTestProvider(t, ts)
+	ctx := context.Background()
+
+	spec := &models.NetworkPricingSpec{
+		BasePricingSpec: models.BasePricingSpec{
+			Region: "us-central1",
+		},
+		GatewayCount:  1,
+		HoursPerMonth: 730,
+	}
+	prices, breakdown, err := p.priceNetworkNAT(ctx, spec)
+	if err != nil {
+		t.Fatalf("priceNetworkNAT: %v", err)
+	}
+	if len(prices) == 0 {
+		t.Fatal("expected at least one price")
+	}
+
+	// Find the gateway price (SKUID ends with ":gateway").
+	var gatewayRate float64
+	for _, pr := range prices {
+		if len(pr.SKUID) >= 8 && pr.SKUID[len(pr.SKUID)-8:] == ":gateway" {
+			gatewayRate = pr.PricePerUnit
+			break
+		}
+	}
+	if abs(gatewayRate-0.044) > 1e-9 {
+		t.Errorf("NAT gateway rate = %.6f, want 0.044000", gatewayRate)
+	}
+
+	// No fallback expected.
+	if fb, ok := breakdown["fallback"]; ok && fb == true {
+		t.Error("expected no fallback when NAT SKUs are present")
+	}
+}
