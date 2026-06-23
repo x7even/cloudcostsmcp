@@ -1003,6 +1003,37 @@ func TestGetPrice_DispatchCompute(t *testing.T) {
 	}
 }
 
+// --------------------------------------------------------------------------
+// Backlog tests
+// --------------------------------------------------------------------------
+
+func TestGetComputePrice_ZeroPriceFiltered(t *testing.T) {
+	// Items with retailPrice=0 must be filtered out of results.
+	zeroItem := azureItem{
+		"retailPrice":   0.0,
+		"armSkuName":    "Standard_D4s_v3",
+		"productName":   "Virtual Machines DSv3 Series",
+		"skuName":       "D4s v3",
+		"serviceName":   "Virtual Machines",
+		"serviceFamily": "Compute",
+		"meterId":       "zero-meter",
+		"meterName":     "D4s v3",
+		"armRegionName": "eastus",
+		"unitOfMeasure": "1 Hour",
+	}
+	srv := mockServer(t, []azureItem{zeroItem})
+	defer srv.Close()
+	p := newTestProvider(t, srv)
+
+	prices, err := p.GetComputePrice(context.Background(), "Standard_D4s_v3", "eastus", "Linux", models.PricingTermOnDemand)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(prices) != 0 {
+		t.Errorf("expected 0 prices when retailPrice=0, got %d", len(prices))
+	}
+}
+
 func TestMain(m *testing.M) {
 	// Ensure tests don't need real network.
 	fmt.Println("Running Azure provider tests with mock HTTP server...")
