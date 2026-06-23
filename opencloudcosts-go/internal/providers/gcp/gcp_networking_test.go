@@ -1,0 +1,150 @@
+// Package gcp — unit tests for networking pricing (LB, CDN, NAT, egress).
+package gcp
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/models"
+)
+
+// --------------------------------------------------------------------------
+// Networking SKU helpers
+// --------------------------------------------------------------------------
+
+// makeSKUMultiRegion builds a minimal GCP SKU map[string]any with multiple
+// serviceRegions, matching the format used by buildNetworkingIndex.
+func makeSKUMultiRegion(desc string, regions []string, units string, nanos int) map[string]any {
+	regionAny := make([]any, len(regions))
+	for i, r := range regions {
+		regionAny[i] = r
+	}
+	return map[string]any{
+		"description":    desc,
+		"serviceRegions": regionAny,
+		"category": map[string]any{
+			"usageType": "OnDemand",
+		},
+		"pricingInfo": []any{
+			map[string]any{
+				"pricingExpression": map[string]any{
+					"tieredRates": []any{
+						map[string]any{
+							"startUsageAmount": float64(0),
+							"unitPrice": map[string]any{
+								"units": units,
+								"nanos": float64(nanos),
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+// networkingSKUResponse wraps networking SKUs for the httptest server.
+func networkingSKUResponse(skus []map[string]any) []byte {
+	resp := map[string]any{
+		"skus":          skus,
+		"nextPageToken": "",
+	}
+	b, _ := json.Marshal(resp)
+	return b
+}
+
+// newNetworkingTestProvider creates a Provider backed by the given httptest.Server.
+func newNetworkingTestProvider(t *testing.T, server *httptest.Server) *Provider {
+	t.Helper()
+	return newTestProvider(t, server)
+}
+
+// fakeLBSKUs returns SKUs matching the GCP Load Balancing catalog.
+// External HTTP(S) rule: $0.008/hr, data processed: $0.008/GB.
+func fakeLBSKUs() []map[string]any {
+	return []map[string]any{
+		makeSKUMultiRegion(
+			"External HTTP(S) Load Balancing Rule",
+			[]string{"us-central1", "global"},
+			"0", 8_000_000, // $0.008
+		),
+		makeSKUMultiRegion(
+			"TCP Proxy Load Balancing Rule",
+			[]string{"us-central1", "global"},
+			"0", 6_000_000, // $0.006
+		),
+		makeSKUMultiRegion(
+			"Data processed by External HTTP(S) Load Balancing",
+			[]string{"global"},
+			"0", 8_000_000, // $0.008
+		),
+	}
+}
+
+// toFloat64 safely converts a breakdown map value to float64.
+func toFloat64(v any) float64 {
+	switch x := v.(type) {
+	case float64:
+		return x
+	case int:
+		return float64(x)
+	case int64:
+		return float64(x)
+	}
+	return 0
+}
+
+// --------------------------------------------------------------------------
+// Cloud Load Balancing tests
+// --------------------------------------------------------------------------
+
+// TestPriceNetworkLB_RateFromSKU verifies that the LB forwarding rule hourly
+// rate is extracted from the GCP SKU (External HTTP(S) Load Balancing Rule
+// → $0.008/hr).
+func TestPriceNetworkLB_RateFromSKU(t *testing.T) {
+	skus := fakeLBSKUs()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(networkingSKUResponse(skus))
+	}))
+	defer ts.Close()
+
+	p := newNetworkingTestProvider(t, ts)
+	ctx := context.Background()
+
+	spec := &models.NetworkPricingSpec{
+		BasePricingSpec: models.BasePricingSpec{
+			Region: "us-central1",
+		},
+		LBType:        "https",
+		RuleCount:     1,
+		HoursPerMonth: 730,
+	}
+	prices, breakdown, err := p.priceNetworkLB(ctx, spec)
+	if err != nil {
+		t.Fatalf("priceNetworkLB: %v", err)
+	}
+	if len(prices) == 0 {
+		t.Fatal("expected at least one price")
+	}
+
+	// Find the forwarding rule price (component=forwarding_rule).
+	var ruleRate float64
+	for _, pr := range prices {
+		if pr.Attributes["component"] == "forwarding_rule" {
+			ruleRate = pr.PricePerUnit
+			break
+		}
+	}
+	if abs(ruleRate-0.008) > 1e-9 {
+		t.Errorf("rule rate = %.6f, want 0.008000", ruleRate)
+	}
+
+	// Verify no fallback was triggered.
+	if fb, ok := breakdown["fallback"]; ok && fb == true {
+		t.Error("expected fallback=false (SKUs were provided), but fallback=true was set")
+	}
+}
