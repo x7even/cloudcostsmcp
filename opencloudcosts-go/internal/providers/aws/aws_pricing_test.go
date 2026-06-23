@@ -1344,6 +1344,413 @@ func TestNetworkEgress_Internet_FilterValue(t *testing.T) {
 var _ = os.DevNull // ensure os import is not elided
 
 // --------------------------------------------------------------------------
+// Cross-term price invariant tests
+//
+// These tests use the bulk-fallback httptest pattern (p.bulkFallback=true) so
+// that extractOnDemandPrice and extractReservedPrice are both exercised from a
+// single shared SKU fixture — the cache pre-population approach would just
+// compare two constants we typed rather than testing the parsing invariant.
+// --------------------------------------------------------------------------
+
+// newBulkProvider creates a Provider with bulkFallback=true.
+// The caller must also call newBulkServer to override bulkPricingBaseURL.
+func newBulkProvider(t *testing.T) *Provider {
+	t.Helper()
+	p := newTestProvider(t)
+	p.bulkFallback = true
+	return p
+}
+
+// newBulkServer starts an httptest.Server that serves body for any request,
+// and overrides the package-level bulkPricingBaseURL to the server's URL.
+// It registers a cleanup that closes the server and restores the original URL.
+func newBulkServer(t *testing.T, body string) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(body))
+	}))
+	orig := bulkPricingBaseURL
+	bulkPricingBaseURL = srv.URL
+	t.Cleanup(func() {
+		srv.Close()
+		bulkPricingBaseURL = orig
+	})
+}
+
+// TestGetComputePrice_ReservedCheaperThanOnDemand verifies the core pricing
+// invariant: for the same instance type, reserved_1yr must be cheaper than
+// on_demand. A single bulk SKU carrying both OnDemand ($0.192/hr) and
+// Reserved 1yr No-Upfront ($0.114/hr) terms is served via httptest so that
+// extractOnDemandPrice and extractReservedPrice both run against real JSON.
+func TestGetComputePrice_ReservedCheaperThanOnDemand(t *testing.T) {
+	const bulkFixture = `{
+  "formatVersion": "aws_v1",
+  "products": {
+    "INVSKU1": {
+      "sku": "INVSKU1",
+      "productFamily": "Compute Instance",
+      "attributes": {
+        "instanceType":    "m5.xlarge",
+        "operatingSystem": "Linux",
+        "tenancy":         "Shared",
+        "preInstalledSw":  "NA",
+        "capacitystatus":  "Used",
+        "location":        "US East (N. Virginia)"
+      }
+    }
+  },
+  "terms": {
+    "OnDemand": {
+      "INVSKU1.ODTERM": {
+        "priceDimensions": {
+          "INVSKU1.ODTERM.DIM": {
+            "unit": "Hrs",
+            "pricePerUnit": {"USD": "0.1920000000"},
+            "description": "$0.192 per On Demand Linux m5.xlarge Instance Hour"
+          }
+        },
+        "termAttributes": {}
+      }
+    },
+    "Reserved": {
+      "INVSKU1.4NA7Y5ZX": {
+        "priceDimensions": {
+          "INVSKU1.4NA7Y5ZX.DIM": {
+            "unit": "Hrs",
+            "pricePerUnit": {"USD": "0.1140000000"},
+            "description": "$0.114 per Reserved Linux m5.xlarge Instance Hour"
+          }
+        },
+        "termAttributes": {
+          "LeaseContractLength": "1yr",
+          "PurchaseOption":      "No Upfront"
+        }
+      }
+    }
+  }
+}`
+
+	newBulkServer(t, bulkFixture)
+	p := newBulkProvider(t)
+	ctx := context.Background()
+
+	odPrices, err := p.GetComputePrice(ctx, "m5.xlarge", "us-east-1", "Linux", models.PricingTermOnDemand)
+	if err != nil {
+		t.Fatalf("GetComputePrice(on_demand): %v", err)
+	}
+	if len(odPrices) == 0 {
+		t.Fatal("GetComputePrice(on_demand): expected at least one price, got none")
+	}
+
+	// Clear cache so the second call re-fetches (different cache key, so no issue).
+	r1Prices, err := p.GetComputePrice(ctx, "m5.xlarge", "us-east-1", "Linux", models.PricingTermReserved1Yr)
+	if err != nil {
+		t.Fatalf("GetComputePrice(reserved_1yr): %v", err)
+	}
+	if len(r1Prices) == 0 {
+		t.Fatal("GetComputePrice(reserved_1yr): expected at least one price, got none")
+	}
+
+	odPrice := odPrices[0].PricePerUnit
+	r1Price := r1Prices[0].PricePerUnit
+
+	const tolerance = 1e-6
+	if odPrice < 0.192-tolerance || odPrice > 0.192+tolerance {
+		t.Errorf("on_demand price = %v, want ~0.192", odPrice)
+	}
+	if r1Price < 0.114-tolerance || r1Price > 0.114+tolerance {
+		t.Errorf("reserved_1yr price = %v, want ~0.114", r1Price)
+	}
+	if r1Price >= odPrice {
+		t.Errorf("invariant violation: reserved_1yr (%v) must be cheaper than on_demand (%v)", r1Price, odPrice)
+	}
+}
+
+// TestGetComputePrice_Reserved3YrCheaperThan1Yr verifies the price ordering
+// invariant: reserved_3yr must be cheaper than reserved_1yr for the same
+// instance type. Both terms are served from a single bulk SKU fixture.
+func TestGetComputePrice_Reserved3YrCheaperThan1Yr(t *testing.T) {
+	const bulkFixture = `{
+  "formatVersion": "aws_v1",
+  "products": {
+    "INVSKU2": {
+      "sku": "INVSKU2",
+      "productFamily": "Compute Instance",
+      "attributes": {
+        "instanceType":    "m5.xlarge",
+        "operatingSystem": "Linux",
+        "tenancy":         "Shared",
+        "preInstalledSw":  "NA",
+        "capacitystatus":  "Used",
+        "location":        "US East (N. Virginia)"
+      }
+    }
+  },
+  "terms": {
+    "OnDemand": {},
+    "Reserved": {
+      "INVSKU2.R1NOTERM": {
+        "priceDimensions": {
+          "INVSKU2.R1NOTERM.DIM": {
+            "unit": "Hrs",
+            "pricePerUnit": {"USD": "0.1140000000"},
+            "description": "$0.114 per Reserved 1yr No-Upfront m5.xlarge Instance Hour"
+          }
+        },
+        "termAttributes": {
+          "LeaseContractLength": "1yr",
+          "PurchaseOption":      "No Upfront"
+        }
+      },
+      "INVSKU2.R3NOTERM": {
+        "priceDimensions": {
+          "INVSKU2.R3NOTERM.DIM": {
+            "unit": "Hrs",
+            "pricePerUnit": {"USD": "0.0750000000"},
+            "description": "$0.075 per Reserved 3yr No-Upfront m5.xlarge Instance Hour"
+          }
+        },
+        "termAttributes": {
+          "LeaseContractLength": "3yr",
+          "PurchaseOption":      "No Upfront"
+        }
+      }
+    }
+  }
+}`
+
+	newBulkServer(t, bulkFixture)
+	p := newBulkProvider(t)
+	ctx := context.Background()
+
+	r1Prices, err := p.GetComputePrice(ctx, "m5.xlarge", "us-east-1", "Linux", models.PricingTermReserved1Yr)
+	if err != nil {
+		t.Fatalf("GetComputePrice(reserved_1yr): %v", err)
+	}
+	if len(r1Prices) == 0 {
+		t.Fatal("GetComputePrice(reserved_1yr): expected at least one price, got none")
+	}
+
+	r3Prices, err := p.GetComputePrice(ctx, "m5.xlarge", "us-east-1", "Linux", models.PricingTermReserved3Yr)
+	if err != nil {
+		t.Fatalf("GetComputePrice(reserved_3yr): %v", err)
+	}
+	if len(r3Prices) == 0 {
+		t.Fatal("GetComputePrice(reserved_3yr): expected at least one price, got none")
+	}
+
+	r1Price := r1Prices[0].PricePerUnit
+	r3Price := r3Prices[0].PricePerUnit
+
+	const tolerance = 1e-6
+	if r1Price < 0.114-tolerance || r1Price > 0.114+tolerance {
+		t.Errorf("reserved_1yr price = %v, want ~0.114", r1Price)
+	}
+	if r3Price < 0.075-tolerance || r3Price > 0.075+tolerance {
+		t.Errorf("reserved_3yr price = %v, want ~0.075", r3Price)
+	}
+	if r3Price >= r1Price {
+		t.Errorf("invariant violation: reserved_3yr (%v) must be cheaper than reserved_1yr (%v)", r3Price, r1Price)
+	}
+}
+
+// TestGetComputePrice_ReservedUpfrontOptions verifies the upfront payment
+// ordering invariant: for the same lease length, more upfront commitment
+// results in a cheaper effective hourly rate.
+//
+// For 1yr reserved instances: all-upfront < partial-upfront < no-upfront.
+//
+// The partial-upfront and all-upfront prices are normalised from a Quantity
+// (upfront) dimension divided by (8760 * years). The fixture values are:
+//   - no-upfront:      $0.114/hr   (hourly only)
+//   - partial-upfront: $0.100/hr   ($0.050/hr + $438 upfront / 8760 = $0.050)
+//   - all-upfront:     $0.089/hr   ($0.000/hr + $779.64 upfront / 8760 ≈ $0.089)
+func TestGetComputePrice_ReservedUpfrontOptions(t *testing.T) {
+	const bulkFixture = `{
+  "formatVersion": "aws_v1",
+  "products": {
+    "INVSKU3": {
+      "sku": "INVSKU3",
+      "productFamily": "Compute Instance",
+      "attributes": {
+        "instanceType":    "m5.xlarge",
+        "operatingSystem": "Linux",
+        "tenancy":         "Shared",
+        "preInstalledSw":  "NA",
+        "capacitystatus":  "Used",
+        "location":        "US East (N. Virginia)"
+      }
+    }
+  },
+  "terms": {
+    "OnDemand": {},
+    "Reserved": {
+      "INVSKU3.NOUPFRONT": {
+        "priceDimensions": {
+          "INVSKU3.NOUPFRONT.DIM": {
+            "unit": "Hrs",
+            "pricePerUnit": {"USD": "0.1140000000"},
+            "description": "$0.114 per Reserved 1yr No-Upfront m5.xlarge Instance Hour"
+          }
+        },
+        "termAttributes": {
+          "LeaseContractLength": "1yr",
+          "PurchaseOption":      "No Upfront"
+        }
+      },
+      "INVSKU3.PARTIAL": {
+        "priceDimensions": {
+          "INVSKU3.PARTIAL.HRS": {
+            "unit": "Hrs",
+            "pricePerUnit": {"USD": "0.0500000000"},
+            "description": "$0.050 per Reserved 1yr Partial-Upfront m5.xlarge Instance Hour"
+          },
+          "INVSKU3.PARTIAL.QTY": {
+            "unit": "Quantity",
+            "pricePerUnit": {"USD": "438.0000000000"},
+            "description": "Upfront Fee"
+          }
+        },
+        "termAttributes": {
+          "LeaseContractLength": "1yr",
+          "PurchaseOption":      "Partial Upfront"
+        }
+      },
+      "INVSKU3.ALL": {
+        "priceDimensions": {
+          "INVSKU3.ALL.HRS": {
+            "unit": "Hrs",
+            "pricePerUnit": {"USD": "0.0000000000"},
+            "description": "$0.000 per Reserved 1yr All-Upfront m5.xlarge Instance Hour"
+          },
+          "INVSKU3.ALL.QTY": {
+            "unit": "Quantity",
+            "pricePerUnit": {"USD": "779.6400000000"},
+            "description": "Upfront Fee"
+          }
+        },
+        "termAttributes": {
+          "LeaseContractLength": "1yr",
+          "PurchaseOption":      "All Upfront"
+        }
+      }
+    }
+  }
+}`
+
+	newBulkServer(t, bulkFixture)
+	p := newBulkProvider(t)
+	ctx := context.Background()
+
+	noPrices, err := p.GetComputePrice(ctx, "m5.xlarge", "us-east-1", "Linux", models.PricingTermReserved1Yr)
+	if err != nil {
+		t.Fatalf("GetComputePrice(reserved_1yr no-upfront): %v", err)
+	}
+	if len(noPrices) == 0 {
+		t.Fatal("GetComputePrice(reserved_1yr): expected at least one price, got none")
+	}
+
+	partialPrices, err := p.GetComputePrice(ctx, "m5.xlarge", "us-east-1", "Linux", models.PricingTermReserved1YrPartial)
+	if err != nil {
+		t.Fatalf("GetComputePrice(reserved_1yr_partial): %v", err)
+	}
+	if len(partialPrices) == 0 {
+		t.Fatal("GetComputePrice(reserved_1yr_partial): expected at least one price, got none")
+	}
+
+	allPrices, err := p.GetComputePrice(ctx, "m5.xlarge", "us-east-1", "Linux", models.PricingTermReserved1YrAll)
+	if err != nil {
+		t.Fatalf("GetComputePrice(reserved_1yr_all): %v", err)
+	}
+	if len(allPrices) == 0 {
+		t.Fatal("GetComputePrice(reserved_1yr_all): expected at least one price, got none")
+	}
+
+	noPrice := noPrices[0].PricePerUnit
+	partialPrice := partialPrices[0].PricePerUnit
+	allPrice := allPrices[0].PricePerUnit
+
+	// Verify absolute values are in the expected ballpark.
+	const tolerance = 1e-4 // wider tolerance for upfront normalisation
+	if noPrice < 0.114-tolerance || noPrice > 0.114+tolerance {
+		t.Errorf("no-upfront price = %v, want ~0.114", noPrice)
+	}
+	if partialPrice < 0.100-tolerance || partialPrice > 0.100+tolerance {
+		t.Errorf("partial-upfront price = %v, want ~0.100 (0.050 + 438/8760)", partialPrice)
+	}
+
+	// Core invariant: all-upfront < partial-upfront < no-upfront.
+	if allPrice >= partialPrice {
+		t.Errorf("invariant violation: all-upfront (%v) must be cheaper than partial-upfront (%v)", allPrice, partialPrice)
+	}
+	if partialPrice >= noPrice {
+		t.Errorf("invariant violation: partial-upfront (%v) must be cheaper than no-upfront (%v)", partialPrice, noPrice)
+	}
+}
+
+// TestGetComputePrice_SpotTermNotSupportedInGetComputePrice verifies that
+// GetComputePrice with term=spot returns an empty result (not an error).
+//
+// Spot pricing is NOT routed through GetComputePrice — it is handled by
+// GetSpotHistory (which calls EC2 DescribeSpotPriceHistory). When a caller
+// passes PricingTermSpot to GetComputePrice, skuToNormalizedPrice sees a term
+// that is not OnDemand and not in _reservedTermFilters, so extractReservedPrice
+// returns (0, "") and the SKU is silently skipped. The result is ([], nil).
+func TestGetComputePrice_SpotTermNotSupportedInGetComputePrice(t *testing.T) {
+	// Reuse the first test's fixture (OnDemand + Reserved 1yr). Even if spot
+	// matched any SKU attribute filters, skuToNormalizedPrice would return nil
+	// for PricingTermSpot because it is not in _reservedTermFilters.
+	const bulkFixture = `{
+  "formatVersion": "aws_v1",
+  "products": {
+    "INVSKU4": {
+      "sku": "INVSKU4",
+      "productFamily": "Compute Instance",
+      "attributes": {
+        "instanceType":    "m5.xlarge",
+        "operatingSystem": "Linux",
+        "tenancy":         "Shared",
+        "preInstalledSw":  "NA",
+        "capacitystatus":  "Used",
+        "location":        "US East (N. Virginia)"
+      }
+    }
+  },
+  "terms": {
+    "OnDemand": {
+      "INVSKU4.ODTERM": {
+        "priceDimensions": {
+          "INVSKU4.ODTERM.DIM": {
+            "unit": "Hrs",
+            "pricePerUnit": {"USD": "0.1920000000"},
+            "description": "$0.192 per On Demand Linux m5.xlarge Instance Hour"
+          }
+        },
+        "termAttributes": {}
+      }
+    },
+    "Reserved": {}
+  }
+}`
+
+	newBulkServer(t, bulkFixture)
+	p := newBulkProvider(t)
+	ctx := context.Background()
+
+	prices, err := p.GetComputePrice(ctx, "m5.xlarge", "us-east-1", "Linux", models.PricingTermSpot)
+	if err != nil {
+		// GetComputePrice should not return an error for spot — it silently
+		// returns empty (spot is handled separately via GetSpotHistory).
+		t.Fatalf("GetComputePrice(spot): unexpected error: %v", err)
+	}
+	if len(prices) != 0 {
+		t.Errorf("GetComputePrice(spot): expected empty result (spot is not routed through GetComputePrice), got %d prices", len(prices))
+	}
+}
+
+// --------------------------------------------------------------------------
 // TestPricingResult_AuthGating (provider-contract)
 // --------------------------------------------------------------------------
 
