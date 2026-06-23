@@ -846,6 +846,62 @@ func TestGetStoragePrice_GCS_AllTiers(t *testing.T) {
 	}
 }
 
+// TestGetStoragePrice_PricingOrder verifies that cheaper tiers are not more expensive
+// than standard: archive <= coldline <= nearline <= standard.
+func TestGetStoragePrice_PricingOrder(t *testing.T) {
+	// Realistic GCS pricing: standard > nearline > coldline > archive.
+	skus := []map[string]any{
+		makeSKU("Standard Storage US", "OnDemand", "us-central1", "0", 20_000_000),
+		makeSKU("Nearline Storage US", "OnDemand", "us-central1", "0", 10_000_000),
+		makeSKU("Coldline Storage US", "OnDemand", "us-central1", "0", 4_000_000),
+		makeSKU("Archive Storage US", "OnDemand", "us-central1", "0", 1_200_000),
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(skuResponse(skus))
+	}))
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	ctx := context.Background()
+
+	getPriceFor := func(tier string) float64 {
+		t.Helper()
+		prices, err := p.GetStoragePrice(ctx, tier, "us-central1", 0)
+		if err != nil {
+			t.Fatalf("GetStoragePrice(%q): %v", tier, err)
+		}
+		if len(prices) == 0 {
+			t.Fatalf("GetStoragePrice(%q): empty result", tier)
+		}
+		return prices[0].PricePerUnit
+	}
+
+	standardPrice := getPriceFor("standard")
+	nearlinePrice := getPriceFor("nearline")
+	coldlinePrice := getPriceFor("coldline")
+	archivePrice := getPriceFor("archive")
+
+	// Cheapest tier (archive) must not exceed standard.
+	if archivePrice > standardPrice {
+		t.Errorf("archive ($%.4f) more expensive than standard ($%.4f)", archivePrice, standardPrice)
+	}
+	if coldlinePrice > standardPrice {
+		t.Errorf("coldline ($%.4f) more expensive than standard ($%.4f)", coldlinePrice, standardPrice)
+	}
+	if nearlinePrice > standardPrice {
+		t.Errorf("nearline ($%.4f) more expensive than standard ($%.4f)", nearlinePrice, standardPrice)
+	}
+	// Verify the expected order: archive <= coldline <= nearline <= standard.
+	if archivePrice > coldlinePrice {
+		t.Errorf("archive ($%.4f) should be <= coldline ($%.4f)", archivePrice, coldlinePrice)
+	}
+	if coldlinePrice > nearlinePrice {
+		t.Errorf("coldline ($%.4f) should be <= nearline ($%.4f)", coldlinePrice, nearlinePrice)
+	}
+}
+
 // --------------------------------------------------------------------------
 // Helpers
 // --------------------------------------------------------------------------
