@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	azureprovider "github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/providers/azure"
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/models"
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/providers"
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/tools"
@@ -1130,6 +1131,80 @@ func TestDescribeCatalog_UpstreamError(t *testing.T) {
 	}
 	if entry["error"] == nil {
 		t.Errorf("expected error in aws entry, got: %v", entry)
+	}
+}
+
+// --------------------------------------------------------------------------
+// Tests: describe_catalog — Azure alias regression
+// --------------------------------------------------------------------------
+
+// realAzureProvider returns a minimal azure.Provider sufficient for
+// DescribeCatalog, which is purely static and requires no cache or HTTP client.
+func realAzureProvider() *azureprovider.Provider {
+	return azureprovider.NewProvider(nil, 0, 0)
+}
+
+// TestDescribeCatalog_AzureCosmosAlias verifies that describe_catalog with
+// service=cosmos (canonical name) returns targeted guidance including
+// filter_hints, supported_terms, and an example_invocation, and does not
+// panic or return an error.
+func TestDescribeCatalog_AzureCosmosAlias(t *testing.T) {
+	realAzure := realAzureProvider()
+	pvdr := &mockProvider{
+		name:          "azure",
+		defaultRegion: "eastus",
+		describeCatFunc: func(ctx context.Context) (*models.ProviderCatalog, error) {
+			return realAzure.DescribeCatalog(ctx)
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"azure": pvdr})
+	resp := callDescribeCatalog(t, h, tools.DescribeCatalogInput{
+		Provider: "azure",
+		Domain:   "database",
+		Service:  "cosmos",
+	})
+	if resp["error"] != nil {
+		t.Fatalf("unexpected error field: %v", resp)
+	}
+	if resp["filter_hints"] == nil {
+		t.Error("expected filter_hints for database/cosmos, got none")
+	}
+	if resp["supported_terms"] == nil {
+		t.Error("expected supported_terms for database/cosmos, got none")
+	}
+	if resp["example_invocation"] == nil {
+		t.Error("expected example_invocation for database/cosmos, got none")
+	}
+}
+
+// TestDescribeCatalog_AzureFrontDoorAlias verifies that describe_catalog with
+// service=front_door (a user-facing alias for the canonical azure_front_door)
+// returns a sane non-error response — either targeted guidance or an
+// available_services fallback — and does not panic or terminate the session.
+func TestDescribeCatalog_AzureFrontDoorAlias(t *testing.T) {
+	realAzure := realAzureProvider()
+	pvdr := &mockProvider{
+		name:          "azure",
+		defaultRegion: "eastus",
+		describeCatFunc: func(ctx context.Context) (*models.ProviderCatalog, error) {
+			return realAzure.DescribeCatalog(ctx)
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"azure": pvdr})
+	resp := callDescribeCatalog(t, h, tools.DescribeCatalogInput{
+		Provider: "azure",
+		Domain:   "network",
+		Service:  "front_door",
+	})
+	if resp["error"] != nil {
+		t.Fatalf("unexpected error field: %v", resp)
+	}
+	// Either targeted guidance (filter_hints/supported_terms) or the
+	// available_services fallback is acceptable — what matters is no crash.
+	hasGuidance := resp["filter_hints"] != nil || resp["supported_terms"] != nil
+	hasFallback := resp["available_services"] != nil
+	if !hasGuidance && !hasFallback {
+		t.Errorf("expected either guidance fields or available_services fallback, got: %v", resp)
 	}
 }
 

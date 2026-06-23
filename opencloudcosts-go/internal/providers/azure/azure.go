@@ -2758,6 +2758,13 @@ func (p *Provider) DescribeCatalog(ctx context.Context) (*models.ProviderCatalog
 				"deployment":    "single-az",
 				"region":        "eastus",
 			},
+			"database/cosmos": {
+				"provider":   "azure",
+				"domain":     "database",
+				"service":    "cosmos",
+				"deployment": "provisioned",
+				"region":     "eastus",
+			},
 			"ai/openai": {
 				"provider":      "azure",
 				"domain":        "ai",
