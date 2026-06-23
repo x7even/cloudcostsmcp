@@ -1,5 +1,10 @@
 name: Publish Docker image
 
+# Builds and ships the Go MCP server (opencloudcosts-go/). The Go binary is a
+# drop-in replacement for the Python server at the transport layer, so it keeps
+# the same GHCR package name (${{ github.repository }} = cloudcostsmcp) and the
+# same :sha-<short>/latest/semver tags — the home-cluster deploy job and the
+# Deployment manifest need no change. The Python image is no longer built here.
 on:
   push:
     branches:
@@ -43,7 +48,7 @@ jobs:
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             VER="${GITHUB_REF_NAME#v}"
           else
-            VER="0.0.0+${GITHUB_SHA::7}"   # PEP 440 local-version segment for main builds
+            VER="0.0.0+${GITHUB_SHA::7}"   # version+sha for main builds (passed to Go -ldflags)
           fi
           echo "version=${VER}" >> "$GITHUB_OUTPUT"
           echo "Building version ${VER}"
@@ -63,11 +68,14 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
-          context: .
+          # The Go Dockerfile does `COPY . .` then builds ./cmd/opencloudcosts,
+          # so the build context must be the module dir (go.mod lives there).
+          context: opencloudcosts-go
+          file: opencloudcosts-go/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
           build-args: |
-            OCC_VERSION=${{ steps.version.outputs.version }}
+            VERSION=${{ steps.version.outputs.version }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha

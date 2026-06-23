@@ -1,43 +1,43 @@
 name: Tests
 
+# Go test gate for opencloudcosts-go (the active MCP server). This lives at the
+# repo root because GitHub Actions only discovers workflows in the top-level
+# .github/workflows/ — the copy under opencloudcosts-go/.github/workflows/ci.yml
+# is in-tree documentation for the subproject and is never executed by Actions.
+# The Python test suite was retired with the Go cutover; the Python tree itself
+# is removed in a later pass.
 on:
   push:
     branches: ["**"]
   pull_request:
 
 jobs:
-  test:
-    name: Python ${{ matrix.python-version }}
+  go:
+    name: Go build / test / vet
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11", "3.12", "3.13"]
-
+    defaults:
+      run:
+        working-directory: opencloudcosts-go
+    env:
+      CGO_ENABLED: "0"
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
         with:
-          fetch-depth: 0
+          go-version-file: opencloudcosts-go/go.mod
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
+      - run: go build ./...
+      - run: go test -race ./...
+      - run: go vet ./...
 
-      - name: Set up Python ${{ matrix.python-version }}
-        run: uv python install ${{ matrix.python-version }}
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
 
-      - name: Install dependencies
-        run: uv sync --extra dev
-
-      - name: Lint (ruff)
-        run: uv run ruff check src/
-
-      - name: Ruff format check
-        run: uv run ruff format --check .
-
-      # mypy strict mode cleanup tracked for v0.9 — run in non-strict mode for now
-      - name: Type check (mypy)
-        run: uv run mypy src/ --ignore-missing-imports --allow-untyped-defs --allow-untyped-calls --no-warn-return-any
-        continue-on-error: true
-
-      - name: Run tests
-        run: uv run pytest tests/ --tb=short -q
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          working-directory: opencloudcosts-go
+          args: --enable=errcheck,staticcheck,gosec,gocritic

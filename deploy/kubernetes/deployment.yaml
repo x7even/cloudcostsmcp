@@ -23,7 +23,9 @@ spec:
 
       containers:
         - name: opencloudcosts
-          image: ghcr.io/x7even/opencloudcosts:latest
+          # Go MCP server. The home-cluster CI pins this to :sha-<short> on every
+          # main build; :latest is the at-rest fallback for a fresh kustomize apply.
+          image: ghcr.io/x7even/cloudcostsmcp:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
