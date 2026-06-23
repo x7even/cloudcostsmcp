@@ -275,3 +275,35 @@ func TestEgressTiers_FirstTierBreakpoint(t *testing.T) {
 		t.Errorf("tier[2] gb: got %v want 4660.0", gb)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// TestEgressTiers_ZeroBytes: zero egress returns zero cost (no error)
+// ---------------------------------------------------------------------------
+
+// TestEgressTiers_ZeroBytes verifies that zero data_gb returns $0.00 with no
+// error and an empty (non-nil) tiers slice. This mirrors the Python
+// test_aws_egress_zero_gb_returns_rate_no_error and
+// test_gcp_egress_zero_gb_no_error tests.
+// Note: this behaviour is also covered by TestComputeEgressTieredCostZeroDataGB;
+// this test uses the full AWS tier table to confirm zero-input is safe regardless
+// of tier complexity.
+func TestEgressTiers_ZeroBytes(t *testing.T) {
+	result := ComputeEgressTieredCost(awsInternetEgressTiers, 0.0)
+
+	if result.TotalCost != "0.0000" {
+		t.Errorf("total_cost: got %q want 0.0000", result.TotalCost)
+	}
+	if result.BlendedRatePerGB != "0.0000" {
+		t.Errorf("blended_rate_per_gb: got %q want 0.0000", result.BlendedRatePerGB)
+	}
+	if result.DataGB != 0.0 {
+		t.Errorf("data_gb: got %v want 0.0", result.DataGB)
+	}
+	// Must be an empty slice, not nil (marshals to [] not null).
+	if result.Tiers == nil {
+		t.Error("tiers must be a non-nil empty slice, got nil")
+	}
+	if len(result.Tiers) != 0 {
+		t.Errorf("tiers: got %d entries want 0", len(result.Tiers))
+	}
+}
