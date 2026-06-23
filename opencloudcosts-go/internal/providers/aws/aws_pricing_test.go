@@ -1344,6 +1344,131 @@ func TestNetworkEgress_Internet_FilterValue(t *testing.T) {
 var _ = os.DevNull // ensure os import is not elided
 
 // --------------------------------------------------------------------------
+// Cross-term price invariant tests
+//
+// These tests use the bulk-fallback httptest pattern (p.bulkFallback=true) so
+// that extractOnDemandPrice and extractReservedPrice are both exercised from a
+// single shared SKU fixture — the cache pre-population approach would just
+// compare two constants we typed rather than testing the parsing invariant.
+// --------------------------------------------------------------------------
+
+// newBulkProvider creates a Provider with bulkFallback=true.
+// The caller must also call newBulkServer to override bulkPricingBaseURL.
+func newBulkProvider(t *testing.T) *Provider {
+	t.Helper()
+	p := newTestProvider(t)
+	p.bulkFallback = true
+	return p
+}
+
+// newBulkServer starts an httptest.Server that serves body for any request,
+// and overrides the package-level bulkPricingBaseURL to the server's URL.
+// It registers a cleanup that closes the server and restores the original URL.
+func newBulkServer(t *testing.T, body string) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(body))
+	}))
+	orig := bulkPricingBaseURL
+	bulkPricingBaseURL = srv.URL
+	t.Cleanup(func() {
+		srv.Close()
+		bulkPricingBaseURL = orig
+	})
+}
+
+// TestGetComputePrice_ReservedCheaperThanOnDemand verifies the core pricing
+// invariant: for the same instance type, reserved_1yr must be cheaper than
+// on_demand. A single bulk SKU carrying both OnDemand ($0.192/hr) and
+// Reserved 1yr No-Upfront ($0.114/hr) terms is served via httptest so that
+// extractOnDemandPrice and extractReservedPrice both run against real JSON.
+func TestGetComputePrice_ReservedCheaperThanOnDemand(t *testing.T) {
+	const bulkFixture = `{
+  "formatVersion": "aws_v1",
+  "products": {
+    "INVSKU1": {
+      "sku": "INVSKU1",
+      "productFamily": "Compute Instance",
+      "attributes": {
+        "instanceType":    "m5.xlarge",
+        "operatingSystem": "Linux",
+        "tenancy":         "Shared",
+        "preInstalledSw":  "NA",
+        "capacitystatus":  "Used",
+        "location":        "US East (N. Virginia)"
+      }
+    }
+  },
+  "terms": {
+    "OnDemand": {
+      "INVSKU1.ODTERM": {
+        "priceDimensions": {
+          "INVSKU1.ODTERM.DIM": {
+            "unit": "Hrs",
+            "pricePerUnit": {"USD": "0.1920000000"},
+            "description": "$0.192 per On Demand Linux m5.xlarge Instance Hour"
+          }
+        },
+        "termAttributes": {}
+      }
+    },
+    "Reserved": {
+      "INVSKU1.4NA7Y5ZX": {
+        "priceDimensions": {
+          "INVSKU1.4NA7Y5ZX.DIM": {
+            "unit": "Hrs",
+            "pricePerUnit": {"USD": "0.1140000000"},
+            "description": "$0.114 per Reserved Linux m5.xlarge Instance Hour"
+          }
+        },
+        "termAttributes": {
+          "LeaseContractLength": "1yr",
+          "PurchaseOption":      "No Upfront"
+        }
+      }
+    }
+  }
+}`
+
+	newBulkServer(t, bulkFixture)
+	p := newBulkProvider(t)
+	ctx := context.Background()
+
+	odPrices, err := p.GetComputePrice(ctx, "m5.xlarge", "us-east-1", "Linux", models.PricingTermOnDemand)
+	if err != nil {
+		t.Fatalf("GetComputePrice(on_demand): %v", err)
+	}
+	if len(odPrices) == 0 {
+		t.Fatal("GetComputePrice(on_demand): expected at least one price, got none")
+	}
+
+	// Clear cache so the second call re-fetches (different cache key, so no issue).
+	r1Prices, err := p.GetComputePrice(ctx, "m5.xlarge", "us-east-1", "Linux", models.PricingTermReserved1Yr)
+	if err != nil {
+		t.Fatalf("GetComputePrice(reserved_1yr): %v", err)
+	}
+	if len(r1Prices) == 0 {
+		t.Fatal("GetComputePrice(reserved_1yr): expected at least one price, got none")
+	}
+
+	odPrice := odPrices[0].PricePerUnit
+	r1Price := r1Prices[0].PricePerUnit
+
+	const tolerance = 1e-6
+	if odPrice < 0.192-tolerance || odPrice > 0.192+tolerance {
+		t.Errorf("on_demand price = %v, want ~0.192", odPrice)
+	}
+	if r1Price < 0.114-tolerance || r1Price > 0.114+tolerance {
+		t.Errorf("reserved_1yr price = %v, want ~0.114", r1Price)
+	}
+	if r1Price >= odPrice {
+		t.Errorf("invariant violation: reserved_1yr (%v) must be cheaper than on_demand (%v)", r1Price, odPrice)
+	}
+}
+
+// --------------------------------------------------------------------------
 // TestPricingResult_AuthGating (provider-contract)
 // --------------------------------------------------------------------------
 
