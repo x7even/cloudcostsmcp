@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"reflect"
 	"testing"
+	"time"
 )
 
 // ptr returns a pointer to v. Used for nullable optional fields in test fixtures.
@@ -1576,5 +1577,85 @@ func TestNormalizedPrice_ZeroValueIsValid(t *testing.T) {
 	hc := n.HourlyCost()
 	if hc != 0.0 {
 		t.Errorf("HourlyCost() for zero price = %v, want 0.0", hc)
+	}
+}
+
+// --------------------------------------------------------------------------
+// TestPricingResult_JSONRoundtrip — NormalizedPrice marshals and unmarshals
+// without losing any fields (mirrors Python test of trust fields in summary).
+// --------------------------------------------------------------------------
+
+func TestPricingResult_JSONRoundtrip(t *testing.T) {
+	now := time.Date(2025, 6, 20, 14, 30, 0, 0, time.UTC)
+	cacheAge := 3600
+
+	original := NormalizedPrice{
+		Provider:      CloudProviderAWS,
+		Service:       "compute",
+		SKUID:         "TEST123",
+		ProductFamily: "Compute Instance",
+		Description:   "m5.xlarge Linux",
+		Region:        "us-east-1",
+		Attributes: map[string]string{
+			"instanceType": "m5.xlarge",
+			"vcpu":         "4",
+			"memory":       "16 GiB",
+		},
+		PricingTerm:     PricingTermOnDemand,
+		PricePerUnit:    0.192,
+		Unit:            PriceUnitPerHour,
+		Currency:        "USD",
+		FetchedAt:       &now,
+		SourceURL:       "https://aws.amazon.com/ec2/pricing/on-demand/",
+		CacheAgeSeconds: &cacheAge,
+	}
+
+	data, err := json.Marshal(&original)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+
+	var got NormalizedPrice
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+
+	if got.Provider != original.Provider {
+		t.Errorf("Provider: got %q, want %q", got.Provider, original.Provider)
+	}
+	if got.Service != original.Service {
+		t.Errorf("Service: got %q, want %q", got.Service, original.Service)
+	}
+	if got.SKUID != original.SKUID {
+		t.Errorf("SKUID: got %q, want %q", got.SKUID, original.SKUID)
+	}
+	if got.Region != original.Region {
+		t.Errorf("Region: got %q, want %q", got.Region, original.Region)
+	}
+	if got.PricePerUnit != original.PricePerUnit {
+		t.Errorf("PricePerUnit: got %v, want %v", got.PricePerUnit, original.PricePerUnit)
+	}
+	if got.Unit != original.Unit {
+		t.Errorf("Unit: got %q, want %q", got.Unit, original.Unit)
+	}
+	if got.Currency != original.Currency {
+		t.Errorf("Currency: got %q, want %q", got.Currency, original.Currency)
+	}
+	if got.SourceURL != original.SourceURL {
+		t.Errorf("SourceURL: got %q, want %q", got.SourceURL, original.SourceURL)
+	}
+	if got.CacheAgeSeconds == nil || *got.CacheAgeSeconds != cacheAge {
+		t.Errorf("CacheAgeSeconds: got %v, want %d", got.CacheAgeSeconds, cacheAge)
+	}
+	if got.FetchedAt == nil || !got.FetchedAt.Equal(now) {
+		t.Errorf("FetchedAt: got %v, want %v", got.FetchedAt, now)
+	}
+	if len(got.Attributes) != len(original.Attributes) {
+		t.Errorf("Attributes len: got %d, want %d", len(got.Attributes), len(original.Attributes))
+	}
+	for k, v := range original.Attributes {
+		if got.Attributes[k] != v {
+			t.Errorf("Attributes[%q]: got %q, want %q", k, got.Attributes[k], v)
+		}
 	}
 }

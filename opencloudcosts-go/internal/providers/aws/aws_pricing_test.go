@@ -1233,3 +1233,117 @@ func TestGetPrice_Serverless_CacheHit(t *testing.T) {
 // --------------------------------------------------------------------------
 
 var _ = os.DevNull // ensure os import is not elided
+
+// --------------------------------------------------------------------------
+// TestPricingResult_AuthGating (provider-contract)
+// --------------------------------------------------------------------------
+
+// TestPricingResult_AuthGating verifies that PricingResult JSON serialization
+// omits contracted_prices and effective_price when auth_available is false,
+// and includes them when auth_available is true.
+//
+// Mirrors Python test_pricing_result_summary_with_no_auth /
+// test_pricing_result_summary_with_auth from test_provider_contract.py.
+func TestPricingResult_AuthGating(t *testing.T) {
+	now := time.Now()
+	basePrice := models.NormalizedPrice{
+		Provider:      models.CloudProviderAWS,
+		Service:       "compute",
+		SKUID:         "test-sku",
+		ProductFamily: "Compute Instance",
+		Description:   "m5.xlarge Linux on-demand",
+		Region:        "us-east-1",
+		PricingTerm:   models.PricingTermOnDemand,
+		PricePerUnit:  0.192,
+		Unit:          models.PriceUnitPerHour,
+		Currency:      "USD",
+		FetchedAt:     &now,
+	}
+	contractedPrice := models.NormalizedPrice{
+		Provider:      models.CloudProviderAWS,
+		Service:       "compute",
+		SKUID:         "test-sku-sp",
+		ProductFamily: "Compute Instance",
+		Description:   "m5.xlarge Compute SP",
+		Region:        "us-east-1",
+		PricingTerm:   models.PricingTermComputeSP,
+		PricePerUnit:  0.140,
+		Unit:          models.PriceUnitPerHour,
+		Currency:      "USD",
+		FetchedAt:     &now,
+	}
+	effectivePrice := &models.EffectivePrice{
+		BasePrice:             basePrice,
+		EffectivePricePerUnit: 0.140,
+		DiscountType:          "SP",
+		DiscountPct:           27.1,
+		CommitmentTerm:        "1yr",
+		Source:                "cost_explorer",
+	}
+
+	t.Run("no_auth_omits_contracted_and_effective", func(t *testing.T) {
+		result := &models.PricingResult{
+			PublicPrices:  []models.NormalizedPrice{basePrice},
+			AuthAvailable: false,
+			Source:        "catalog",
+			SchemaVersion: "1",
+		}
+		data, err := json.Marshal(result)
+		if err != nil {
+			t.Fatalf("json.Marshal: %v", err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(data, &m); err != nil {
+			t.Fatalf("json.Unmarshal: %v", err)
+		}
+		if _, ok := m["contracted_prices"]; ok {
+			t.Error("contracted_prices must not be present when auth_available=false")
+		}
+		if _, ok := m["effective_price"]; ok {
+			t.Error("effective_price must not be present when auth_available=false")
+		}
+		if m["auth_available"] != false {
+			t.Errorf("auth_available = %v, want false", m["auth_available"])
+		}
+		prices, ok := m["public_prices"].([]any)
+		if !ok || len(prices) == 0 {
+			t.Error("public_prices must be present and non-empty")
+		}
+	})
+
+	t.Run("with_auth_includes_contracted_and_effective", func(t *testing.T) {
+		result := &models.PricingResult{
+			PublicPrices:     []models.NormalizedPrice{basePrice},
+			ContractedPrices: []models.NormalizedPrice{contractedPrice},
+			EffectivePrice:   effectivePrice,
+			AuthAvailable:    true,
+			Source:           "catalog",
+			SchemaVersion:    "1",
+		}
+		data, err := json.Marshal(result)
+		if err != nil {
+			t.Fatalf("json.Marshal: %v", err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(data, &m); err != nil {
+			t.Fatalf("json.Unmarshal: %v", err)
+		}
+		if m["auth_available"] != true {
+			t.Errorf("auth_available = %v, want true", m["auth_available"])
+		}
+		if _, ok := m["contracted_prices"]; !ok {
+			t.Error("contracted_prices must be present when auth_available=true and set")
+		}
+		effAny, ok := m["effective_price"]
+		if !ok {
+			t.Fatal("effective_price must be present when auth_available=true and set")
+		}
+		eff, ok := effAny.(map[string]any)
+		if !ok {
+			t.Fatalf("effective_price is not a map: %T", effAny)
+		}
+		if _, ok := eff["discount_pct"]; !ok {
+			t.Error("effective_price must contain discount_pct")
+		}
+	})
+}
