@@ -3,6 +3,8 @@ package aws
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 	"time"
@@ -10,6 +12,9 @@ import (
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/cache"
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/config"
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/models"
+	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/providers"
+	azureprovider "github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/providers/azure"
+	gcpprovider "github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/providers/gcp"
 )
 
 // --------------------------------------------------------------------------
@@ -1229,6 +1234,110 @@ func TestGetPrice_Serverless_CacheHit(t *testing.T) {
 }
 
 // --------------------------------------------------------------------------
+// TestNetworkEgress_Internet_TieredBreakdown — filter string regression
+// --------------------------------------------------------------------------
+
+// TestNetworkEgress_Internet_FilterValue verifies that GetNetworkPrice uses
+// exactly "InterRegion Outbound" as the transferType filter value (not
+// "AWS Inter-Region Outbound" or any other variant). The wrong string silently
+// returns no API results and falls back to static rates.
+//
+// This is the Go equivalent of test_price_egress_uses_correct_filter in Python.
+//
+// The test serves a bulk pricing JSON containing a single AWSDataTransfer product
+// whose transferType attribute is "InterRegion Outbound". If the filter in Go uses
+// the correct string, getProductsBulk will match the product and GetNetworkPrice
+// will return an API-sourced price (no fallback attribute). If the string is
+// wrong, no product matches and the result falls back to static rates (with
+// fallback="true" attribute).
+func TestNetworkEgress_Internet_FilterValue(t *testing.T) {
+	// Minimal AWSDataTransfer bulk JSON with a single egress product.
+	// The transferType attribute must be "InterRegion Outbound" — the exact string
+	// the AWS Pricing API uses. Any other string would not be returned by the API.
+	const dataTransferBulkJSON = `{
+"formatVersion": "aws_v1",
+"products": {
+  "EGRESS_SKU1": {
+    "sku": "EGRESS_SKU1",
+    "productFamily": "Data Transfer",
+    "attributes": {
+      "transferType": "InterRegion Outbound",
+      "fromRegionCode": "us-east-1",
+      "toRegionCode": "eu-west-1",
+      "usagetype": "USE1-EU-AWS-Out-Bytes"
+    }
+  }
+},
+"terms": {
+  "OnDemand": {
+    "EGRESS_SKU1.JRTCKXETXF": {
+      "priceDimensions": {
+        "EGRESS_SKU1.JRTCKXETXF.DIM": {
+          "unit": "GB",
+          "pricePerUnit": {"USD": "0.0200000000"},
+          "description": "$0.020 per GB data transferred out"
+        }
+      },
+      "termAttributes": {}
+    }
+  },
+  "Reserved": {}
+}
+}`
+
+	// Start httptest server that serves the bulk JSON for any URL.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(dataTransferBulkJSON))
+	}))
+	defer srv.Close()
+
+	// Override the bulk base URL so GetProducts uses our test server.
+	origURL := bulkPricingBaseURL
+	bulkPricingBaseURL = srv.URL
+	defer func() { bulkPricingBaseURL = origURL }()
+
+	// Create a provider in bulk-fallback mode (no pricing client).
+	p := newTestProvider(t)
+	p.bulkFallback = true
+
+	spec := &models.EgressPricingSpec{
+		BasePricingSpec: models.BasePricingSpec{
+			Provider: models.CloudProviderAWS,
+			Domain:   models.PricingDomainInterRegionEgress,
+			Region:   "us-east-1",
+			Term:     models.PricingTermOnDemand,
+		},
+		SourceRegion: "us-east-1",
+		DestRegion:   "eu-west-1",
+	}
+	prices, err := p.GetNetworkPrice(context.Background(), spec, "us-east-1")
+	if err != nil {
+		t.Fatalf("GetNetworkPrice: %v", err)
+	}
+	if len(prices) == 0 {
+		t.Fatal("expected at least one price result")
+	}
+
+	// If the filter string is wrong, the bulk endpoint returns no matches and
+	// GetNetworkPrice falls back to static rates (fallback="true").
+	// A correct filter string matches our fixture and returns a live API price.
+	for _, p := range prices {
+		if p.Attributes["fallback"] == "true" {
+			t.Error(`GetNetworkPrice fell back to static rates — the transferType filter ` +
+				`value is wrong. Expected "InterRegion Outbound" but the filter ` +
+				`did not match the bulk pricing product.`)
+		}
+	}
+
+	// Also verify the price value matches our fixture ($0.02/GB).
+	if prices[0].PricePerUnit != 0.02 {
+		t.Errorf("price = %v, want 0.02 (from bulk fixture)", prices[0].PricePerUnit)
+	}
+}
+
+// --------------------------------------------------------------------------
 // Ensure unused import is satisfied in tests
 // --------------------------------------------------------------------------
 
@@ -1346,4 +1455,70 @@ func TestPricingResult_AuthGating(t *testing.T) {
 			t.Error("effective_price must contain discount_pct")
 		}
 	})
+}
+
+// --------------------------------------------------------------------------
+// TestAllProvidersImplementInterface (provider-contract)
+// --------------------------------------------------------------------------
+
+// TestAllProvidersImplementInterface verifies that all three cloud pricing
+// providers (AWS, Azure, GCP) satisfy the providers.Provider interface at
+// runtime, and that each returns the correct canonical provider name.
+//
+// In Go the compile-time interface guards (var _ providers.Provider = (*P)(nil))
+// in each provider package are the primary enforcement; this test provides an
+// additional runtime assertion and documents the expected Name() values.
+//
+// Mirrors TestAllProvidersImplementInterface from test_provider_contract.py.
+func TestAllProvidersImplementInterface(t *testing.T) {
+	dir := t.TempDir()
+	cm, err := cache.New(dir)
+	if err != nil {
+		t.Fatalf("cache.New: %v", err)
+	}
+	cfg := &config.Config{
+		CacheTTLHours:   24,
+		MetadataTTLDays: 7,
+		AWSRegion:       "us-east-1",
+	}
+	// AWS: use the internal struct directly (avoids credential probe in NewProvider).
+	awsP := &Provider{cfg: cfg, cache: cm}
+	// Azure: NewProvider requires only a cache manager and TTLs.
+	azureP := azureprovider.NewProvider(cm, 24*time.Hour, 7*24*time.Hour)
+	// GCP: NewProvider requires a config and cache manager.
+	gcpP, err := gcpprovider.NewProvider(cfg, cm)
+	if err != nil {
+		t.Fatalf("gcpprovider.NewProvider: %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		pvdr     providers.Provider
+		wantName models.CloudProvider
+	}{
+		{"aws", awsP, models.CloudProviderAWS},
+		{"azure", azureP, models.CloudProviderAzure},
+		{"gcp", gcpP, models.CloudProviderGCP},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.pvdr == nil {
+				t.Fatal("provider is nil")
+			}
+			got := tc.pvdr.Name()
+			if got != tc.wantName {
+				t.Errorf("Name() = %q, want %q", got, tc.wantName)
+			}
+			// DefaultRegion must be non-empty.
+			if dr := tc.pvdr.DefaultRegion(); dr == "" {
+				t.Error("DefaultRegion() must be non-empty")
+			}
+			// MajorRegions must be non-empty.
+			if mr := tc.pvdr.MajorRegions(); len(mr) == 0 {
+				t.Error("MajorRegions() must return at least one region")
+			}
+		})
+	}
 }

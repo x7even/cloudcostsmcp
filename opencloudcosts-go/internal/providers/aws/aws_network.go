@@ -133,7 +133,7 @@ func (p *Provider) GetNetworkPrice(
 	}
 
 	var rawItems []string
-	if p.pricingClient != nil {
+	if p.pricingClient != nil || p.bulkFallback {
 		var apiErr error
 		rawItems, apiErr = p.GetProducts(ctx, "AWSDataTransfer", filters, 30)
 		if apiErr != nil {
