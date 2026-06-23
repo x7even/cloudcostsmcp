@@ -36,6 +36,11 @@ import (
 // package so callers can reference it from this package.
 type Provider = providers.Provider
 
+// Version is the build-time version string. Set it from main() before calling
+// New() so /healthz reports the real version instead of "dev".
+// Defaults to "dev" when not set (e.g. in tests).
+var Version = "dev"
+
 // AppServer holds the runtime state shared across all tool handlers.
 type AppServer struct {
 	cfg       *config.Config
@@ -201,7 +206,7 @@ func (s *AppServer) RunHTTP(host, port string) error {
 func (s *AppServer) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, `{"status":"ok","version":"dev"}`)
+	fmt.Fprintf(w, `{"status":"ok","version":%q}`, Version)
 }
 
 // handleReadyz is the readiness probe — 503 until cache+providers are ready.

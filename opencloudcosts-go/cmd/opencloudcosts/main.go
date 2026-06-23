@@ -53,18 +53,18 @@ func main() {
 		fs.PrintDefaults()
 	}
 
+	// Handle --version before Parse() so flag.ExitOnError doesn't reject it.
+	for _, arg := range os.Args[1:] {
+		if arg == "--version" || arg == "-version" || arg == "version" {
+			fmt.Println("opencloudcosts", version)
+			os.Exit(0)
+		}
+	}
+
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		// ExitOnError means this won't be reached, but keep for clarity.
 		fmt.Fprintf(os.Stderr, "flag error: %v\n", err)
 		os.Exit(1)
-	}
-
-	// Handle --version separately (before loading config).
-	for _, arg := range os.Args[1:] {
-		if arg == "--version" || arg == "-version" {
-			fmt.Println("opencloudcosts", version)
-			os.Exit(0)
-		}
 	}
 
 	// Validate transport choice.
@@ -132,6 +132,7 @@ func main() {
 	}
 
 	// Build the application server.
+	server.Version = version
 	srv := server.New(cfg, cm, provs)
 
 	if err := runServer(srv, *transport, *host, *port, cfg); err != nil {

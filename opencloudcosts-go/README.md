@@ -92,35 +92,47 @@ No credentials required — Azure pricing uses the public Retail Prices API.
 ## Health check (HTTP transport only)
 
 ```
-GET /health  →  200 OK
+GET /healthzz  →  200 OK   (liveness — always up while process is running)
+GET /readyz   →  200 OK   (readiness — 503 until cache and providers are ready)
 ```
 
-Used by Docker and Kubernetes readiness/liveness probes.
+Use `/healthz` for liveness probes and `/readyz` for readiness probes.
+`GET /` is owned by the MCP handler and returns 400 for plain HTTP requests.
 
 ## Docker
 
 Multi-stage build — final image is distroless scratch, ~15 MB.
 
+The committed `Dockerfile` uses `COPY . .` so the build context must be the
+`opencloudcosts-go/` directory (where `go.mod` lives):
+
+```bash
+# Build from within the opencloudcosts-go/ subdirectory
+cd opencloudcosts-go
+docker build -t opencloudcosts-go:local .
+docker run --rm -p 8080:8080 opencloudcosts-go:local
+
+# Or from the repo root, pass the subdirectory as the build context
+docker build -f opencloudcosts-go/Dockerfile -t opencloudcosts-go:local opencloudcosts-go/
+```
+
+Dockerfile contents (for reference):
+
 ```dockerfile
 FROM golang:1.25.11-alpine AS builder
 WORKDIR /src
-COPY opencloudcosts-go/ .
+COPY . .
+ARG VERSION=dev
 RUN CGO_ENABLED=0 GOOS=linux go build \
-      -ldflags="-X main.version=$(git describe --tags --always)" \
+      -ldflags="-X main.version=${VERSION}" \
       -o /opencloudcosts ./cmd/opencloudcosts
 
 FROM scratch
 COPY --from=builder /opencloudcosts /opencloudcosts
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+EXPOSE 8080
 ENTRYPOINT ["/opencloudcosts"]
 CMD ["--transport", "http", "--host", "0.0.0.0", "--port", "8080"]
-```
-
-Or build directly from the repo root:
-
-```bash
-docker build -f opencloudcosts-go/Dockerfile -t opencloudcosts-go:local .
-docker run --rm -p 8080:8080 opencloudcosts-go:local
 ```
 
 ## Kubernetes

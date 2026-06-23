@@ -1,0 +1,45 @@
+name: opencloudcosts-go CI
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'opencloudcosts-go/**'
+  pull_request:
+    paths:
+      - 'opencloudcosts-go/**'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: opencloudcosts-go
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: opencloudcosts-go/go.mod
+
+      # Build with CGO disabled — produces the same static binary as the Dockerfile.
+      - name: build
+        run: CGO_ENABLED=0 go build ./...
+
+      # Tests run with CGO enabled (default) so the race detector works.
+      - name: test
+        run: go test -race ./...
+
+      - name: vet
+        run: go vet ./...
+
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+      # golangci-lint v2 via action v8 — supports go1.25+ targets.
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          working-directory: opencloudcosts-go
+          args: --enable=errcheck,staticcheck,gosec,gocritic

@@ -232,8 +232,13 @@ func TestHandlersReturnStructuredJSON(t *testing.T) {
 	}
 }
 
-// TestHealthz verifies the /healthz endpoint returns 200 with the expected body.
+// TestHealthz verifies the /healthz endpoint returns 200 with the expected body,
+// including the version string set via server.Version.
 func TestHealthz(t *testing.T) {
+	prev := server.Version
+	server.Version = "1.2.3-test"
+	t.Cleanup(func() { server.Version = prev })
+
 	srv := newTestServer(t)
 	handler := buildHTTPHandler(srv)
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
@@ -250,8 +255,8 @@ func TestHealthz(t *testing.T) {
 	if body["status"] != "ok" {
 		t.Errorf(`/healthz: "status"=%q, want "ok"`, body["status"])
 	}
-	if body["version"] != "dev" {
-		t.Errorf(`/healthz: "version"=%q, want "dev"`, body["version"])
+	if body["version"] != "1.2.3-test" {
+		t.Errorf(`/healthz: "version"=%q, want "1.2.3-test"`, body["version"])
 	}
 }
 
