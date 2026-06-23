@@ -748,6 +748,52 @@ func TestGetBigQueryPrice_MultiRegionFallback(t *testing.T) {
 	}
 }
 
+// TestGetBigQueryPrice_FreeTierNote verifies that the BigQuery pricing response
+// includes a note describing the 1 TiB/month free query tier.
+func TestGetBigQueryPrice_FreeTierNote(t *testing.T) {
+	skus := []map[string]any{
+		makeSKUPaid("BigQuery Analysis", "OnDemand", "us", "5", 0), // $5/TiB paid tier
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(skuResponse(skus))
+	}))
+	defer ts.Close()
+
+	p := newTestProviderDB(t, ts)
+	_, breakdown, err := p.getBigQueryPrice(context.Background(), "us", nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("getBigQueryPrice: %v", err)
+	}
+	if breakdown == nil {
+		t.Fatal("breakdown should not be nil")
+	}
+	noteRaw, ok := breakdown["note"]
+	if !ok {
+		t.Fatal("breakdown must contain a 'note' key describing the free tier")
+	}
+	note, ok := noteRaw.(string)
+	if !ok {
+		t.Fatalf("breakdown['note'] must be a string, got %T", noteRaw)
+	}
+	if len(note) == 0 {
+		t.Error("note is empty; expected mention of '1 TiB' free query tier")
+	}
+	// Verify the note mentions the free tier threshold.
+	wantSubstr := "1 TiB"
+	var found bool
+	for i := 0; i+len(wantSubstr) <= len(note); i++ {
+		if note[i:i+len(wantSubstr)] == wantSubstr {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("note %q does not mention '1 TiB' free query tier", note)
+	}
+}
+
 // --------------------------------------------------------------------------
 // Vertex AI tests
 // --------------------------------------------------------------------------
