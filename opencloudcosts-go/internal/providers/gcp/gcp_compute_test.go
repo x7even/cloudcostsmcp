@@ -748,6 +748,56 @@ func TestRegionMatches(t *testing.T) {
 }
 
 // --------------------------------------------------------------------------
+// Backlog tests — gcp-compute domain
+// --------------------------------------------------------------------------
+
+// TestGetComputePrice_CUD1Yr_NumericPrice verifies that a 1-year CUD pricing
+// request returns a numeric (non-zero) price, confirming the Commit1Yr SKU
+// lookup path works end-to-end.
+func TestGetComputePrice_CUD1Yr_NumericPrice(t *testing.T) {
+	// N2 CUD 1yr rates (mirrors actual GCP API format):
+	// CPU: "Commitment v1: N2 Cpu" at $0.019560/core-hr
+	// RAM: "Commitment v1: N2 Ram" at $0.002626/GB-hr
+	// n2-standard-4: 4 vCPU, 16 GB
+	// Total CUD price: 4*0.019560 + 16*0.002626 = 0.07824 + 0.042016 = 0.120256
+	skus := []map[string]any{
+		makeSKU("Commitment v1: N2 Cpu in Americas for 1 Year", "Commit1Yr", "us-central1", "0", 19_560_000),
+		makeSKU("Commitment v1: N2 Ram in Americas for 1 Year", "Commit1Yr", "us-central1", "0", 2_626_000),
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(skuResponse(skus))
+	}))
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	prices, err := p.GetComputePrice(context.Background(), "n2-standard-4", "us-central1", "Linux", models.PricingTermCUD1Yr)
+	if err != nil {
+		t.Fatalf("GetComputePrice (CUD1Yr): %v", err)
+	}
+	if len(prices) != 1 {
+		t.Fatalf("expected 1 price, got %d", len(prices))
+	}
+
+	// Price must be positive (non-zero, non-error).
+	if prices[0].PricePerUnit <= 0 {
+		t.Errorf("CUD1Yr price = %v, want > 0", prices[0].PricePerUnit)
+	}
+
+	// CUD price should be cheaper than on-demand ($0.194236).
+	// On-demand: 4*0.031611 + 16*0.004237 = 0.194236
+	// CUD1Yr:    4*0.019560 + 16*0.002626 = 0.120256
+	want := 4*0.019560 + 16*0.002626
+	if abs(prices[0].PricePerUnit-want) > 1e-6 {
+		t.Errorf("CUD1Yr PricePerUnit = %.6f, want %.6f", prices[0].PricePerUnit, want)
+	}
+	if prices[0].PricingTerm != models.PricingTermCUD1Yr {
+		t.Errorf("PricingTerm = %v, want cud_1yr", prices[0].PricingTerm)
+	}
+}
+
+// --------------------------------------------------------------------------
 // Helpers
 // --------------------------------------------------------------------------
 
