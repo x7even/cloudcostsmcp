@@ -1047,6 +1047,55 @@ func TestGetComputePrice_CUD1YrCheaperThanOnDemand(t *testing.T) {
 	}
 }
 
+// TestGetComputePrice_CUD3YrCheaperThan1Yr verifies the price ordering
+// invariant: 3-year committed-use discount must be cheaper than 1-year for
+// the same instance type.
+func TestGetComputePrice_CUD3YrCheaperThan1Yr(t *testing.T) {
+	// n2-standard-4: 4 vCPU, 16 GB RAM.
+	// Commit1Yr: $0.019560/vCPU-hr, $0.002626/GB-hr
+	// Commit3Yr: $0.013972/vCPU-hr, $0.001874/GB-hr
+	skus := []map[string]any{
+		// CUD 1-year SKUs
+		makeSKU("Commitment v1: N2 Cpu in Americas for 1 Year", "Commit1Yr", "us-central1", "0", 19_560_000),
+		makeSKU("Commitment v1: N2 Ram in Americas for 1 Year", "Commit1Yr", "us-central1", "0", 2_626_000),
+		// CUD 3-year SKUs (same desc substring, different usageType)
+		makeSKU("Commitment v1: N2 Cpu in Americas for 3 Years", "Commit3Yr", "us-central1", "0", 13_972_000),
+		makeSKU("Commitment v1: N2 Ram in Americas for 3 Years", "Commit3Yr", "us-central1", "0", 1_874_000),
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(skuResponse(skus))
+	}))
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	ctx := context.Background()
+
+	cud3YrPrices, err := p.GetComputePrice(ctx, "n2-standard-4", "us-central1", "Linux", models.PricingTermCUD3Yr)
+	if err != nil {
+		t.Fatalf("GetComputePrice (cud_3yr): %v", err)
+	}
+	if len(cud3YrPrices) != 1 {
+		t.Fatalf("expected 1 cud_3yr price, got %d", len(cud3YrPrices))
+	}
+
+	cud1YrPrices, err := p.GetComputePrice(ctx, "n2-standard-4", "us-central1", "Linux", models.PricingTermCUD1Yr)
+	if err != nil {
+		t.Fatalf("GetComputePrice (cud_1yr): %v", err)
+	}
+	if len(cud1YrPrices) != 1 {
+		t.Fatalf("expected 1 cud_1yr price, got %d", len(cud1YrPrices))
+	}
+
+	cud3YrPrice := cud3YrPrices[0].PricePerUnit
+	cud1YrPrice := cud1YrPrices[0].PricePerUnit
+
+	if cud3YrPrice >= cud1YrPrice {
+		t.Errorf("price invariant violated: cud_3yr ($%.6f) must be < cud_1yr ($%.6f)", cud3YrPrice, cud1YrPrice)
+	}
+}
+
 // --------------------------------------------------------------------------
 // Helpers
 // --------------------------------------------------------------------------
