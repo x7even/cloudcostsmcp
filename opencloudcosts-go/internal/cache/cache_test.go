@@ -293,6 +293,32 @@ func TestConcurrentMixedAccess(t *testing.T) {
 	wg.Wait()
 }
 
+// TestCacheManager_ExpiredEntryReturnsNotFound verifies that after a TTL expires
+// Get returns (nil, false) — i.e. not stale data, just a clean not-found.
+func TestCacheManager_ExpiredEntryReturnsNotFound(t *testing.T) {
+	cm := newTestCache(t)
+	payload := jsonBytes(t, map[string]string{"price": "1.234", "unit": "per_hour"})
+
+	// Set with a 1 ms TTL so it expires almost immediately.
+	cm.Set("aws:compute:expire-check", payload, 1*time.Millisecond)
+
+	// Confirm the entry is present before it expires.
+	if _, ok := cm.Get("aws:compute:expire-check"); !ok {
+		t.Fatal("Get() immediately after Set(): got miss, want hit")
+	}
+
+	// Wait for the TTL to elapse.
+	time.Sleep(20 * time.Millisecond)
+
+	got, ok := cm.Get("aws:compute:expire-check")
+	if ok {
+		t.Error("Get() after TTL expiry: got ok=true, want false")
+	}
+	if got != nil {
+		t.Errorf("Get() after TTL expiry: got non-nil stale value %s, want nil", got)
+	}
+}
+
 // TestClearProviderNoFlushOnZeroDeletes verifies that ClearProvider on a prefix
 // with no matching keys returns 0 and does not panic.
 func TestClearProviderNoMatchingKeys(t *testing.T) {
