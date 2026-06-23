@@ -247,3 +247,61 @@ func TestPriceObservability_TieredCostSmall(t *testing.T) {
 		t.Errorf("estimated_monthly_cost = %q, want %q", costStr, expected)
 	}
 }
+
+// TestPriceObservability_TieredCostLarge verifies that large ingestion volumes
+// correctly cross the tier-1 boundary into tier-2.
+//
+// With ingestion_mib=150000.0 (using fallback rates):
+//
+//	free tier = 150 MiB
+//	billable = 150000 - 150 = 149850 MiB
+//	tier1 = 100000 × $0.258 = $25800.00
+//	tier2 = 49850 × $0.151 = $7527.35
+//	total = $33327.35
+func TestPriceObservability_TieredCostLarge(t *testing.T) {
+	// Use an HTTP 500 to force fallback rates so the test is deterministic.
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "service unavailable", http.StatusInternalServerError)
+	}))
+	defer ts.Close()
+
+	p := newTestProviderAnalytics(t, ts)
+	spec := &models.ObservabilityPricingSpec{
+		BasePricingSpec: models.BasePricingSpec{
+			Provider: models.CloudProviderGCP,
+			Domain:   models.PricingDomainObservability,
+			Service:  "cloud_monitoring",
+			Region:   "global",
+		},
+		IngestionMiB: 150000.0,
+	}
+
+	_, breakdown, err := p.priceObservability(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("priceObservability: %v", err)
+	}
+
+	// billable = 149850 MiB
+	// tier1 = 100000 × 0.258 = 25800.00
+	// tier2 = 49850 × 0.151 = 7527.35
+	// total = 33327.35
+	billable := 150000.0 - cloudMonitoringFreeTierMiB // 149850
+	tier1Amount := cloudMonitoringT1Limit             // 100000
+	tier2Amount := billable - tier1Amount             // 49850
+	expectedCost := tier1Amount*cloudMonitoringT1Rate + tier2Amount*cloudMonitoringT2Rate
+
+	costStr, ok := breakdown["estimated_monthly_cost"].(string)
+	if !ok {
+		t.Fatalf("estimated_monthly_cost missing or wrong type: %v", breakdown["estimated_monthly_cost"])
+	}
+	expected := fmt.Sprintf("$%.4f/month", expectedCost)
+	if costStr != expected {
+		t.Errorf("estimated_monthly_cost = %q, want %q", costStr, expected)
+	}
+
+	// Must use fallback rates.
+	fallback, ok := breakdown["fallback"].(bool)
+	if !ok || !fallback {
+		t.Errorf("expected breakdown['fallback'] = true, got %v", breakdown["fallback"])
+	}
+}
