@@ -1182,6 +1182,43 @@ func TestGetComputePrice_SortedCheapestFirst(t *testing.T) {
 	}
 }
 
+func TestGetSQLPrice_CacheHit(t *testing.T) {
+	// Second call with same args must use cache; HTTP endpoint must be called exactly once.
+	sqlItem := azureItem{
+		"retailPrice":   0.3812,
+		"productName":   "SQL Database Vcore",
+		"skuName":       "GP_Gen5_4 LRS",
+		"serviceName":   "SQL Database",
+		"serviceFamily": "Databases",
+		"meterId":       "sql-gp-4vcores",
+		"meterName":     "GP_Gen5_4",
+		"armRegionName": "eastus",
+		"unitOfMeasure": "1 Hour",
+	}
+	srv, count := countingServer(t, []azureItem{sqlItem})
+	defer srv.Close()
+	p := newTestProvider(t, srv)
+
+	ctx := context.Background()
+	// First call: hits the API.
+	_, err := p.GetSQLPrice(ctx, "General Purpose 4 vCores", "eastus", "SQL", "single-az", models.PricingTermOnDemand)
+	if err != nil {
+		t.Fatalf("first call unexpected error: %v", err)
+	}
+	if *count != 1 {
+		t.Errorf("expected 1 HTTP call after first request, got %d", *count)
+	}
+
+	// Second call with same args: must use cache.
+	_, err = p.GetSQLPrice(ctx, "General Purpose 4 vCores", "eastus", "SQL", "single-az", models.PricingTermOnDemand)
+	if err != nil {
+		t.Fatalf("second call unexpected error: %v", err)
+	}
+	if *count != 1 {
+		t.Errorf("expected still 1 HTTP call after cached request, got %d", *count)
+	}
+}
+
 func TestMain(m *testing.M) {
 	// Ensure tests don't need real network.
 	fmt.Println("Running Azure provider tests with mock HTTP server...")
