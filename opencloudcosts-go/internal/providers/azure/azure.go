@@ -265,14 +265,21 @@ var sqlTierMap = map[string]string{
 
 // Static fallback rates.
 const (
-	functionsExecRate  = 0.0000002 // per execution
-	functionsGBSecRate = 0.000016  // per GB-second
-	aksPremiumRate     = 0.10      // per cluster/hr (Standard tier)
-	monitorLogRate     = 2.30      // per GB Analytics Logs
-	monitorMetricsRate = 0.16      // per 10M metric samples
-	monitorAlertRate   = 0.10      // per rule/month after 10 free
-	monitorFreeLogGB   = 5.0       // 5 GB/month free tier
-	monitorFreeAlerts  = 10        // first 10 metric alert rules free
+	functionsExecRate   = 0.0000002 // per execution
+	functionsGBSecRate  = 0.000016  // per GB-second
+	aksPremiumRate      = 0.10      // per cluster/hr (Standard tier)
+	monitorLogRate      = 2.76      // per GB Analytics Logs
+	monitorBasicLogRate = 0.50      // per GB Basic Logs
+	monitorMetricsRate  = 0.16      // per 10M metric samples
+	monitorAlertRate    = 0.10      // per rule/month after 10 free
+	monitorFreeLogGB    = 5.0       // 5 GB/month free tier
+	monitorFreeAlerts   = 10        // first 10 metric alert rules free
+
+	cosmosProvisionedRate = 0.00008 // per 100 RU/s per hour (Provisioned/Autoscale)
+	cosmosServerlessRate  = 0.25    // per million Request Units consumed
+	cosmosStorageRate     = 0.25    // per GB-month storage
+
+	frontDoorBaseFee = 35.0 // per month Standard tier base fee
 )
 
 // openAIStaticRates maps model names to (input, output) per-1K-token rates.
@@ -418,7 +425,7 @@ func (p *Provider) MajorRegions() []string { return majorRegions }
 
 // Supports reports whether Azure can price the given domain/service pair.
 func (p *Provider) Supports(domain models.PricingDomain, service string) bool {
-	// capabilities set (deduped — network/egress wins last as in Python but both true)
+	// capabilities set — includes canonical names and accepted aliases
 	type key struct{ domain, service string }
 	caps := map[key]bool{
 		{string(models.PricingDomainCompute), ""}:                    true,
@@ -429,6 +436,8 @@ func (p *Provider) Supports(domain models.PricingDomain, service string) bool {
 		{string(models.PricingDomainDatabase), ""}:                   true,
 		{string(models.PricingDomainDatabase), "sql"}:                true,
 		{string(models.PricingDomainDatabase), "cosmos"}:             true,
+		{string(models.PricingDomainDatabase), "cosmos_db"}:          true,
+		{string(models.PricingDomainDatabase), "cosmosdb"}:           true,
 		{string(models.PricingDomainContainer), ""}:                  true,
 		{string(models.PricingDomainContainer), "aks"}:               true,
 		{string(models.PricingDomainServerless), ""}:                 true,
@@ -438,10 +447,15 @@ func (p *Provider) Supports(domain models.PricingDomain, service string) bool {
 		{string(models.PricingDomainNetwork), ""}:                    true,
 		{string(models.PricingDomainNetwork), "egress"}:              true,
 		{string(models.PricingDomainNetwork), "azure_cdn"}:           true,
+		{string(models.PricingDomainNetwork), "cdn"}:                 true,
 		{string(models.PricingDomainNetwork), "azure_front_door"}:    true,
+		{string(models.PricingDomainNetwork), "frontdoor"}:           true,
+		{string(models.PricingDomainNetwork), "front_door"}:          true,
 		{string(models.PricingDomainInterRegionEgress), ""}:          true,
 		{string(models.PricingDomainObservability), ""}:              true,
 		{string(models.PricingDomainObservability), "azure_monitor"}: true,
+		{string(models.PricingDomainObservability), "monitor"}:       true,
+		{string(models.PricingDomainObservability), "log_analytics"}:  true,
 	}
 	return caps[key{string(domain), service}]
 }
@@ -1018,6 +1032,99 @@ func (p *Provider) GetCosmosPrice(
 		if pp != nil {
 			pp.Unit = unit
 			prices = append(prices, *pp)
+		}
+	}
+
+	// Static fallback when API returns no results.
+	if len(prices) == 0 {
+		switch deployment {
+		case "serverless":
+			prices = []models.NormalizedPrice{
+				{
+					Provider:      models.CloudProviderAzure,
+					Service:       "cosmos",
+					SKUID:         "cosmos-serverless-ru",
+					ProductFamily: "Databases",
+					Description:   "Azure Cosmos DB Serverless — per million Request Units",
+					Region:        region,
+					PricingTerm:   models.PricingTermOnDemand,
+					PricePerUnit:  cosmosServerlessRate,
+					Unit:          models.PriceUnitPerUnit,
+					Currency:      "USD",
+					Attributes:    map[string]string{"unit_label": "per million RUs", "source": "static_fallback"},
+				},
+				{
+					Provider:      models.CloudProviderAzure,
+					Service:       "cosmos",
+					SKUID:         "cosmos-serverless-storage",
+					ProductFamily: "Databases",
+					Description:   "Azure Cosmos DB Serverless — Storage",
+					Region:        region,
+					PricingTerm:   models.PricingTermOnDemand,
+					PricePerUnit:  cosmosStorageRate,
+					Unit:          models.PriceUnitPerGBMonth,
+					Currency:      "USD",
+					Attributes:    map[string]string{"cosmos_dimension": "storage", "source": "static_fallback"},
+				},
+			}
+		case "autoscale":
+			prices = []models.NormalizedPrice{
+				{
+					Provider:      models.CloudProviderAzure,
+					Service:       "cosmos",
+					SKUID:         "cosmos-autoscale-ru",
+					ProductFamily: "Databases",
+					Description:   "Azure Cosmos DB Autoscale — per 100 RU/s per hour",
+					Region:        region,
+					PricingTerm:   models.PricingTermOnDemand,
+					PricePerUnit:  cosmosProvisionedRate,
+					Unit:          models.PriceUnitPerUnit,
+					Currency:      "USD",
+					Attributes:    map[string]string{"unit_label": "per 100 RU/s per hour", "source": "static_fallback"},
+				},
+				{
+					Provider:      models.CloudProviderAzure,
+					Service:       "cosmos",
+					SKUID:         "cosmos-autoscale-storage",
+					ProductFamily: "Databases",
+					Description:   "Azure Cosmos DB Autoscale — Storage",
+					Region:        region,
+					PricingTerm:   models.PricingTermOnDemand,
+					PricePerUnit:  cosmosStorageRate,
+					Unit:          models.PriceUnitPerGBMonth,
+					Currency:      "USD",
+					Attributes:    map[string]string{"cosmos_dimension": "storage", "source": "static_fallback"},
+				},
+			}
+		default: // provisioned
+			prices = []models.NormalizedPrice{
+				{
+					Provider:      models.CloudProviderAzure,
+					Service:       "cosmos",
+					SKUID:         "cosmos-provisioned-ru",
+					ProductFamily: "Databases",
+					Description:   "Azure Cosmos DB Provisioned — per 100 RU/s per hour",
+					Region:        region,
+					PricingTerm:   models.PricingTermOnDemand,
+					PricePerUnit:  cosmosProvisionedRate,
+					Unit:          models.PriceUnitPerUnit,
+					Currency:      "USD",
+					Attributes:    map[string]string{"unit_label": "per 100 RU/s per hour", "source": "static_fallback"},
+				},
+				{
+					Provider:      models.CloudProviderAzure,
+					Service:       "cosmos",
+					SKUID:         "cosmos-provisioned-storage",
+					ProductFamily: "Databases",
+					Description:   "Azure Cosmos DB — Storage",
+					Region:        region,
+					PricingTerm:   models.PricingTermOnDemand,
+					PricePerUnit:  cosmosStorageRate,
+					Unit:          models.PriceUnitPerGBMonth,
+					Currency:      "USD",
+					Attributes:    map[string]string{"cosmos_dimension": "storage", "source": "static_fallback"},
+				},
+			}
 		}
 	}
 
@@ -1637,7 +1744,20 @@ func (p *Provider) GetMonitorPrice(
 					PricePerUnit:  monitorLogRate,
 					Unit:          models.PriceUnitPerGB,
 					Currency:      "USD",
-					Attributes:    map[string]string{"free_tier": "5 GB/month", "source": "static_fallback"},
+					Attributes:    map[string]string{"free_tier": "5 GB/month", "source": "static_fallback", "log_tier": "analytics"},
+				},
+				{
+					Provider:      models.CloudProviderAzure,
+					Service:       "azure_monitor",
+					SKUID:         "monitor-basic-logs",
+					ProductFamily: "Management and Governance",
+					Description:   "Azure Monitor — Basic Logs ingestion",
+					Region:        region,
+					PricingTerm:   models.PricingTermOnDemand,
+					PricePerUnit:  monitorBasicLogRate,
+					Unit:          models.PriceUnitPerGB,
+					Currency:      "USD",
+					Attributes:    map[string]string{"source": "static_fallback", "log_tier": "basic"},
 				},
 				{
 					Provider:      models.CloudProviderAzure,
@@ -1943,6 +2063,19 @@ func (p *Provider) GetFrontDoorPrice(
 				{
 					Provider:      models.CloudProviderAzure,
 					Service:       "azure_front_door",
+					SKUID:         fmt.Sprintf("frontdoor-%s-standard-base", zoneSlug),
+					ProductFamily: "Networking",
+					Description:   "Azure Front Door Standard — Base fee",
+					Region:        region,
+					PricingTerm:   models.PricingTermOnDemand,
+					PricePerUnit:  frontDoorBaseFee,
+					Unit:          models.PriceUnitPerMonth,
+					Currency:      "USD",
+					Attributes:    map[string]string{"cdn_zone": zoneLabel, "front_door_sku": sku, "source": "static_fallback", "note": "Standard tier base fee per month"},
+				},
+				{
+					Provider:      models.CloudProviderAzure,
+					Service:       "azure_front_door",
 					SKUID:         fmt.Sprintf("frontdoor-%s-standard-dt", zoneSlug),
 					ProductFamily: "Networking",
 					Description:   fmt.Sprintf("Azure Front Door Standard — Data Transfer Out (%s)", zoneLabel),
@@ -2217,7 +2350,8 @@ func (p *Provider) GetPrice(ctx context.Context, spec models.PricingSpec) (*mode
 
 	case *models.DatabasePricingSpec:
 		svc := strings.ToLower(s.Service)
-		if svc == "cosmos" {
+		// cosmos, cosmos_db, and cosmosdb all route to Cosmos DB pricing.
+		if svc == "cosmos" || svc == "cosmos_db" || svc == "cosmosdb" {
 			dep := strings.ToLower(s.Deployment)
 			multi := dep == "multi-az" || dep == "ha" || dep == "regional" || dep == "multi-region"
 			cosmosDep := dep
@@ -2278,7 +2412,8 @@ func (p *Provider) GetPrice(ctx context.Context, spec models.PricingSpec) (*mode
 
 	case *models.ObservabilityPricingSpec:
 		svc := strings.ToLower(s.Service)
-		if svc != "" && svc != "azure_monitor" {
+		// azure_monitor, monitor, and log_analytics all route to Monitor pricing.
+		if svc != "" && svc != "azure_monitor" && svc != "monitor" && svc != "log_analytics" {
 			return nil, fmt.Errorf("azure: %w: observability service %q", providers.ErrNotSupported, s.Service)
 		}
 		publicPrices, err = p.GetMonitorPrice(ctx, s.Region, s.LogGB, s.IngestionMiB, s.MetricsCount)
@@ -2299,13 +2434,13 @@ func (p *Provider) GetPrice(ctx context.Context, spec models.PricingSpec) (*mode
 				dataGBVal = s.EgressGB
 			}
 			publicPrices, breakdown, err = p.priceNetworkEgress(ctx, src, s.DestinationType, s.DestinationRegion, dataGBVal)
-		case "azure_cdn":
+		case "azure_cdn", "cdn":
 			dataGBVal := s.DataGB
 			if dataGBVal == 0 {
 				dataGBVal = s.EgressGB
 			}
 			publicPrices, err = p.GetCDNPrice(ctx, s.Region, dataGBVal, "standard")
-		case "azure_front_door":
+		case "azure_front_door", "frontdoor", "front_door":
 			dataGBVal := s.DataGB
 			if dataGBVal == 0 {
 				dataGBVal = s.EgressGB
