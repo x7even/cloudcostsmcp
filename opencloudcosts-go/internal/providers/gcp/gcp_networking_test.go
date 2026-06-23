@@ -481,3 +481,40 @@ func TestPriceNetworkNAT_CostMath(t *testing.T) {
 		t.Errorf("monthly_total = %.4f, want %.4f", got, wantTotal)
 	}
 }
+
+// --------------------------------------------------------------------------
+// GetEgressPrice tests
+// --------------------------------------------------------------------------
+
+// TestGetEgressPrice_InternetAmericas verifies that internet egress from
+// us-east1 returns the Americas tier-1 base rate ($0.08/GB).
+// The httptest server returns empty SKUs, so the code falls back to the
+// hardcoded Americas rate.
+func TestGetEgressPrice_InternetAmericas(t *testing.T) {
+	// Return no SKUs — forces fallback to gcpInternetEgressBaseRate["americas"].
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(networkingSKUResponse(nil))
+	}))
+	defer ts.Close()
+
+	p := newNetworkingTestProvider(t, ts)
+	ctx := context.Background()
+
+	// us-east1 is in "americas" → fallback rate = 0.08.
+	prices, err := p.GetEgressPrice(ctx, "us-east1", "", 0)
+	if err != nil {
+		t.Fatalf("GetEgressPrice: %v", err)
+	}
+	if len(prices) == 0 {
+		t.Fatal("expected at least one price")
+	}
+
+	wantRate := gcpInternetEgressBaseRate["americas"] // 0.08
+	if abs(prices[0].PricePerUnit-wantRate) > 1e-9 {
+		t.Errorf("internet egress rate (Americas) = %.4f, want %.4f", prices[0].PricePerUnit, wantRate)
+	}
+	if prices[0].Service != "inter_region_egress" {
+		t.Errorf("service = %q, want inter_region_egress", prices[0].Service)
+	}
+}
