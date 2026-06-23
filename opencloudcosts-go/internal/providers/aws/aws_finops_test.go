@@ -658,3 +658,55 @@ func TestGetDiscountSummary_EmptyLists(t *testing.T) {
 	}
 }
 
+// --------------------------------------------------------------------------
+// TestGetEffectivePrice_NotConfigured
+// --------------------------------------------------------------------------
+
+// TestGetEffectivePrice_NotConfigured verifies that GetEffectivePrice returns
+// errCENotConfigured (wrapping ErrNotSupported) when the Cost Explorer client
+// is nil (i.e. when OCC_AWS_ENABLE_COST_EXPLORER is not set).
+//
+// This corresponds to Python test_get_discount_summary_no_auth in test_phase2.py
+// which expects NotConfiguredError when aws_enable_cost_explorer=False.
+// In Go the provider returns errCENotConfigured wrapping providers.ErrNotSupported;
+// the tool layer converts this to {"error":"not_configured"} for MCP callers.
+func TestGetEffectivePrice_NotConfigured(t *testing.T) {
+	p := &Provider{ceClient: nil} // CE disabled
+
+	spec := &models.ComputePricingSpec{
+		BasePricingSpec: models.BasePricingSpec{
+			Provider: models.CloudProviderAWS,
+			Domain:   models.PricingDomainCompute,
+			Region:   "us-east-1",
+			Term:     models.PricingTermOnDemand,
+		},
+		ResourceType: "m5.xlarge",
+		OS:           "Linux",
+	}
+
+	result, err := p.GetEffectivePrice(context.Background(), spec)
+
+	if err == nil {
+		t.Fatal("expected errCENotConfigured, got nil error")
+	}
+	if !errors.Is(err, providers.ErrNotSupported) {
+		t.Errorf("expected error to wrap ErrNotSupported, got: %v", err)
+	}
+
+	// The error message must mention Cost Explorer and the configuration hint.
+	msg := err.Error()
+	if !strings.Contains(msg, "Cost Explorer") {
+		t.Errorf("error message should mention 'Cost Explorer', got: %q", msg)
+	}
+	if !strings.Contains(msg, "OCC_AWS_ENABLE_COST_EXPLORER") {
+		t.Errorf("error message should mention 'OCC_AWS_ENABLE_COST_EXPLORER', got: %q", msg)
+	}
+
+	// Result must be nil — not_configured is an error path, not a structured response.
+	// The tool layer (HandleGetEffectivePrice) converts ErrNotSupported to
+	// {"error":"not_configured"} for the MCP caller.
+	if result != nil {
+		t.Errorf("expected nil result when CE not configured, got: %v", result)
+	}
+}
+
