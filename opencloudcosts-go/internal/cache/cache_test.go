@@ -2,6 +2,7 @@ package cache
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -333,5 +334,50 @@ func TestClearProviderNoMatchingKeys(t *testing.T) {
 	// AWS key must still be present.
 	if _, ok := cm.Get("aws:compute:us-east-1"); !ok {
 		t.Error("aws key missing after ClearProvider for unrelated provider")
+	}
+}
+
+// TestCacheManager_ConcurrentWrites verifies that concurrent writes to different
+// keys do not corrupt either entry — each key must hold exactly the value that
+// was written to it, with no data from another writer leaking through.
+func TestCacheManager_ConcurrentWrites(t *testing.T) {
+	cm := newTestCache(t)
+
+	type kv struct {
+		key   string
+		value []byte
+	}
+
+	// Build a set of distinct key/value pairs — one per goroutine.
+	const writers = 40
+	pairs := make([]kv, writers)
+	for i := range writers {
+		pairs[i] = kv{
+			key:   fmt.Sprintf("provider%d:compute:us-east-1", i),
+			value: jsonBytes(t, map[string]any{"writer": i, "price": float64(i) * 0.01}),
+		}
+	}
+
+	// Launch all writes concurrently.
+	var wg sync.WaitGroup
+	wg.Add(writers)
+	for i := range writers {
+		go func(i int) {
+			defer wg.Done()
+			cm.Set(pairs[i].key, pairs[i].value, DefaultPriceTTL)
+		}(i)
+	}
+	wg.Wait()
+
+	// Every key must be readable and hold exactly its written value.
+	for i, p := range pairs {
+		got, ok := cm.Get(p.key)
+		if !ok {
+			t.Errorf("writer %d: Get(%q) after concurrent Set: miss, want hit", i, p.key)
+			continue
+		}
+		if string(got) != string(p.value) {
+			t.Errorf("writer %d: value corruption:\n  got  %s\n  want %s", i, got, p.value)
+		}
 	}
 }
