@@ -7,10 +7,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
-	pricingtypes "github.com/aws/aws-sdk-go-v2/service/pricing/types"
 	awssdk "github.com/aws/aws-sdk-go-v2/aws"
+	pricingtypes "github.com/aws/aws-sdk-go-v2/service/pricing/types"
 )
 
 // ---------------------------------------------------------------------------
@@ -259,6 +260,81 @@ func TestGetProductsBulk_LocationFilter(t *testing.T) {
 	// Location-only filter means no attribute filtering; the product must be returned.
 	if len(results) != 1 {
 		t.Errorf("expected 1 result (location filter does not restrict attributes), got %d", len(results))
+	}
+}
+
+// TestGetProductsBulk_ReservedTermsCollected verifies that Reserved terms are
+// collected and included in per-SKU output when OnDemand terms are absent.
+// Mirrors Python test_get_products_bulk_reserved_terms_collected.
+func TestGetProductsBulk_ReservedTermsCollected(t *testing.T) {
+	const bulkSKU = "JRTCKXETXF8Z6NMQ"
+	bulkJSON := `{
+		"products": {
+			"` + bulkSKU + `": {
+				"sku": "` + bulkSKU + `",
+				"productFamily": "Compute Instance",
+				"attributes": {
+					"instanceType": "m5.xlarge",
+					"operatingSystem": "Linux",
+					"tenancy": "Shared",
+					"preInstalledSw": "NA",
+					"capacitystatus": "Used"
+				}
+			}
+		},
+		"terms": {
+			"OnDemand": {},
+			"Reserved": {
+				"` + bulkSKU + `.RESERVED": {
+					"priceDimensions": {
+						"` + bulkSKU + `.R.DIM": {
+							"unit": "Hrs",
+							"pricePerUnit": {"USD": "0.0500000000"},
+							"description": "Reserved hourly"
+						}
+					},
+					"termAttributes": {
+						"LeaseContractLength": "1yr",
+						"PurchaseOption": "No Upfront",
+						"OfferingClass": "standard"
+					}
+				}
+			}
+		}
+	}`
+
+	server := newBulkTestServer(t, []byte(bulkJSON), map[string]string{"Content-Type": "application/json"}, http.StatusOK)
+	defer server.Close()
+	overrideBulkBaseURL(t, server.URL)
+
+	p := &Provider{}
+	filters := []pricingtypes.Filter{
+		mkTestFilter("instanceType", "m5.xlarge"),
+	}
+
+	results, err := p.getProductsBulk(context.Background(), "AmazonEC2", filters, 10, "us-east-1")
+	if err != nil {
+		t.Fatalf("getProductsBulk returned error: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+
+	var sku parsedSKU
+	if err := json.Unmarshal([]byte(results[0]), &sku); err != nil {
+		t.Fatalf("failed to unmarshal result as parsedSKU: %v", err)
+	}
+
+	if len(sku.Terms.OnDemand) != 0 {
+		t.Errorf("expected empty OnDemand terms, got %d", len(sku.Terms.OnDemand))
+	}
+	if len(sku.Terms.Reserved) == 0 {
+		t.Fatalf("expected Reserved terms to be collected, got empty map")
+	}
+	for termKey := range sku.Terms.Reserved {
+		if !strings.HasPrefix(termKey, bulkSKU) {
+			t.Errorf("Reserved term key %q does not have SKU prefix %q", termKey, bulkSKU)
+		}
 	}
 }
 
