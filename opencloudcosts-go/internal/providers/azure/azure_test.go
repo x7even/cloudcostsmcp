@@ -1132,6 +1132,56 @@ func TestGetComputePrice_WindowsExcludesLinuxSKUs(t *testing.T) {
 	}
 }
 
+func TestGetComputePrice_SortedCheapestFirst(t *testing.T) {
+	// Results must be sorted ascending by price (cheapest first).
+	// Return items out of order: expensive first, cheap second.
+	expensiveItem := azureItem{
+		"retailPrice":   0.384,
+		"armSkuName":    "Standard_D8s_v3",
+		"productName":   "Virtual Machines DSv3 Series",
+		"skuName":       "D8s v3",
+		"serviceName":   "Virtual Machines",
+		"serviceFamily": "Compute",
+		"meterId":       "linux-meter-expensive",
+		"meterName":     "D8s v3",
+		"armRegionName": "eastus",
+		"unitOfMeasure": "1 Hour",
+	}
+	cheaperItem := azureItem{
+		"retailPrice":   0.300,
+		"armSkuName":    "Standard_D8s_v3",
+		"productName":   "Virtual Machines DSv3 Series",
+		"skuName":       "D8s v3",
+		"serviceName":   "Virtual Machines",
+		"serviceFamily": "Compute",
+		"meterId":       "linux-meter-cheaper",
+		"meterName":     "D8s v3",
+		"armRegionName": "eastus",
+		"unitOfMeasure": "1 Hour",
+	}
+	// API returns expensive first, then cheap — results should be reversed.
+	srv := mockServer(t, []azureItem{expensiveItem, cheaperItem})
+	defer srv.Close()
+	p := newTestProvider(t, srv)
+
+	prices, err := p.GetComputePrice(context.Background(), "Standard_D8s_v3", "eastus", "Linux", models.PricingTermOnDemand)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(prices) != 2 {
+		t.Fatalf("expected 2 prices, got %d", len(prices))
+	}
+	if prices[0].PricePerUnit > prices[1].PricePerUnit {
+		t.Errorf("prices must be sorted cheapest first: got %f > %f", prices[0].PricePerUnit, prices[1].PricePerUnit)
+	}
+	if prices[0].PricePerUnit != 0.300 {
+		t.Errorf("first price must be 0.300 (cheapest), got %f", prices[0].PricePerUnit)
+	}
+	if prices[1].PricePerUnit != 0.384 {
+		t.Errorf("second price must be 0.384, got %f", prices[1].PricePerUnit)
+	}
+}
+
 func TestMain(m *testing.M) {
 	// Ensure tests don't need real network.
 	fmt.Println("Running Azure provider tests with mock HTTP server...")
