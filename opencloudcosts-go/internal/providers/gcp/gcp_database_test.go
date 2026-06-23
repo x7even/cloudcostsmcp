@@ -530,6 +530,57 @@ func TestGetGKEPrice_AutopilotNegativeVCPU(t *testing.T) {
 	}
 }
 
+// TestGetGKEPrice_AutopilotNegativeMemory verifies that autopilot mode with a negative
+// memory value returns an error rather than producing a negative cost.
+func TestGetGKEPrice_AutopilotNegativeMemory(t *testing.T) {
+	skus := []map[string]any{
+		makeSKU("Autopilot Balanced Pod mCPU Requests", "OnDemand", "us-central1", "0", 64_000),
+		makeSKU("Autopilot Balanced Pod Memory Requests", "OnDemand", "us-central1", "0", 9_982_000),
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(skuResponse(skus))
+	}))
+	defer ts.Close()
+
+	p := newTestProviderDB(t, ts)
+	_, _, err := p.getGKEPrice(context.Background(), "us-central1", "autopilot", "", 0, 2.0, -1.0, 730.0)
+	if err == nil {
+		t.Error("expected error for negative memory, got nil")
+	}
+}
+
+// TestGetGKEPrice_InvalidMode verifies that an unknown mode string does not panic
+// and returns a valid result (mode validation is performed by the tool layer,
+// not the provider — unknown modes fall through to the standard branch).
+func TestGetGKEPrice_InvalidMode(t *testing.T) {
+	skus := []map[string]any{}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(skuResponse(skus))
+	}))
+	defer ts.Close()
+
+	p := newTestProviderDB(t, ts)
+	prices, breakdown, err := p.getGKEPrice(context.Background(), "us-central1", "unknown_mode", "", 0, 0, 0, 730.0)
+	if err != nil {
+		t.Fatalf("unexpected error for unknown mode: %v", err)
+	}
+	// Unknown mode falls through to the standard branch — should return a valid result.
+	if breakdown == nil {
+		t.Error("breakdown should not be nil for unknown mode")
+	}
+	if _, ok := breakdown["mode"]; !ok {
+		t.Error("breakdown should contain a 'mode' key")
+	}
+	// Standard path always returns at least one price (using fallback rate when no SKUs found).
+	if len(prices) == 0 {
+		t.Error("expected at least one price for unknown mode (standard branch fallback)")
+	}
+}
+
 // --------------------------------------------------------------------------
 // BigQuery tests
 // --------------------------------------------------------------------------
