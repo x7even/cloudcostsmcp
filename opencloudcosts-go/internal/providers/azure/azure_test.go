@@ -1243,6 +1243,62 @@ func TestGetEgressPrice_SwedenCentral_IsZone1(t *testing.T) {
 	}
 }
 
+func TestEgressServiceField_BothDomains(t *testing.T) {
+	// Egress pricing works for both EgressPricingSpec (inter_region_egress domain)
+	// and NetworkPricingSpec (network domain, service=egress).
+	// Both should return a result with service="egress".
+	srv := mockServer(t, nil)
+	defer srv.Close()
+	p := newTestProvider(t, srv)
+
+	ctx := context.Background()
+
+	// Test EgressPricingSpec
+	egressSpec := &models.EgressPricingSpec{
+		BasePricingSpec: models.BasePricingSpec{
+			Provider: models.CloudProviderAzure,
+			Domain:   models.PricingDomainInterRegionEgress,
+			Region:   "eastus",
+		},
+		SourceRegion: "eastus",
+		DestRegion:   "westeurope",
+		DataGB:       100.0,
+	}
+	egressResult, err := p.GetPrice(ctx, egressSpec)
+	if err != nil {
+		t.Fatalf("EgressPricingSpec: unexpected error: %v", err)
+	}
+	if len(egressResult.PublicPrices) == 0 {
+		t.Fatal("EgressPricingSpec: expected at least one price")
+	}
+	if egressResult.PublicPrices[0].Service != "egress" {
+		t.Errorf("EgressPricingSpec: expected service=egress, got %s", egressResult.PublicPrices[0].Service)
+	}
+
+	// Test NetworkPricingSpec with service=egress
+	networkSpec := &models.NetworkPricingSpec{
+		BasePricingSpec: models.BasePricingSpec{
+			Provider: models.CloudProviderAzure,
+			Domain:   models.PricingDomainNetwork,
+			Region:   "eastus",
+			Service:  "egress",
+		},
+		SourceRegion:    "eastus",
+		DestinationType: "internet",
+		DataGBPerMonth:  100.0,
+	}
+	networkResult, err := p.GetPrice(ctx, networkSpec)
+	if err != nil {
+		t.Fatalf("NetworkPricingSpec: unexpected error: %v", err)
+	}
+	if len(networkResult.PublicPrices) == 0 {
+		t.Fatal("NetworkPricingSpec: expected at least one price")
+	}
+	if networkResult.PublicPrices[0].Service != "egress" {
+		t.Errorf("NetworkPricingSpec: expected service=egress, got %s", networkResult.PublicPrices[0].Service)
+	}
+}
+
 func TestMain(m *testing.M) {
 	// Ensure tests don't need real network.
 	fmt.Println("Running Azure provider tests with mock HTTP server...")
