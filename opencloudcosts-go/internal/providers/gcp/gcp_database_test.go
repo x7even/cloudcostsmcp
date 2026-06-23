@@ -248,6 +248,48 @@ func TestGetCloudSQLPrice_PricingMathDecomposed(t *testing.T) {
 	}
 }
 
+// TestGetCloudSQLPrice_EngineNormalization verifies that "postgres", "postgresql",
+// and "pg" all resolve to the same canonical "PostgreSQL" engine and match the
+// same SKU description.
+func TestGetCloudSQLPrice_EngineNormalization(t *testing.T) {
+	// A single PostgreSQL Zonal SKU for db-n1-standard-4.
+	skuDesc := "Cloud SQL for PostgreSQL: Zonal - 4 vCPU + 15GB RAM in Americas"
+	skus := []map[string]any{
+		makeSKU(skuDesc, "OnDemand", "us-central1", "0", 270_200_000), // $0.2702/hr
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(skuResponse(skus))
+	}))
+	defer ts.Close()
+
+	// All three aliases should resolve to the same engine and the same price.
+	// Each alias gets its own provider so there is no cross-alias cache interference.
+	aliases := []string{"postgres", "postgresql", "pg"}
+	for _, alias := range aliases {
+		alias := alias // capture
+		t.Run(alias, func(t *testing.T) {
+			p := newTestProviderDB(t, ts)
+
+			prices, err := p.getCloudSQLPrice(context.Background(), "db-n1-standard-4", "us-central1", alias, false)
+			if err != nil {
+				t.Fatalf("alias %q: getCloudSQLPrice: %v", alias, err)
+			}
+			if len(prices) != 1 {
+				t.Fatalf("alias %q: expected 1 price, got %d", alias, len(prices))
+			}
+			if prices[0].Attributes["engine"] != "PostgreSQL" {
+				t.Errorf("alias %q: engine attribute = %q, want 'PostgreSQL'", alias, prices[0].Attributes["engine"])
+			}
+			want := 0.2702
+			if abs(prices[0].PricePerUnit-want) > 1e-4 {
+				t.Errorf("alias %q: PricePerUnit = %.6f, want %.6f", alias, prices[0].PricePerUnit, want)
+			}
+		})
+	}
+}
+
 // --------------------------------------------------------------------------
 // Memorystore tests
 // --------------------------------------------------------------------------
