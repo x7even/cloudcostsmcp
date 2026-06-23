@@ -459,6 +459,49 @@ func TestGetMemstorePrice_MTierFallback(t *testing.T) {
 	}
 }
 
+// TestGetMemstorePrice_StandardMoreExpensiveThanBasic verifies that the Standard tier
+// price is greater than or equal to the Basic tier price for the same capacity.
+// Standard (HA) Redis is always priced at or above Basic because it provides
+// cross-zone replication; this test constructs controlled SKU rates to confirm
+// the pricing logic produces the expected ordering.
+func TestGetMemstorePrice_StandardMoreExpensiveThanBasic(t *testing.T) {
+	// Use 6 GB capacity → m3 tier.
+	// Basic rate: $0.049/GiB-hr, Standard rate: $0.065/GiB-hr → standard > basic.
+	skus := []map[string]any{
+		makeSKU("Redis Capacity Basic M3", "OnDemand", "us-central1", "0", 49_000_000),    // $0.049
+		makeSKU("Redis Capacity Standard M3", "OnDemand", "us-central1", "0", 65_000_000), // $0.065
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(skuResponse(skus))
+	}))
+	defer ts.Close()
+
+	p := newTestProviderDB(t, ts)
+
+	basicPrices, err := p.getMemstorePrice(context.Background(), 6.0, "us-central1", "basic", 730.0)
+	if err != nil {
+		t.Fatalf("getMemstorePrice(basic): %v", err)
+	}
+	if len(basicPrices) != 1 {
+		t.Fatalf("expected 1 basic price, got %d", len(basicPrices))
+	}
+
+	standardPrices, err := p.getMemstorePrice(context.Background(), 6.0, "us-central1", "standard", 730.0)
+	if err != nil {
+		t.Fatalf("getMemstorePrice(standard): %v", err)
+	}
+	if len(standardPrices) != 1 {
+		t.Fatalf("expected 1 standard price, got %d", len(standardPrices))
+	}
+
+	if standardPrices[0].PricePerUnit < basicPrices[0].PricePerUnit {
+		t.Errorf("standard price (%.6f) must be >= basic price (%.6f)",
+			standardPrices[0].PricePerUnit, basicPrices[0].PricePerUnit)
+	}
+}
+
 // --------------------------------------------------------------------------
 // GKE tests
 // --------------------------------------------------------------------------
