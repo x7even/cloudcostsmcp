@@ -219,3 +219,59 @@ func TestComputeEgressTieredCostLargeVolume(t *testing.T) {
 		t.Errorf("blended_rate_per_gb: got %q (%.6f) want %.6f", result.BlendedRatePerGB, gotBlended, blended)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// TestEgressTiers_FirstTierBreakpoint: first 10TB at one rate, beyond at lower
+// ---------------------------------------------------------------------------
+
+// TestEgressTiers_FirstTierBreakpoint verifies that volumes crossing the 10 TB
+// boundary are billed correctly: the first 10 TB (10240 GB) of paid egress uses
+// the higher $0.090/GB rate and volume above 10 TB uses the reduced $0.085/GB
+// rate. This mirrors the Python test_aws_internet_egress_5000gb_crosses_tiers
+// intent, extended to actually cross the 10 TB boundary.
+//
+// Using awsInternetEgressTiers (100 GB free, then $0.090 up to 10340 GB
+// cumulative = 10240 GB paid, then $0.085):
+//   - 15000 GB: 100 free + 10240 at $0.090 + 4660 at $0.085
+func TestEgressTiers_FirstTierBreakpoint(t *testing.T) {
+	const dataGB = 15_000.0
+	result := ComputeEgressTieredCost(awsInternetEgressTiers, dataGB)
+
+	// Tier 0: 0-100 GB free → 100 GB at $0.000
+	// Tier 1: 100-10340 GB → 10240 GB at $0.090
+	// Tier 2: 10340+ GB → 4660 GB at $0.085
+	expectedTier1Cost := 10_240.0 * 0.090
+	expectedTier2Cost := 4_660.0 * 0.085
+	expectedTotal := expectedTier1Cost + expectedTier2Cost
+
+	got, _ := strconv.ParseFloat(result.TotalCost, 64)
+	if math.Abs(got-expectedTotal)/expectedTotal > 1e-6 {
+		t.Errorf("total_cost: got %q (%.4f) want %.4f", result.TotalCost, got, expectedTotal)
+	}
+
+	// Verify that at least 3 tier entries are present (free + first paid + second paid)
+	if len(result.Tiers) < 3 {
+		t.Fatalf("expected >= 3 tiers, got %d: %v", len(result.Tiers), result.Tiers)
+	}
+
+	// Tier 0 must be free ($0.000)
+	if rate := result.Tiers[0]["rate"]; rate != "0.000" {
+		t.Errorf("tier[0] rate: got %q want 0.000", rate)
+	}
+	// Tier 1 must be at $0.090
+	if rate := result.Tiers[1]["rate"]; rate != "0.090" {
+		t.Errorf("tier[1] rate: got %q want 0.090", rate)
+	}
+	// Tier 2 must be at the reduced $0.085 rate
+	if rate := result.Tiers[2]["rate"]; rate != "0.085" {
+		t.Errorf("tier[2] rate: got %q want 0.085", rate)
+	}
+	// Tier 1 volume must be exactly 10240 GB (the full first paid tier)
+	if gb := result.Tiers[1]["gb"].(float64); math.Abs(gb-10_240.0) > 1e-9 {
+		t.Errorf("tier[1] gb: got %v want 10240.0", gb)
+	}
+	// Tier 2 volume must be 4660 GB (remaining after free + first paid tier)
+	if gb := result.Tiers[2]["gb"].(float64); math.Abs(gb-4_660.0) > 1e-9 {
+		t.Errorf("tier[2] gb: got %v want 4660.0", gb)
+	}
+}
