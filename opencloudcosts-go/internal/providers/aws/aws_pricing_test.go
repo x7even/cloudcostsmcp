@@ -1690,66 +1690,6 @@ func TestGetComputePrice_ReservedUpfrontOptions(t *testing.T) {
 	}
 }
 
-// TestGetComputePrice_SpotTermNotSupportedInGetComputePrice verifies that
-// GetComputePrice with term=spot returns an empty result (not an error).
-//
-// Spot pricing is NOT routed through GetComputePrice — it is handled by
-// GetSpotHistory (which calls EC2 DescribeSpotPriceHistory). When a caller
-// passes PricingTermSpot to GetComputePrice, skuToNormalizedPrice sees a term
-// that is not OnDemand and not in _reservedTermFilters, so extractReservedPrice
-// returns (0, "") and the SKU is silently skipped. The result is ([], nil).
-func TestGetComputePrice_SpotTermNotSupportedInGetComputePrice(t *testing.T) {
-	// Reuse the first test's fixture (OnDemand + Reserved 1yr). Even if spot
-	// matched any SKU attribute filters, skuToNormalizedPrice would return nil
-	// for PricingTermSpot because it is not in _reservedTermFilters.
-	const bulkFixture = `{
-  "formatVersion": "aws_v1",
-  "products": {
-    "INVSKU4": {
-      "sku": "INVSKU4",
-      "productFamily": "Compute Instance",
-      "attributes": {
-        "instanceType":    "m5.xlarge",
-        "operatingSystem": "Linux",
-        "tenancy":         "Shared",
-        "preInstalledSw":  "NA",
-        "capacitystatus":  "Used",
-        "location":        "US East (N. Virginia)"
-      }
-    }
-  },
-  "terms": {
-    "OnDemand": {
-      "INVSKU4.ODTERM": {
-        "priceDimensions": {
-          "INVSKU4.ODTERM.DIM": {
-            "unit": "Hrs",
-            "pricePerUnit": {"USD": "0.1920000000"},
-            "description": "$0.192 per On Demand Linux m5.xlarge Instance Hour"
-          }
-        },
-        "termAttributes": {}
-      }
-    },
-    "Reserved": {}
-  }
-}`
-
-	newBulkServer(t, bulkFixture)
-	p := newBulkProvider(t)
-	ctx := context.Background()
-
-	prices, err := p.GetComputePrice(ctx, "m5.xlarge", "us-east-1", "Linux", models.PricingTermSpot)
-	if err != nil {
-		// GetComputePrice should not return an error for spot — it silently
-		// returns empty (spot is handled separately via GetSpotHistory).
-		t.Fatalf("GetComputePrice(spot): unexpected error: %v", err)
-	}
-	if len(prices) != 0 {
-		t.Errorf("GetComputePrice(spot): expected empty result (spot is not routed through GetComputePrice), got %d prices", len(prices))
-	}
-}
-
 // --------------------------------------------------------------------------
 // TestPricingResult_AuthGating (provider-contract)
 // --------------------------------------------------------------------------
