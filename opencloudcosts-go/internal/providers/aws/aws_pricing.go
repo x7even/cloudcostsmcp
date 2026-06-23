@@ -168,6 +168,11 @@ func (p *Provider) GetProducts(
 	filters []pricingtypes.Filter,
 	maxResults int32,
 ) ([]string, error) {
+	if p.bulkFallback {
+		region := extractRegionFromFilters(filters)
+		return p.getProductsBulk(ctx, serviceCode, filters, maxResults, region)
+	}
+
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
 		if attempt > 0 {

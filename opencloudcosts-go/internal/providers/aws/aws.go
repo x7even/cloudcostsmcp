@@ -8,10 +8,12 @@ package aws
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"time"
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/feature/ec2/imds"
 	"github.com/aws/aws-sdk-go-v2/service/costexplorer"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/pricing"
@@ -39,6 +41,7 @@ type Provider struct {
 	ec2Client     *ec2.Client
 	spClient      *savingsplans.Client
 	httpClient    *http.Client
+	bulkFallback  bool
 }
 
 // NewProvider constructs a new AWS Provider.
@@ -58,10 +61,22 @@ func NewProvider(cfg *config.Config, cacheManager *cache.CacheManager) (*Provide
 	if cfg.AWSRegion != "" {
 		opts = append(opts, awsconfig.WithRegion(cfg.AWSRegion))
 	}
+	// Disable IMDS to avoid a 30s timeout on non-EC2 machines when no credentials exist.
+	opts = append(opts, awsconfig.WithEC2IMDSClientEnableState(imds.ClientDisabled))
 
 	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, opts...)
 	if err != nil {
 		return nil, err
+	}
+
+	// Probe credentials with a short timeout. If unavailable, route GetProducts
+	// to the public bulk HTTP pricing endpoint instead of the SDK.
+	var bulkFallback bool
+	credCtx, credCancel := context.WithTimeout(ctx, 2*time.Second)
+	defer credCancel()
+	if _, credErr := awsCfg.Credentials.Retrieve(credCtx); credErr != nil {
+		slog.Info("AWS credentials unavailable — using public bulk pricing endpoint")
+		bulkFallback = true
 	}
 
 	// The pricing API is only available in us-east-1.
@@ -85,6 +100,7 @@ func NewProvider(cfg *config.Config, cacheManager *cache.CacheManager) (*Provide
 		ec2Client:     ec2Client,
 		spClient:      spClient,
 		httpClient:    &http.Client{Timeout: 60 * time.Second},
+		bulkFallback:  bulkFallback,
 	}, nil
 }
 
