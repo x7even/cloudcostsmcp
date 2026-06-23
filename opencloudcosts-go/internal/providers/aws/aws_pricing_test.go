@@ -139,6 +139,47 @@ const reserved1yrJSON = `{
   }
 }`
 
+// allUpfrontJSON is a minimal All-Upfront reserved pricing response where the
+// hourly dimension is $0 and the full cost is the Quantity/upfront dimension.
+// This mirrors _ALL_UPFRONT_ITEM from the Python tests.
+const allUpfrontJSON = `{
+  "product": {
+    "sku": "ALLUPSFRONT1",
+    "productFamily": "Compute Instance",
+    "attributes": {
+      "instanceType": "m5.xlarge",
+      "operatingSystem": "Linux",
+      "tenancy": "Shared",
+      "location": "US East (N. Virginia)",
+      "preInstalledSw": "NA",
+      "capacitystatus": "Used"
+    }
+  },
+  "terms": {
+    "Reserved": {
+      "ALLUPSFRONT1.KEY.ALL": {
+        "priceDimensions": {
+          "dim1": {
+            "unit": "Hrs",
+            "pricePerUnit": {"USD": "0.0000000000"},
+            "description": "$0.00 per Reserved Linux m5.xlarge Instance Hour"
+          },
+          "dim2": {
+            "unit": "Quantity",
+            "pricePerUnit": {"USD": "560.0000000000"},
+            "description": "Upfront Fee"
+          }
+        },
+        "termAttributes": {
+          "LeaseContractLength": "1yr",
+          "PurchaseOption": "All Upfront",
+          "OfferingClass": "standard"
+        }
+      }
+    }
+  }
+}`
+
 // --------------------------------------------------------------------------
 // Test helpers
 // --------------------------------------------------------------------------
@@ -230,6 +271,31 @@ func TestExtractReservedPrice_WrongTerm(t *testing.T) {
 	price, _ := extractReservedPrice(sku, models.PricingTermReserved3Yr)
 	if price != 0 {
 		t.Errorf("expected 0 for wrong term, got %v", price)
+	}
+}
+
+// TestExtractReservedPrice_AllUpfront_Normalised verifies that when an All-Upfront
+// reserved instance has a $0/hr dimension and a $560 upfront Quantity dimension,
+// extractReservedPrice returns $560/8760 ≈ $0.0639/hr — not $0/hr.
+// This is the Go equivalent of test_reserved_1yr_all_upfront_normalised in Python.
+func TestExtractReservedPrice_AllUpfront_Normalised(t *testing.T) {
+	var sku parsedSKU
+	if err := json.Unmarshal([]byte(allUpfrontJSON), &sku); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	price, unit := extractReservedPrice(sku, models.PricingTermReserved1YrAll)
+	if unit != "Hrs" {
+		t.Errorf("unit = %q, want Hrs", unit)
+	}
+	// Expected: $560 / 8760 ≈ $0.063927...
+	expected := 560.0 / 8760.0
+	if price == 0 {
+		t.Fatal("All-Upfront reserved price must not be $0/hr — upfront cost must be divided by 8760")
+	}
+	const tolerance = 1e-6
+	diff := price - expected
+	if diff < -tolerance || diff > tolerance {
+		t.Errorf("All-Upfront effective hourly = %v, want %v (560/8760)", price, expected)
 	}
 }
 
