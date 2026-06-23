@@ -262,6 +262,73 @@ func TestGetProductsBulk_LocationFilter(t *testing.T) {
 	}
 }
 
+// TestGetProductsBulk_ProductFamilyFilter verifies that productFamily filter
+// matches the top-level productFamily field (not inside attributes).
+// Mirrors Python test_get_products_bulk_productfamily_filter.
+func TestGetProductsBulk_ProductFamilyFilter(t *testing.T) {
+	const bulkJSON = `{
+		"products": {
+			"STORAGE_SKU": {
+				"sku": "STORAGE_SKU",
+				"productFamily": "Storage",
+				"attributes": {
+					"volumeApiName": "gp3"
+				}
+			},
+			"COMPUTE_SKU": {
+				"sku": "COMPUTE_SKU",
+				"productFamily": "Compute Instance",
+				"attributes": {
+					"instanceType": "m5.xlarge"
+				}
+			}
+		},
+		"terms": {
+			"OnDemand": {
+				"STORAGE_SKU.TERM": {
+					"priceDimensions": {
+						"STORAGE_SKU.DIM": {
+							"unit": "GB-Mo",
+							"pricePerUnit": {"USD": "0.0800000000"},
+							"description": "$0.08 per GB-month"
+						}
+					},
+					"termAttributes": {}
+				}
+			},
+			"Reserved": {}
+		}
+	}`
+
+	server := newBulkTestServer(t, []byte(bulkJSON), map[string]string{"Content-Type": "application/json"}, http.StatusOK)
+	defer server.Close()
+	overrideBulkBaseURL(t, server.URL)
+
+	p := &Provider{}
+	filters := []pricingtypes.Filter{
+		mkTestFilter("productFamily", "Storage"),
+	}
+
+	results, err := p.getProductsBulk(context.Background(), "AmazonEC2", filters, 10, "us-east-1")
+	if err != nil {
+		t.Fatalf("getProductsBulk returned error: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result (only Storage SKU), got %d", len(results))
+	}
+
+	var sku parsedSKU
+	if err := json.Unmarshal([]byte(results[0]), &sku); err != nil {
+		t.Fatalf("failed to unmarshal result as parsedSKU: %v", err)
+	}
+	if sku.Product.SKU != "STORAGE_SKU" {
+		t.Errorf("expected SKU=STORAGE_SKU, got %q", sku.Product.SKU)
+	}
+	if sku.Product.ProductFamily != "Storage" {
+		t.Errorf("expected productFamily=Storage, got %q", sku.Product.ProductFamily)
+	}
+}
+
 // TestExtractRegionFromFilters tests the helper that maps location display
 // names to AWS region codes.
 func TestExtractRegionFromFilters(t *testing.T) {
