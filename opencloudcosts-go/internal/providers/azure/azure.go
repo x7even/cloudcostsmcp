@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1129,23 +1130,42 @@ func (p *Provider) GetFunctionsPrice(
 			"armRegionName": region,
 			"priceType":     "Consumption",
 			"serviceName":   "Functions",
+			// Restrict to classic Consumption plan; excludes Flex Consumption and Premium
+			"productName": "Functions",
 		}
 		items, err := p.fetchPrices(ctx, filters, 30)
 		if err != nil {
 			return nil, err
 		}
+		// Further narrow to Standard SKU (Consumption plan); skip Flex/Premium leftovers
+		var standardItems []azureRetailItem
+		for _, item := range items {
+			if strings.EqualFold(item.SkuName, "standard") {
+				standardItems = append(standardItems, item)
+			}
+		}
+		items = standardItems
 		for _, item := range items {
 			meter := strings.ToLower(item.MeterName)
 			uom := strings.ToLower(item.UnitOfMeasure)
+			rawUOM := strings.TrimSpace(item.UnitOfMeasure)
 			pp := itemToPrice(item, region, models.PricingTermOnDemand, "azure_functions")
 			if pp == nil {
 				continue
 			}
 			switch {
-			case strings.Contains(meter, "execution") || strings.Contains(meter, "invocation"):
-				pp.Unit = models.PriceUnitPerRequest
+			// Check GB-second BEFORE execution: "Standard Execution Time" has uom="1 GB Second"
+			// and would otherwise match "execution in meter" first (wrong unit).
 			case strings.Contains(uom, "gb") && strings.Contains(uom, "second"):
 				pp.Unit = models.PriceUnitPerGBSecond
+			case strings.Contains(meter, "execution") || strings.Contains(meter, "invocation"):
+				// API prices executions per N (e.g. unitOfMeasure="10 Million"); normalise to per-1.
+				if parts := strings.Fields(rawUOM); len(parts) > 0 {
+					if denom, err := strconv.ParseFloat(parts[0], 64); err == nil && denom > 1 {
+						pp.PricePerUnit /= denom
+					}
+				}
+				pp.Unit = models.PriceUnitPerRequest
 			case strings.Contains(meter, "vcpu"):
 				pp.Unit = models.PriceUnitPerHour
 				pp.Attributes["plan"] = "premium"
@@ -1284,25 +1304,64 @@ func (p *Provider) GetOpenAIPrice(
 		modelNorm := strings.ReplaceAll(modelLower, "-", " ")
 		modelCompact := strings.ReplaceAll(strings.ReplaceAll(modelLower, "-", ""), " ", "")
 
+		// Word-boundary patterns — prevent prefix collisions (e.g. "gpt-4" must
+		// not match "gpt-4.1" or "gpt-4o" SKUs).  RE2 has no lookahead, so we
+		// consume one trailing boundary character instead.
+		skuPattern := regexp.MustCompile(`(?i)` + regexp.QuoteMeta(modelCompact) + `(?:[^a-zA-Z0-9.]|$)`)
+		prodPattern := regexp.MustCompile(`(?i)` + regexp.QuoteMeta(modelNorm) + `(?:[^\w.]|$)`)
+
 		for _, item := range items {
 			meter := strings.ToLower(item.MeterName)
 			product := strings.ToLower(item.ProductName)
 			skuLower := strings.ToLower(item.SkuName)
-			skuCompact := strings.ReplaceAll(strings.ReplaceAll(skuLower, "-", ""), " ", "")
+			skuCompact := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(skuLower, "-", ""), "_", ""), " ", "")
 
-			if !strings.Contains(product, modelNorm) &&
-				!strings.Contains(meter, modelNorm) &&
-				!strings.Contains(skuCompact, modelCompact) {
+			if !prodPattern.MatchString(product) &&
+				!prodPattern.MatchString(meter) &&
+				!skuPattern.MatchString(skuCompact) {
 				continue
 			}
 			pp := itemToPrice(item, region, models.PricingTermOnDemand, "openai")
 			if pp != nil {
 				pp.Unit = models.PriceUnitPerUnit
+				// Classify deployment variant so we can surface standard text pricing.
+				combined := meter + " " + skuLower
+				var dtype string
+				switch {
+				case strings.Contains(combined, "realtime") || strings.Contains(combined, "rtime") ||
+					strings.Contains(combined, "rt-") || strings.Contains(combined, "-rt-"):
+					dtype = "realtime"
+				case strings.Contains(combined, "audio") || strings.Contains(combined, "-aud") ||
+					strings.Contains(combined, " aud"):
+					dtype = "audio"
+				case strings.Contains(combined, "batch"):
+					dtype = "batch"
+				case strings.Contains(combined, "cached") || strings.Contains(combined, "cchd"):
+					dtype = "cached"
+				default:
+					dtype = "standard"
+				}
+				if pp.Attributes == nil {
+					pp.Attributes = make(map[string]string)
+				}
+				pp.Attributes["deployment_type"] = dtype
 				prices = append(prices, *pp)
 			}
 		}
 
-		if len(prices) == 0 {
+		// Prefer standard text deployments; non-standard variants (realtime/audio/
+		// batch/cached) inflate per-token cost estimates.
+		var standardPrices []models.NormalizedPrice
+		for _, pr := range prices {
+			if pr.Attributes != nil && pr.Attributes["deployment_type"] == "standard" {
+				standardPrices = append(standardPrices, pr)
+			}
+		}
+		if len(standardPrices) > 0 {
+			prices = standardPrices
+		}
+
+		if len(prices) == 0 || len(standardPrices) == 0 {
 			// Static fallback — pick the most specific (longest-key) match to
 			// avoid "gpt-4" matching "gpt-4o" before "gpt-4o" does.
 			var foundRate *openAIRate

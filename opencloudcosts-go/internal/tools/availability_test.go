@@ -11,6 +11,7 @@ package tools_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -361,6 +362,160 @@ func TestListInstanceTypes_GPUFieldsIncludedWhenPresent(t *testing.T) {
 	}
 	if it0["gpu_type"] != "nvidia-tesla-a100" {
 		t.Errorf("gpu_type: got %v, want nvidia-tesla-a100", it0["gpu_type"])
+	}
+}
+
+func TestListInstanceTypes_MaxResultsDefaultIs25(t *testing.T) {
+	// Return 30 instance types; with default max_results the response should cap at 25.
+	pvdr := makeGCPMockProvider(nil, nil)
+	pvdr.listInstanceTypesFunc = func(_ context.Context, region, _ string, _ int, _ float64, _ bool) ([]models.InstanceTypeInfo, error) {
+		items := make([]models.InstanceTypeInfo, 30)
+		for i := range items {
+			items[i] = models.InstanceTypeInfo{
+				InstanceType: fmt.Sprintf("n1-standard-%d", i+1),
+				VCPU:         i + 1,
+				MemoryGB:     float64(i+1) * 3.75,
+				Region:       region,
+				Available:    true,
+			}
+		}
+		return items, nil
+	}
+	h := tools.New(map[string]tools.Provider{"gcp": pvdr})
+
+	// No max_results specified — should default to 25.
+	resp := callListInstanceTypes(t, h, tools.ListInstanceTypesInput{
+		Provider: "gcp",
+		Region:   "us-central1",
+	})
+
+	if resp["error"] != nil {
+		t.Fatalf("unexpected error: %v", resp)
+	}
+	if resp["count"] != float64(25) {
+		t.Errorf("count: got %v, want 25", resp["count"])
+	}
+	types, ok := resp["instance_types"].([]any)
+	if !ok || len(types) != 25 {
+		t.Errorf("instance_types length: got %v, want 25", len(types))
+	}
+	note, ok := resp["note"].(string)
+	if !ok || note == "" {
+		t.Fatalf("note field missing or empty when results are truncated: %v", resp["note"])
+	}
+	if !strings.Contains(note, "25") {
+		t.Errorf("note should contain '25', got: %q", note)
+	}
+	if !strings.Contains(note, "30") {
+		t.Errorf("note should contain '30' (total), got: %q", note)
+	}
+}
+
+func TestListInstanceTypes_MaxResultsRespected(t *testing.T) {
+	// Return 10 instance types; request max_results=5.
+	pvdr := makeGCPMockProvider(nil, nil)
+	pvdr.listInstanceTypesFunc = func(_ context.Context, region, _ string, _ int, _ float64, _ bool) ([]models.InstanceTypeInfo, error) {
+		items := make([]models.InstanceTypeInfo, 10)
+		for i := range items {
+			items[i] = models.InstanceTypeInfo{
+				InstanceType: fmt.Sprintf("n1-standard-%d", i+1),
+				VCPU:         i + 1,
+				MemoryGB:     float64(i+1) * 3.75,
+				Region:       region,
+				Available:    true,
+			}
+		}
+		return items, nil
+	}
+	h := tools.New(map[string]tools.Provider{"gcp": pvdr})
+
+	resp := callListInstanceTypes(t, h, tools.ListInstanceTypesInput{
+		Provider:   "gcp",
+		Region:     "us-central1",
+		MaxResults: 5,
+	})
+
+	if resp["error"] != nil {
+		t.Fatalf("unexpected error: %v", resp)
+	}
+	if resp["count"] != float64(5) {
+		t.Errorf("count: got %v, want 5", resp["count"])
+	}
+	types, ok := resp["instance_types"].([]any)
+	if !ok || len(types) != 5 {
+		t.Errorf("instance_types length: got %v, want 5", len(types))
+	}
+	note, ok := resp["note"].(string)
+	if !ok || note == "" {
+		t.Fatalf("note field missing or empty when results are truncated: %v", resp["note"])
+	}
+	// Verify exact wording matches Python.
+	wantNote := "Showing 5 of 10 results — use filters to narrow"
+	if note != wantNote {
+		t.Errorf("note wording mismatch:\n  got:  %q\n  want: %q", note, wantNote)
+	}
+}
+
+func TestListInstanceTypes_NoNoteWhenUnderLimit(t *testing.T) {
+	// Return fewer results than max_results — no note field should be present.
+	pvdr := makeGCPMockProvider(nil, nil)
+	pvdr.listInstanceTypesFunc = func(_ context.Context, region, _ string, _ int, _ float64, _ bool) ([]models.InstanceTypeInfo, error) {
+		return []models.InstanceTypeInfo{
+			{InstanceType: "n1-standard-1", VCPU: 1, MemoryGB: 3.75, Region: region, Available: true},
+			{InstanceType: "n1-standard-2", VCPU: 2, MemoryGB: 7.5, Region: region, Available: true},
+		}, nil
+	}
+	h := tools.New(map[string]tools.Provider{"gcp": pvdr})
+
+	resp := callListInstanceTypes(t, h, tools.ListInstanceTypesInput{
+		Provider:   "gcp",
+		Region:     "us-central1",
+		MaxResults: 25,
+	})
+
+	if resp["error"] != nil {
+		t.Fatalf("unexpected error: %v", resp)
+	}
+	if resp["count"] != float64(2) {
+		t.Errorf("count: got %v, want 2", resp["count"])
+	}
+	if _, ok := resp["note"]; ok {
+		t.Errorf("note should not be present when results are under limit, got: %v", resp["note"])
+	}
+}
+
+func TestListInstanceTypes_MaxResultsExactlyAtLimit(t *testing.T) {
+	// Return exactly max_results items — no note should be added.
+	pvdr := makeGCPMockProvider(nil, nil)
+	pvdr.listInstanceTypesFunc = func(_ context.Context, region, _ string, _ int, _ float64, _ bool) ([]models.InstanceTypeInfo, error) {
+		items := make([]models.InstanceTypeInfo, 5)
+		for i := range items {
+			items[i] = models.InstanceTypeInfo{
+				InstanceType: fmt.Sprintf("n1-standard-%d", i+1),
+				VCPU:         i + 1,
+				MemoryGB:     float64(i+1) * 3.75,
+				Region:       region,
+				Available:    true,
+			}
+		}
+		return items, nil
+	}
+	h := tools.New(map[string]tools.Provider{"gcp": pvdr})
+
+	resp := callListInstanceTypes(t, h, tools.ListInstanceTypesInput{
+		Provider:   "gcp",
+		Region:     "us-central1",
+		MaxResults: 5,
+	})
+
+	if resp["error"] != nil {
+		t.Fatalf("unexpected error: %v", resp)
+	}
+	if resp["count"] != float64(5) {
+		t.Errorf("count: got %v, want 5", resp["count"])
+	}
+	if _, ok := resp["note"]; ok {
+		t.Errorf("note should not be present when total == max_results, got: %v", resp["note"])
 	}
 }
 

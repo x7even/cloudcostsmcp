@@ -43,6 +43,7 @@ type ListInstanceTypesInput struct {
 	MinVCPU     *int     `json:"min_vcpu"`
 	MinMemoryGB *float64 `json:"min_memory_gb"`
 	GPU         bool     `json:"gpu"`
+	MaxResults  int      `json:"max_results"`
 }
 
 // FindCheapestRegionInput is the typed input for the find_cheapest_region tool.
@@ -142,6 +143,16 @@ func (h *Handler) HandleListInstanceTypes(
 		}), nil, nil
 	}
 
+	// Apply max_results cap (default 25 when zero/unset, matching Python behaviour).
+	maxResults := in.MaxResults
+	if maxResults <= 0 {
+		maxResults = 25
+	}
+	total := len(types)
+	if len(types) > maxResults {
+		types = types[:maxResults]
+	}
+
 	instanceTypes := make([]map[string]any, 0, len(types))
 	for _, t := range types {
 		entry := map[string]any{
@@ -158,12 +169,17 @@ func (h *Handler) HandleListInstanceTypes(
 		instanceTypes = append(instanceTypes, entry)
 	}
 
-	return jsonText(map[string]any{
+	out := map[string]any{
 		"provider":       in.Provider,
 		"region":         in.Region,
 		"count":          len(types),
 		"instance_types": instanceTypes,
-	}), nil, nil
+	}
+	if total > maxResults {
+		out["note"] = fmt.Sprintf("Showing %d of %d results — use filters to narrow", len(types), total)
+	}
+
+	return jsonText(out), nil, nil
 }
 
 // --------------------------------------------------------------------------
