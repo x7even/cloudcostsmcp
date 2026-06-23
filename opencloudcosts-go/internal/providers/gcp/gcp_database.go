@@ -473,6 +473,13 @@ func (p *Provider) gkeAutopilotPrice(
 	memoryGB float64,
 	hoursPerMonth float64,
 ) ([]models.NormalizedPrice, map[string]any, error) {
+	if vcpu < 0 {
+		return nil, nil, fmt.Errorf("vcpu must be non-negative, got %v", vcpu)
+	}
+	if memoryGB < 0 {
+		return nil, nil, fmt.Errorf("memoryGB must be non-negative, got %v", memoryGB)
+	}
+
 	var mcpuRate, memRate float64
 
 	for k, price := range idx {
