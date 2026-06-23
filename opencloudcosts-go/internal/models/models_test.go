@@ -1659,3 +1659,43 @@ func TestPricingResult_JSONRoundtrip(t *testing.T) {
 		}
 	}
 }
+
+// --------------------------------------------------------------------------
+// TestPricingTerm_AllValues — every PricingTerm constant is non-empty and
+// all values are distinct from each other (no duplicate string representations).
+// --------------------------------------------------------------------------
+
+func TestPricingTerm_AllValues(t *testing.T) {
+	allTerms := []PricingTerm{
+		PricingTermOnDemand,
+		PricingTermReserved1Yr,
+		PricingTermReserved3Yr,
+		PricingTermReserved1YrPartial,
+		PricingTermReserved1YrAll,
+		PricingTermReserved3YrPartial,
+		PricingTermReserved3YrAll,
+		PricingTermSpot,
+		PricingTermSavingsPlan,
+		PricingTermComputeSP,
+		PricingTermEC2InstanceSP,
+		PricingTermSageMakerSP,
+		PricingTermCUD1Yr,
+		PricingTermCUD3Yr,
+		PricingTermFlexCUD,
+		PricingTermSUD,
+		PricingTermPTU,
+	}
+
+	seen := make(map[string]bool, len(allTerms))
+	for _, term := range allTerms {
+		s := string(term)
+		if s == "" {
+			t.Errorf("PricingTerm %v has empty string value", term)
+			continue
+		}
+		if seen[s] {
+			t.Errorf("duplicate PricingTerm string value %q", s)
+		}
+		seen[s] = true
+	}
+}
