@@ -797,6 +797,55 @@ func TestGetComputePrice_CUD1Yr_NumericPrice(t *testing.T) {
 	}
 }
 
+// TestGetStoragePrice_GCS_AllTiers verifies that storage pricing returns
+// non-empty results for all four GCS tiers: standard, nearline, coldline, archive.
+func TestGetStoragePrice_GCS_AllTiers(t *testing.T) {
+	// Prices: standard $0.020, nearline $0.010, coldline $0.004, archive $0.0012
+	skus := []map[string]any{
+		makeSKU("Standard Storage US", "OnDemand", "us-central1", "0", 20_000_000),
+		makeSKU("Nearline Storage US", "OnDemand", "us-central1", "0", 10_000_000),
+		makeSKU("Coldline Storage US", "OnDemand", "us-central1", "0", 4_000_000),
+		makeSKU("Archive Storage US", "OnDemand", "us-central1", "0", 1_200_000),
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(skuResponse(skus))
+	}))
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	ctx := context.Background()
+
+	tiers := []struct {
+		name      string
+		wantPrice float64
+	}{
+		{"standard", 0.020},
+		{"nearline", 0.010},
+		{"coldline", 0.004},
+		{"archive", 0.0012},
+	}
+
+	for _, tier := range tiers {
+		prices, err := p.GetStoragePrice(ctx, tier.name, "us-central1", 0)
+		if err != nil {
+			t.Errorf("GetStoragePrice(%q): %v", tier.name, err)
+			continue
+		}
+		if len(prices) == 0 {
+			t.Errorf("GetStoragePrice(%q): expected at least 1 price, got 0", tier.name)
+			continue
+		}
+		if abs(prices[0].PricePerUnit-tier.wantPrice) > 1e-9 {
+			t.Errorf("GetStoragePrice(%q): price = %.6f, want %.6f", tier.name, prices[0].PricePerUnit, tier.wantPrice)
+		}
+		if prices[0].Unit != models.PriceUnitPerGBMonth {
+			t.Errorf("GetStoragePrice(%q): unit = %v, want per_gb_month", tier.name, prices[0].Unit)
+		}
+	}
+}
+
 // --------------------------------------------------------------------------
 // Helpers
 // --------------------------------------------------------------------------
