@@ -238,6 +238,11 @@ func (p *Provider) GetComputePrice(
 		return p.gcpSUDPrice(ctx, instanceType, region, os)
 	}
 
+	// Flex CUD is spend-based (not resource-based) — computed from on-demand × 0.72 (28% off).
+	if term == models.PricingTermFlexCUD {
+		return p.gcpFlexCUDPrice(ctx, instanceType, region, os)
+	}
+
 	tm, hasTerm := termUsageType[term]
 	if !hasTerm {
 		return nil, fmt.Errorf("gcp: unsupported term %q for compute pricing", term)
@@ -483,6 +488,86 @@ func (p *Provider) gcpSUDPrice(
 		},
 		PricingTerm:  models.PricingTermSUD,
 		PricePerUnit: blendedRate,
+		Unit:         models.PriceUnitPerHour,
+		Currency:     "USD",
+	}
+
+	result := annotateFresh([]models.NormalizedPrice{price})
+
+	if raw, err := json.Marshal(result); err == nil {
+		p.cache.Set(cacheKey, raw, p.cfg.CacheTTL())
+	}
+	return result, nil
+}
+
+// --------------------------------------------------------------------------
+// gcpFlexCUDPrice — Flexible CUD pricing (spend-based, computed from on-demand)
+// --------------------------------------------------------------------------
+
+// flexCUD1YrDiscount is the GCP Flexible CUD 1-year discount rate (28% off on-demand).
+// Source: https://cloud.google.com/blog/products/compute/save-money-with-the-new-compute-engine-flexible-cuds
+const flexCUD1YrDiscount = 0.28
+
+// gcpFlexCUDPrice computes the Flex CUD 1-year hourly price for a GCP Compute Engine instance.
+//
+// Flex CUD is a spend-based commitment — there are no dedicated catalog SKUs. The price is
+// computed as on_demand × (1 - 0.28) = 72% of on-demand. Eligible families: N1, N2, N2D,
+// E2, C2, C2D. GPU/accelerator and Arm families are not eligible.
+func (p *Provider) gcpFlexCUDPrice(
+	ctx context.Context,
+	instanceType string,
+	region string,
+	os string,
+) ([]models.NormalizedPrice, error) {
+	family := utils.GetMachineFamily(instanceType)
+
+	if !utils.FlexCUDEligible(family) {
+		slog.Info("gcp: Flex CUD not eligible for family", "family", family)
+		return []models.NormalizedPrice{}, nil
+	}
+
+	// Check cache.
+	cacheKey := fmt.Sprintf("gcp:compute:%s:%s:%s:flex_cud", instanceType, region, os)
+	if cached, ok := p.cache.Get(cacheKey); ok {
+		var prices []models.NormalizedPrice
+		if err := json.Unmarshal(cached, &prices); err == nil {
+			return stampCacheAge(prices), nil
+		}
+	}
+
+	// Get on-demand price as the base.
+	onDemandPrices, err := p.GetComputePrice(ctx, instanceType, region, os, models.PricingTermOnDemand)
+	if err != nil {
+		return nil, err
+	}
+	if len(onDemandPrices) == 0 {
+		return []models.NormalizedPrice{}, nil
+	}
+
+	vcpus, memGB, _ := utils.ParseInstanceType(instanceType)
+	onDemand := onDemandPrices[0]
+	flexPrice := onDemand.PricePerUnit * (1.0 - flexCUD1YrDiscount)
+
+	price := models.NormalizedPrice{
+		Provider:      models.CloudProviderGCP,
+		Service:       "compute",
+		SKUID:         fmt.Sprintf("gcp-flex-cud-%s-%s", strings.ToLower(instanceType), region),
+		ProductFamily: "Compute Instance",
+		Description:   instanceType,
+		Region:        region,
+		Attributes: map[string]string{
+			"instanceType":      instanceType,
+			"vcpu":              fmt.Sprintf("%d", vcpus),
+			"memory":            fmt.Sprintf("%.4g GB", memGB),
+			"operatingSystem":   os,
+			"machineFamily":     family,
+			"flex_cud_term":     "1_year",
+			"flex_cud_discount": "28%",
+			"on_demand_rate":    fmt.Sprintf("$%.6f/hr", onDemand.PricePerUnit),
+			"note":              "Flex CUD is spend-based. No commitment to a specific VM type or region. 3-year Flex CUD gives 46% off on-demand.",
+		},
+		PricingTerm:  models.PricingTermFlexCUD,
+		PricePerUnit: flexPrice,
 		Unit:         models.PriceUnitPerHour,
 		Currency:     "USD",
 	}

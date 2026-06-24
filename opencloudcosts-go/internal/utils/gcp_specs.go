@@ -301,7 +301,9 @@ type FamilySKU struct {
 	PreemptRAMDesc string
 	CUDCPUDesc     string
 	CUDRAMDesc     string
-	FlexCUDCPUDesc string // CmtCudPremium usageType description (empty = not eligible for Flex CUD)
+	// FlexCUDCPUDesc/FlexCUDRAMDesc are reserved but unused: Flex CUD is spend-based
+	// (computed from on-demand × 0.72) and does not use catalog SKU lookups.
+	FlexCUDCPUDesc string
 	FlexCUDRAMDesc string
 	// GPUDesc is the on-demand accelerator SKU description substring for the entire
 	// family when every instance in the family has the same GPU model (a2 is an
@@ -319,8 +321,7 @@ var GCPFamilySKU = map[string]FamilySKU{
 		PreemptRAMDesc: "Preemptible E2 Instance Ram",
 		CUDCPUDesc:     "Commitment v1: E2 Cpu",
 		CUDRAMDesc:     "Commitment v1: E2 Ram",
-		// E2 does not support Flex CUD (CmtCudPremium); only N2, N2D, C2, C2D are eligible.
-		FlexCUDCPUDesc: "",
+		FlexCUDCPUDesc: "", // unused; Flex CUD is computed from on-demand rates
 		FlexCUDRAMDesc: "",
 	},
 	"n1": {
@@ -328,10 +329,10 @@ var GCPFamilySKU = map[string]FamilySKU{
 		RAMDesc:        "N1 Predefined Instance Ram",
 		PreemptCPUDesc: "Preemptible N1 Predefined Instance Core",
 		PreemptRAMDesc: "Preemptible N1 Predefined Instance Ram",
-		// N1 uses Sustained Use Discounts, not CUDs. No Flex CUD either.
+		// N1 uses Sustained Use Discounts, not resource-based CUDs.
 		CUDCPUDesc:     "",
 		CUDRAMDesc:     "",
-		FlexCUDCPUDesc: "",
+		FlexCUDCPUDesc: "", // unused; Flex CUD is computed from on-demand rates
 		FlexCUDRAMDesc: "",
 	},
 	"n2": {
@@ -341,8 +342,8 @@ var GCPFamilySKU = map[string]FamilySKU{
 		PreemptRAMDesc: "Preemptible N2 Instance Ram",
 		CUDCPUDesc:     "Commitment v1: N2 Cpu",
 		CUDRAMDesc:     "Commitment v1: N2 Ram",
-		FlexCUDCPUDesc: "Commitment v1: N2 Cpu",
-		FlexCUDRAMDesc: "Commitment v1: N2 Ram",
+		FlexCUDCPUDesc: "", // unused; Flex CUD is computed from on-demand rates
+		FlexCUDRAMDesc: "",
 	},
 	"n2d": {
 		CPUDesc:        "N2D AMD Instance Core",
@@ -351,8 +352,8 @@ var GCPFamilySKU = map[string]FamilySKU{
 		PreemptRAMDesc: "Preemptible N2D AMD Instance Ram",
 		CUDCPUDesc:     "Commitment v1: N2D AMD Cpu",
 		CUDRAMDesc:     "Commitment v1: N2D AMD Ram",
-		FlexCUDCPUDesc: "Commitment v1: N2D AMD Cpu",
-		FlexCUDRAMDesc: "Commitment v1: N2D AMD Ram",
+		FlexCUDCPUDesc: "", // unused; Flex CUD is computed from on-demand rates
+		FlexCUDRAMDesc: "",
 	},
 	"c2": {
 		CPUDesc:        "Compute optimized Core",
@@ -361,8 +362,8 @@ var GCPFamilySKU = map[string]FamilySKU{
 		PreemptRAMDesc: "Preemptible Compute optimized Ram",
 		CUDCPUDesc:     "Commitment: Compute optimized Core",
 		CUDRAMDesc:     "Commitment: Compute optimized Ram",
-		FlexCUDCPUDesc: "Commitment: Compute optimized Core",
-		FlexCUDRAMDesc: "Commitment: Compute optimized Ram",
+		FlexCUDCPUDesc: "", // unused; Flex CUD is computed from on-demand rates
+		FlexCUDRAMDesc: "",
 	},
 	"c2d": {
 		CPUDesc:        "C2D AMD Instance Core",
@@ -371,8 +372,8 @@ var GCPFamilySKU = map[string]FamilySKU{
 		PreemptRAMDesc: "Preemptible C2D AMD Instance Ram",
 		CUDCPUDesc:     "Commitment v1: C2D AMD Cpu",
 		CUDRAMDesc:     "Commitment v1: C2D AMD Ram",
-		FlexCUDCPUDesc: "Commitment v1: C2D AMD Cpu",
-		FlexCUDRAMDesc: "Commitment v1: C2D AMD Ram",
+		FlexCUDCPUDesc: "", // unused; Flex CUD is computed from on-demand rates
+		FlexCUDRAMDesc: "",
 	},
 	"c3": {
 		CPUDesc:        "C3 Instance Core",
@@ -508,6 +509,21 @@ var sudEligibleFamilies = map[string]bool{
 // are not eligible.
 func SUDEligible(family string) bool {
 	return sudEligibleFamilies[strings.ToLower(family)]
+}
+
+// flexCUDEligibleFamilies lists GCP machine families that qualify for Flexible
+// Committed Use Discounts (spend-based: 28% off for 1yr, 46% off for 3yr).
+// Source: https://cloud.google.com/blog/products/compute/save-money-with-the-new-compute-engine-flexible-cuds
+var flexCUDEligibleFamilies = map[string]bool{
+	"n1": true, "n2": true, "n2d": true, "e2": true,
+	"c2": true, "c2d": true,
+}
+
+// FlexCUDEligible reports whether the given machine family qualifies for GCP
+// Flexible Committed Use Discounts. GPU/accelerator families and Arm (t2a) are
+// not eligible.
+func FlexCUDEligible(family string) bool {
+	return flexCUDEligibleFamilies[strings.ToLower(family)]
 }
 
 // CloudSQLInstanceSpecs maps Cloud SQL instance type names to (vcpu, memoryGB).
