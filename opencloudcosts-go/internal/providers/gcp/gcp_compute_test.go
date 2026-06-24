@@ -1579,3 +1579,276 @@ func startsWith(s, prefix string) bool {
 func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
+
+// --------------------------------------------------------------------------
+// GPU pricing tests
+// --------------------------------------------------------------------------
+
+// TestGetComputePrice_GPU_A2HighGPU_IncludesAcceleratorCost verifies that an A2
+// on-demand request includes the GPU accelerator cost on top of CPU+RAM.
+// a2-highgpu-1g: 12 vCPU, 85 GB, 1x A100 40GB.
+func TestGetComputePrice_GPU_A2HighGPU_IncludesAcceleratorCost(t *testing.T) {
+	const cpuRate = 0.031611
+	const ramRate = 0.004237
+	const gpuRate = 2.933400 // ~real A100 40GB on-demand rate
+
+	skus := []map[string]any{
+		makeSKU("A2 Instance Core", "OnDemand", "us-central1", "0", 31_611_000),
+		makeSKU("A2 Instance Ram", "OnDemand", "us-central1", "0", 4_237_000),
+		// SKU description must contain the GCPInstanceGPU OnDemand substring for a2-highgpu-1g.
+		makeSKU("Nvidia Tesla A100 GPU running in Americas", "OnDemand", "us-central1", "2", 933_400_000),
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(skuResponse(skus))
+	}))
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	prices, err := p.GetComputePrice(context.Background(), "a2-highgpu-1g", "us-central1", "Linux", models.PricingTermOnDemand)
+	if err != nil {
+		t.Fatalf("GetComputePrice (a2-highgpu-1g): %v", err)
+	}
+	if len(prices) != 1 {
+		t.Fatalf("expected 1 price, got %d", len(prices))
+	}
+
+	// CPU+RAM baseline (no GPU).
+	cpuOnly := 12 * cpuRate
+	ramOnly := 85 * ramRate
+	cpuRamBaseline := cpuOnly + ramOnly
+
+	// GPU cost should have been added — total must exceed CPU+RAM baseline.
+	if prices[0].PricePerUnit <= cpuRamBaseline {
+		t.Errorf("PricePerUnit = %.6f, want > %.6f (CPU+RAM only); GPU cost was not added",
+			prices[0].PricePerUnit, cpuRamBaseline)
+	}
+
+	// gpu_count attribute must be "1".
+	if got := prices[0].Attributes["gpu_count"]; got != "1" {
+		t.Errorf("gpu_count = %q, want %q", got, "1")
+	}
+}
+
+// TestGetComputePrice_GPU_A2_GPUCostMath verifies the exact GPU cost arithmetic.
+// a2-highgpu-2g: 24 vCPU, 170 GB, 2x A100 40GB.
+// GPU SKU at $1.00/GPU-hr → gpuCost = 2 × $1.00 = $2.00.
+func TestGetComputePrice_GPU_A2_GPUCostMath(t *testing.T) {
+	const cpuRate = 0.031611
+	const ramRate = 0.004237
+	const gpuRatePerUnit = 1.00 // exactly $1.00/GPU-hr
+
+	skus := []map[string]any{
+		makeSKU("A2 Instance Core", "OnDemand", "us-central1", "0", 31_611_000),
+		makeSKU("A2 Instance Ram", "OnDemand", "us-central1", "0", 4_237_000),
+		// GPU rate = $1.00 exactly (units="1", nanos=0).
+		makeSKU("Nvidia Tesla A100 GPU running in Americas", "OnDemand", "us-central1", "1", 0),
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(skuResponse(skus))
+	}))
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	prices, err := p.GetComputePrice(context.Background(), "a2-highgpu-2g", "us-central1", "Linux", models.PricingTermOnDemand)
+	if err != nil {
+		t.Fatalf("GetComputePrice (a2-highgpu-2g): %v", err)
+	}
+	if len(prices) != 1 {
+		t.Fatalf("expected 1 price, got %d", len(prices))
+	}
+
+	// Total = 24×cpuRate + 170×ramRate + 2×$1.00
+	want := 24*cpuRate + 170*ramRate + 2*gpuRatePerUnit
+	if abs(prices[0].PricePerUnit-want) > 1e-6 {
+		t.Errorf("PricePerUnit = %.6f, want %.6f (cpu+ram+2×GPU@$1.00)",
+			prices[0].PricePerUnit, want)
+	}
+}
+
+// TestGetComputePrice_GPU_G2Standard4_L4 verifies G2 family pricing includes the L4 GPU cost.
+// g2-standard-4: 4 vCPU, 16 GB, 1x L4.
+func TestGetComputePrice_GPU_G2Standard4_L4(t *testing.T) {
+	const cpuRate = 0.024200
+	const ramRate = 0.003250
+	const gpuRate = 0.700600 // realistic L4 on-demand rate
+
+	skus := []map[string]any{
+		makeSKU("G2 Instance Core", "OnDemand", "us-central1", "0", 24_200_000),
+		makeSKU("G2 Instance Ram", "OnDemand", "us-central1", "0", 3_250_000),
+		// SKU description must contain the GCPInstanceGPU OnDemand substring for g2-standard-4.
+		makeSKU("Nvidia L4 GPU running in Americas", "OnDemand", "us-central1", "0", 700_600_000),
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(skuResponse(skus))
+	}))
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	prices, err := p.GetComputePrice(context.Background(), "g2-standard-4", "us-central1", "Linux", models.PricingTermOnDemand)
+	if err != nil {
+		t.Fatalf("GetComputePrice (g2-standard-4): %v", err)
+	}
+	if len(prices) != 1 {
+		t.Fatalf("expected 1 price, got %d", len(prices))
+	}
+
+	// GPU cost included: total must exceed CPU+RAM baseline.
+	cpuRamBaseline := 4*cpuRate + 16*ramRate
+	if prices[0].PricePerUnit <= cpuRamBaseline {
+		t.Errorf("PricePerUnit = %.6f, want > %.6f (CPU+RAM only); GPU cost was not added",
+			prices[0].PricePerUnit, cpuRamBaseline)
+	}
+
+	// gpu_model attribute must mention "L4".
+	gpuModel := prices[0].Attributes["gpu_model"]
+	if !strings.Contains(gpuModel, "L4") {
+		t.Errorf("gpu_model = %q, want it to contain %q", gpuModel, "L4")
+	}
+}
+
+// TestGetComputePrice_GPU_AttributesPresent verifies all expected GPU-related attributes
+// are present and correctly valued for a GPU on-demand request.
+func TestGetComputePrice_GPU_AttributesPresent(t *testing.T) {
+	skus := []map[string]any{
+		makeSKU("A2 Instance Core", "OnDemand", "us-central1", "0", 31_611_000),
+		makeSKU("A2 Instance Ram", "OnDemand", "us-central1", "0", 4_237_000),
+		makeSKU("Nvidia Tesla A100 GPU running in Americas", "OnDemand", "us-central1", "2", 933_400_000),
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(skuResponse(skus))
+	}))
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	prices, err := p.GetComputePrice(context.Background(), "a2-highgpu-1g", "us-central1", "Linux", models.PricingTermOnDemand)
+	if err != nil {
+		t.Fatalf("GetComputePrice (a2-highgpu-1g): %v", err)
+	}
+	if len(prices) != 1 {
+		t.Fatalf("expected 1 price, got %d", len(prices))
+	}
+
+	attrs := prices[0].Attributes
+
+	// All four GPU attributes must be present.
+	requiredGPUKeys := []string{"gpu_count", "gpu_model", "gpu_rate_per_hour", "pricing_components"}
+	for _, key := range requiredGPUKeys {
+		if _, ok := attrs[key]; !ok {
+			t.Errorf("missing required GPU attribute %q", key)
+		}
+	}
+
+	// pricing_components must be "cpu+ram+gpu" for a GPU instance.
+	if got := attrs["pricing_components"]; got != "cpu+ram+gpu" {
+		t.Errorf("pricing_components = %q, want %q", got, "cpu+ram+gpu")
+	}
+}
+
+// TestGetComputePrice_GPU_NonGPUFamilyNoGPUAttributes verifies that a non-GPU instance
+// (n1-standard-4) does NOT carry GPU-specific attributes.
+func TestGetComputePrice_GPU_NonGPUFamilyNoGPUAttributes(t *testing.T) {
+	skus := []map[string]any{
+		makeSKU("N1 Predefined Instance Core", "OnDemand", "us-central1", "0", 31_611_000),
+		makeSKU("N1 Predefined Instance Ram", "OnDemand", "us-central1", "0", 4_237_000),
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(skuResponse(skus))
+	}))
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	prices, err := p.GetComputePrice(context.Background(), "n1-standard-4", "us-central1", "Linux", models.PricingTermOnDemand)
+	if err != nil {
+		t.Fatalf("GetComputePrice (n1-standard-4): %v", err)
+	}
+	if len(prices) != 1 {
+		t.Fatalf("expected 1 price, got %d", len(prices))
+	}
+
+	attrs := prices[0].Attributes
+
+	// gpu_count must be absent or "0" for a non-GPU instance.
+	if gpuCount, ok := attrs["gpu_count"]; ok && gpuCount != "0" {
+		t.Errorf("non-GPU instance should not have gpu_count set; got %q", gpuCount)
+	}
+
+	// pricing_components must be absent or "cpu+ram" (never "cpu+ram+gpu").
+	if pc, ok := attrs["pricing_components"]; ok && pc == "cpu+ram+gpu" {
+		t.Errorf("non-GPU instance should not have pricing_components=%q", pc)
+	}
+}
+
+// TestGetComputePrice_GPU_FallbackWhenGPUSKUMissing verifies behavior when a GPU
+// instance's GPU SKU is absent from the catalog. The implementation logs a warning
+// and returns a partial price (CPU+RAM only, no error).
+func TestGetComputePrice_GPU_FallbackWhenGPUSKUMissing(t *testing.T) {
+	const cpuRate = 0.031611
+	const ramRate = 0.004237
+
+	// Only CPU and RAM SKUs; no GPU SKU in the mock catalog.
+	skus := []map[string]any{
+		makeSKU("A2 Instance Core", "OnDemand", "us-central1", "0", 31_611_000),
+		makeSKU("A2 Instance Ram", "OnDemand", "us-central1", "0", 4_237_000),
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(skuResponse(skus))
+	}))
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	prices, err := p.GetComputePrice(context.Background(), "a2-highgpu-1g", "us-central1", "Linux", models.PricingTermOnDemand)
+
+	// Implementation silently falls back — no error.
+	if err != nil {
+		t.Fatalf("expected no error when GPU SKU is missing, got: %v", err)
+	}
+	if len(prices) != 1 {
+		t.Fatalf("expected 1 partial price (CPU+RAM only), got %d", len(prices))
+	}
+
+	// Price must equal CPU+RAM only (GPU cost not added).
+	wantCPURam := 12*cpuRate + 85*ramRate
+	if abs(prices[0].PricePerUnit-wantCPURam) > 1e-6 {
+		t.Errorf("PricePerUnit = %.6f, want %.6f (CPU+RAM only, no GPU)", prices[0].PricePerUnit, wantCPURam)
+	}
+
+	// gpu_count must be absent (GPU attrs are not set when GPU SKU is missing).
+	if _, ok := prices[0].Attributes["gpu_count"]; ok {
+		t.Errorf("gpu_count should be absent when GPU SKU is missing")
+	}
+}
+
+// TestGetComputePrice_GPU_A2_NotSUDEligible_SUDTermReturnsEmpty is a regression test
+// verifying that a2-highgpu-1g returns an empty slice (not an error) for term=sud,
+// because GPU families are SUD-ineligible. This also validates that the GPU pricing
+// additions did not break the existing SUD exclusion logic.
+func TestGetComputePrice_GPU_A2_NotSUDEligible_SUDTermReturnsEmpty(t *testing.T) {
+	// gcpSUDPrice short-circuits before HTTP for SUD-ineligible families,
+	// but we provide a server anyway to catch regressions.
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(skuResponse(nil))
+	}))
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	prices, err := p.GetComputePrice(context.Background(), "a2-highgpu-1g", "us-central1", "Linux", models.PricingTermSUD)
+	if err != nil {
+		t.Fatalf("GetComputePrice (a2 sud): unexpected error: %v", err)
+	}
+	if len(prices) != 0 {
+		t.Errorf("expected empty slice for SUD-ineligible a2 GPU family, got %d price(s)", len(prices))
+	}
+}
