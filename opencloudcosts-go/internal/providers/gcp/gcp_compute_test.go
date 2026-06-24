@@ -1852,3 +1852,200 @@ func TestGetComputePrice_GPU_A2_NotSUDEligible_SUDTermReturnsEmpty(t *testing.T)
 		t.Errorf("expected empty slice for SUD-ineligible a2 GPU family, got %d price(s)", len(prices))
 	}
 }
+
+// --------------------------------------------------------------------------
+// Flex CUD pricing tests
+// --------------------------------------------------------------------------
+
+// TestGetComputePrice_FlexCUD_EligibleN2_ReturnsTerm verifies that n2-standard-4
+// with term=flex_cud returns a non-empty result with PricingTerm == flex_cud.
+func TestGetComputePrice_FlexCUD_EligibleN2_ReturnsTerm(t *testing.T) {
+	// N2 FlexCUD uses the same description substrings as Commit1Yr but with
+	// usageType="CmtCudPremium". Both CPU and RAM SKUs must be present for
+	// GetComputePrice to return a non-empty slice.
+	skus := []map[string]any{
+		makeSKU("Commitment v1: N2 Cpu in Americas for Flex", "CmtCudPremium", "us-central1", "0", 19_560_000),
+		makeSKU("Commitment v1: N2 Ram in Americas for Flex", "CmtCudPremium", "us-central1", "0", 2_626_000),
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(skuResponse(skus))
+	}))
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	prices, err := p.GetComputePrice(context.Background(), "n2-standard-4", "us-central1", "Linux", models.PricingTermFlexCUD)
+	if err != nil {
+		t.Fatalf("GetComputePrice (flex_cud): %v", err)
+	}
+	if len(prices) == 0 {
+		t.Fatal("expected at least 1 Flex CUD price, got 0")
+	}
+	if prices[0].PricingTerm != models.PricingTermFlexCUD {
+		t.Errorf("PricingTerm = %q, want %q", prices[0].PricingTerm, models.PricingTermFlexCUD)
+	}
+}
+
+// TestGetComputePrice_FlexCUD_PriceBetweenOnDemandAndCUD1Yr verifies the key
+// price ladder invariant: cud_1yr < flex_cud < on_demand.
+func TestGetComputePrice_FlexCUD_PriceBetweenOnDemandAndCUD1Yr(t *testing.T) {
+	// n2-standard-4: 4 vCPU, 16 GB RAM.
+	// Rates chosen so the invariant cud_1yr < flex_cud < on_demand holds strictly:
+	//   on_demand total:  4*0.031611 + 16*0.004237 = 0.194236
+	//   flex_cud total:   4*0.025000 + 16*0.003500 = 0.156000
+	//   cud_1yr total:    4*0.019560 + 16*0.002626 = 0.120256
+	skus := []map[string]any{
+		// OnDemand SKUs
+		makeSKU("N2 Instance Core", "OnDemand", "us-central1", "0", 31_611_000),
+		makeSKU("N2 Instance Ram", "OnDemand", "us-central1", "0", 4_237_000),
+		// CUD 1-year SKUs
+		makeSKU("Commitment v1: N2 Cpu in Americas for 1 Year", "Commit1Yr", "us-central1", "0", 19_560_000),
+		makeSKU("Commitment v1: N2 Ram in Americas for 1 Year", "Commit1Yr", "us-central1", "0", 2_626_000),
+		// Flex CUD SKUs — same desc substrings, usageType="CmtCudPremium", price between cud1yr and on_demand
+		makeSKU("Commitment v1: N2 Cpu in Americas Flex", "CmtCudPremium", "us-central1", "0", 25_000_000),
+		makeSKU("Commitment v1: N2 Ram in Americas Flex", "CmtCudPremium", "us-central1", "0", 3_500_000),
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(skuResponse(skus))
+	}))
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	ctx := context.Background()
+
+	getPrice := func(term models.PricingTerm) float64 {
+		t.Helper()
+		prices, err := p.GetComputePrice(ctx, "n2-standard-4", "us-central1", "Linux", term)
+		if err != nil {
+			t.Fatalf("GetComputePrice (term=%s): %v", term, err)
+		}
+		if len(prices) != 1 {
+			t.Fatalf("GetComputePrice (term=%s): expected 1 price, got %d", term, len(prices))
+		}
+		return prices[0].PricePerUnit
+	}
+
+	cud1YrPrice := getPrice(models.PricingTermCUD1Yr)
+	flexCUDPrice := getPrice(models.PricingTermFlexCUD)
+	onDemandPrice := getPrice(models.PricingTermOnDemand)
+
+	if cud1YrPrice >= flexCUDPrice {
+		t.Errorf("price ladder violated: cud_1yr ($%.6f) must be < flex_cud ($%.6f)", cud1YrPrice, flexCUDPrice)
+	}
+	if flexCUDPrice >= onDemandPrice {
+		t.Errorf("price ladder violated: flex_cud ($%.6f) must be < on_demand ($%.6f)", flexCUDPrice, onDemandPrice)
+	}
+}
+
+// TestGetComputePrice_FlexCUD_IneligibleN1_ReturnsError verifies that n1-standard-4
+// with term=flex_cud returns an empty slice (not an error), because N1 has empty
+// FlexCUDCPUDesc / FlexCUDRAMDesc and GetComputePrice short-circuits before any HTTP call.
+func TestGetComputePrice_FlexCUD_IneligibleN1_ReturnsError(t *testing.T) {
+	// N1 has FlexCUDCPUDesc == "" — GetComputePrice short-circuits and returns
+	// ([]NormalizedPrice{}, nil) without making any HTTP call.
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("HTTP should not be called for N1 Flex CUD (empty desc family)")
+	}))
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	prices, err := p.GetComputePrice(context.Background(), "n1-standard-4", "us-central1", "Linux", models.PricingTermFlexCUD)
+	if err != nil {
+		t.Fatalf("expected nil error for N1 Flex CUD, got: %v", err)
+	}
+	// N1 must return empty — not a non-empty "Flex CUD" price.
+	if len(prices) != 0 {
+		t.Errorf("expected empty slice for N1 Flex CUD (ineligible family), got %d price(s)", len(prices))
+	}
+}
+
+// TestGetComputePrice_FlexCUD_TermLabel verifies the returned PricingTerm is
+// exactly models.PricingTermFlexCUD ("flex_cud"), not on_demand or cud_1yr.
+func TestGetComputePrice_FlexCUD_TermLabel(t *testing.T) {
+	skus := []map[string]any{
+		makeSKU("Commitment v1: N2 Cpu Flex CUD", "CmtCudPremium", "us-central1", "0", 25_000_000),
+		makeSKU("Commitment v1: N2 Ram Flex CUD", "CmtCudPremium", "us-central1", "0", 3_500_000),
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(skuResponse(skus))
+	}))
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	prices, err := p.GetComputePrice(context.Background(), "n2-standard-4", "us-central1", "Linux", models.PricingTermFlexCUD)
+	if err != nil {
+		t.Fatalf("GetComputePrice (flex_cud term label): %v", err)
+	}
+	if len(prices) == 0 {
+		t.Fatal("expected at least 1 Flex CUD price, got 0")
+	}
+
+	got := prices[0].PricingTerm
+	if got == models.PricingTermOnDemand {
+		t.Errorf("PricingTerm = %q, must not be on_demand", got)
+	}
+	if got == models.PricingTermCUD1Yr {
+		t.Errorf("PricingTerm = %q, must not be cud_1yr", got)
+	}
+	if got != models.PricingTermFlexCUD {
+		t.Errorf("PricingTerm = %q, want %q", got, models.PricingTermFlexCUD)
+	}
+}
+
+// TestGetComputePrice_FlexCUD_PriceMath verifies that n2-standard-4 (4 vCPU, 16 GB RAM)
+// flex_cud pricing computes: PricePerUnit = 4×0.019560 + 16×0.002626 = 0.120256.
+func TestGetComputePrice_FlexCUD_PriceMath(t *testing.T) {
+	// Mock: N2 Flex CUD CPU rate=$0.019560, RAM rate=$0.002626.
+	// n2-standard-4: 4 vCPU, 16 GB.
+	// Expected: 4*0.019560 + 16*0.002626 = 0.07824 + 0.042016 = 0.120256
+	skus := []map[string]any{
+		makeSKU("Commitment v1: N2 Cpu in Americas", "CmtCudPremium", "us-central1", "0", 19_560_000),
+		makeSKU("Commitment v1: N2 Ram in Americas", "CmtCudPremium", "us-central1", "0", 2_626_000),
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(skuResponse(skus))
+	}))
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	prices, err := p.GetComputePrice(context.Background(), "n2-standard-4", "us-central1", "Linux", models.PricingTermFlexCUD)
+	if err != nil {
+		t.Fatalf("GetComputePrice (flex_cud math): %v", err)
+	}
+	if len(prices) != 1 {
+		t.Fatalf("expected 1 price, got %d", len(prices))
+	}
+
+	want := 4*0.019560 + 16*0.002626
+	if abs(prices[0].PricePerUnit-want) > 1e-6 {
+		t.Errorf("Flex CUD PricePerUnit = %.6f, want %.6f (4×0.019560 + 16×0.002626)", prices[0].PricePerUnit, want)
+	}
+}
+
+// TestGetComputePrice_FlexCUD_SupportedTermsIncludesFlexCUD verifies that
+// SupportedTerms for compute_engine includes models.PricingTermFlexCUD.
+func TestGetComputePrice_FlexCUD_SupportedTermsIncludesFlexCUD(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer ts.Close()
+	p := newTestProvider(t, ts)
+
+	terms := p.SupportedTerms(models.PricingDomainCompute, "compute_engine")
+	found := false
+	for _, term := range terms {
+		if term == models.PricingTermFlexCUD {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("SupportedTerms(compute, compute_engine) does not include %q; got: %v",
+			models.PricingTermFlexCUD, terms)
+	}
+}
