@@ -1859,13 +1859,12 @@ func TestGetComputePrice_GPU_A2_NotSUDEligible_SUDTermReturnsEmpty(t *testing.T)
 
 // TestGetComputePrice_FlexCUD_EligibleN2_ReturnsTerm verifies that n2-standard-4
 // with term=flex_cud returns a non-empty result with PricingTerm == flex_cud.
+// Flex CUD is spend-based: computed from on-demand × 0.72 (28% off).
 func TestGetComputePrice_FlexCUD_EligibleN2_ReturnsTerm(t *testing.T) {
-	// N2 FlexCUD uses the same description substrings as Commit1Yr but with
-	// usageType="CmtCudPremium". Both CPU and RAM SKUs must be present for
-	// GetComputePrice to return a non-empty slice.
+	// Flex CUD is computed from on-demand price — only OnDemand SKUs are needed.
 	skus := []map[string]any{
-		makeSKU("Commitment v1: N2 Cpu in Americas for Flex", "CmtCudPremium", "us-central1", "0", 19_560_000),
-		makeSKU("Commitment v1: N2 Ram in Americas for Flex", "CmtCudPremium", "us-central1", "0", 2_626_000),
+		makeSKU("N2 Instance Core", "OnDemand", "us-central1", "0", 31_611_000),
+		makeSKU("N2 Instance Ram", "OnDemand", "us-central1", "0", 4_237_000),
 	}
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1889,22 +1888,20 @@ func TestGetComputePrice_FlexCUD_EligibleN2_ReturnsTerm(t *testing.T) {
 
 // TestGetComputePrice_FlexCUD_PriceBetweenOnDemandAndCUD1Yr verifies the key
 // price ladder invariant: cud_1yr < flex_cud < on_demand.
+// Flex CUD (28% off on-demand) should always be cheaper than on-demand but
+// more expensive than resource-based CUD 1yr (~37% off).
 func TestGetComputePrice_FlexCUD_PriceBetweenOnDemandAndCUD1Yr(t *testing.T) {
 	// n2-standard-4: 4 vCPU, 16 GB RAM.
-	// Rates chosen so the invariant cud_1yr < flex_cud < on_demand holds strictly:
-	//   on_demand total:  4*0.031611 + 16*0.004237 = 0.194236
-	//   flex_cud total:   4*0.025000 + 16*0.003500 = 0.156000
-	//   cud_1yr total:    4*0.019560 + 16*0.002626 = 0.120256
+	// on_demand total:  4*0.031611 + 16*0.004237 = 0.194236
+	// flex_cud total:   on_demand × 0.72           = 0.139850 (28% off)
+	// cud_1yr total:    4*0.019560 + 16*0.002626   = 0.120256 (~37% off)
 	skus := []map[string]any{
-		// OnDemand SKUs
+		// OnDemand SKUs (used both for on_demand and to compute flex_cud)
 		makeSKU("N2 Instance Core", "OnDemand", "us-central1", "0", 31_611_000),
 		makeSKU("N2 Instance Ram", "OnDemand", "us-central1", "0", 4_237_000),
 		// CUD 1-year SKUs
 		makeSKU("Commitment v1: N2 Cpu in Americas for 1 Year", "Commit1Yr", "us-central1", "0", 19_560_000),
 		makeSKU("Commitment v1: N2 Ram in Americas for 1 Year", "Commit1Yr", "us-central1", "0", 2_626_000),
-		// Flex CUD SKUs — same desc substrings, usageType="CmtCudPremium", price between cud1yr and on_demand
-		makeSKU("Commitment v1: N2 Cpu in Americas Flex", "CmtCudPremium", "us-central1", "0", 25_000_000),
-		makeSKU("Commitment v1: N2 Ram in Americas Flex", "CmtCudPremium", "us-central1", "0", 3_500_000),
 	}
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1940,14 +1937,19 @@ func TestGetComputePrice_FlexCUD_PriceBetweenOnDemandAndCUD1Yr(t *testing.T) {
 	}
 }
 
-// TestGetComputePrice_FlexCUD_IneligibleN1_ReturnsError verifies that n1-standard-4
-// with term=flex_cud returns an empty slice (not an error), because N1 has empty
-// FlexCUDCPUDesc / FlexCUDRAMDesc and GetComputePrice short-circuits before any HTTP call.
-func TestGetComputePrice_FlexCUD_IneligibleN1_ReturnsError(t *testing.T) {
-	// N1 has FlexCUDCPUDesc == "" — GetComputePrice short-circuits and returns
-	// ([]NormalizedPrice{}, nil) without making any HTTP call.
+// TestGetComputePrice_FlexCUD_EligibleN1_ReturnsPrice verifies that n1-standard-4
+// with term=flex_cud returns a non-empty result. N1 IS eligible for Flex CUD
+// (spend-based, 28% off on-demand).
+func TestGetComputePrice_FlexCUD_EligibleN1_ReturnsPrice(t *testing.T) {
+	// N1 IS Flex CUD eligible (spend-based). Needs on-demand SKUs to compute from.
+	skus := []map[string]any{
+		makeSKU("N1 Predefined Instance Core", "OnDemand", "us-central1", "0", 31_611_000),
+		makeSKU("N1 Predefined Instance Ram", "OnDemand", "us-central1", "0", 4_237_000),
+	}
+
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Error("HTTP should not be called for N1 Flex CUD (empty desc family)")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(skuResponse(skus))
 	}))
 	defer ts.Close()
 
@@ -1956,18 +1958,19 @@ func TestGetComputePrice_FlexCUD_IneligibleN1_ReturnsError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected nil error for N1 Flex CUD, got: %v", err)
 	}
-	// N1 must return empty — not a non-empty "Flex CUD" price.
-	if len(prices) != 0 {
-		t.Errorf("expected empty slice for N1 Flex CUD (ineligible family), got %d price(s)", len(prices))
+	if len(prices) == 0 {
+		t.Errorf("expected non-empty slice for N1 Flex CUD (spend-based, eligible family)")
 	}
 }
 
 // TestGetComputePrice_FlexCUD_TermLabel verifies the returned PricingTerm is
 // exactly models.PricingTermFlexCUD ("flex_cud"), not on_demand or cud_1yr.
+// Flex CUD is computed from on-demand × 0.72 but labeled as flex_cud.
 func TestGetComputePrice_FlexCUD_TermLabel(t *testing.T) {
+	// Flex CUD is derived from on-demand — only OnDemand SKUs are needed.
 	skus := []map[string]any{
-		makeSKU("Commitment v1: N2 Cpu Flex CUD", "CmtCudPremium", "us-central1", "0", 25_000_000),
-		makeSKU("Commitment v1: N2 Ram Flex CUD", "CmtCudPremium", "us-central1", "0", 3_500_000),
+		makeSKU("N2 Instance Core", "OnDemand", "us-central1", "0", 31_611_000),
+		makeSKU("N2 Instance Ram", "OnDemand", "us-central1", "0", 4_237_000),
 	}
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1998,14 +2001,15 @@ func TestGetComputePrice_FlexCUD_TermLabel(t *testing.T) {
 }
 
 // TestGetComputePrice_FlexCUD_PriceMath verifies that n2-standard-4 (4 vCPU, 16 GB RAM)
-// flex_cud pricing computes: PricePerUnit = 4×0.019560 + 16×0.002626 = 0.120256.
+// flex_cud pricing = on_demand × (1 - 0.28) = on_demand × 0.72.
+// n2-standard-4 on-demand: 4×0.031611 + 16×0.004237 = 0.126444 + 0.067792 = 0.194236
+// flex_cud: 0.194236 × 0.72 = 0.139850
 func TestGetComputePrice_FlexCUD_PriceMath(t *testing.T) {
-	// Mock: N2 Flex CUD CPU rate=$0.019560, RAM rate=$0.002626.
+	// N2 on-demand rates (nanos per vCPU-hr and per GB-hr).
 	// n2-standard-4: 4 vCPU, 16 GB.
-	// Expected: 4*0.019560 + 16*0.002626 = 0.07824 + 0.042016 = 0.120256
 	skus := []map[string]any{
-		makeSKU("Commitment v1: N2 Cpu in Americas", "CmtCudPremium", "us-central1", "0", 19_560_000),
-		makeSKU("Commitment v1: N2 Ram in Americas", "CmtCudPremium", "us-central1", "0", 2_626_000),
+		makeSKU("N2 Instance Core", "OnDemand", "us-central1", "0", 31_611_000),
+		makeSKU("N2 Instance Ram", "OnDemand", "us-central1", "0", 4_237_000),
 	}
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2023,9 +2027,10 @@ func TestGetComputePrice_FlexCUD_PriceMath(t *testing.T) {
 		t.Fatalf("expected 1 price, got %d", len(prices))
 	}
 
-	want := 4*0.019560 + 16*0.002626
+	onDemand := 4*0.031611 + 16*0.004237
+	want := onDemand * (1.0 - 0.28)
 	if abs(prices[0].PricePerUnit-want) > 1e-6 {
-		t.Errorf("Flex CUD PricePerUnit = %.6f, want %.6f (4×0.019560 + 16×0.002626)", prices[0].PricePerUnit, want)
+		t.Errorf("Flex CUD PricePerUnit = %.6f, want %.6f (on_demand×0.72)", prices[0].PricePerUnit, want)
 	}
 }
 
