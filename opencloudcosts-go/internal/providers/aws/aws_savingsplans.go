@@ -632,7 +632,9 @@ func (p *Provider) GetSavingsPlanPrice(
 		"sp_rate":         spRate,
 		"edp_note": "EDP is a confidential negotiated rate not available via public API. " +
 			"Supply edp_discount_pct (0.0-1.0) to calculate your effective rate. " +
-			"Market range: ~5% at $1M/yr commitment to ~20% at $50M+/yr",
+			"Market range: ~5% at $1M/yr commitment to ~20% at $50M+/yr. " +
+			"Qualification: requires ~$1M+ annual AWS spend commitment, AWS Enterprise Support enrollment, " +
+			"and a PPA (Private Pricing Agreement) — contact your AWS account team or TAM to negotiate.",
 	}
 
 	// 3-year commitment risk warning — material for enterprise FinOps decisions.
