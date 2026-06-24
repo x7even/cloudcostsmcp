@@ -426,10 +426,10 @@ func (p *Provider) gcpSUDPrice(
 	tier3rate := onDemandTotal * sudTiers[3].factor
 
 	// Blended rate for 100% monthly usage.
-	// Sum of tier contributions: each tier spans 182.5 hrs.
-	// = (182.5×1.00 + 182.5×0.80 + 182.5×0.60 + 182.5×0.40) × onDemandTotal / 730
-	// = (182.5 × 2.80) × onDemandTotal / 730 = 511 × onDemandTotal / 730 = 0.70 × onDemandTotal
-	blendedRate := onDemandTotal * 0.70
+	// Each tier spans sudMonthlyHours/4 = 182.5 hrs.
+	// = (182.5×1.00 + 182.5×0.80 + 182.5×0.60 + 182.5×0.40) × onDemandTotal / sudMonthlyHours
+	// = (182.5 × 2.80) / sudMonthlyHours × onDemandTotal = 0.70 × onDemandTotal
+	blendedRate := onDemandTotal * (sudMonthlyHours / 4) * (1.00 + 0.80 + 0.60 + 0.40) / sudMonthlyHours
 
 	price := models.NormalizedPrice{
 		Provider:      models.CloudProviderGCP,

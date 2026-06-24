@@ -96,7 +96,7 @@ func (p *Provider) getProductsBulk(
 	if err != nil {
 		return nil, fmt.Errorf("aws bulk: fetch %s: %w", url, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("aws bulk: unexpected status %d for %s", resp.StatusCode, url)
@@ -108,7 +108,7 @@ func (p *Provider) getProductsBulk(
 		if err != nil {
 			return nil, fmt.Errorf("aws bulk: gzip reader: %w", err)
 		}
-		defer gz.Close()
+		defer func() { _ = gz.Close() }()
 		bodyReader = gz
 	}
 
@@ -181,7 +181,7 @@ func (p *Provider) getProductsBulk(
 
 				// Only parse and match if we still need more results.
 				// We must still Decode above to advance the stream regardless.
-				if int32(len(rawProducts)) >= maxResults {
+				if len(rawProducts) >= int(maxResults) {
 					continue
 				}
 

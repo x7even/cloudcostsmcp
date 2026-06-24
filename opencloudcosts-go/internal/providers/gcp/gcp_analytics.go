@@ -275,7 +275,7 @@ func gpuCountForMachineType(machineType string) int {
 	for _, part := range parts {
 		if strings.HasSuffix(part, "g") && len(part) > 1 {
 			var n int
-			fmt.Sscanf(part, "%dg", &n)
+			_, _ = fmt.Sscanf(part, "%dg", &n)
 			if n > 0 {
 				return n
 			}
