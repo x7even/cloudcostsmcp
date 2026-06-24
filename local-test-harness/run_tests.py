@@ -539,6 +539,15 @@ TEST_PROMPTS = {
         "Show me the per-tier breakdown and compare the SUD effective rate to the on-demand "
         "and 1-year CUD rates."
     ),
+    "GV7": (
+        "What is the cost of running a GCP n2-standard-8 VM in us-central1 for a full month "
+        "under a flexible committed use discount (no long-term commitment required)? Compare "
+        "this to on-demand and 1-year CUD pricing and tell me which is cheapest."
+    ),
+    "GV8": (
+        "How much does it cost per hour to run an a2-highgpu-1g instance in us-central1 on GCP? "
+        "Make sure to include the A100 GPU cost in addition to the CPU and RAM cost."
+    ),
     # -----------------------------------------------------------------------
     # GCP Networking — LB, CDN, NAT (GN) [v0.7.6]
     # -----------------------------------------------------------------------
