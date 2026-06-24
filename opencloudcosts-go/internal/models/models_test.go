@@ -19,6 +19,10 @@ func ptr[T any](v T) *T { return &v }
 // --------------------------------------------------------------------------
 
 func TestRoundTrip_ComputePricingSpec(t *testing.T) {
+	// SP defaults populated by UnmarshalJSON — included so round-trip equality holds.
+	defaultPayOpt := "No Upfront"
+	defaultYears := 1
+
 	tests := []struct {
 		name string
 		spec ComputePricingSpec
@@ -33,8 +37,10 @@ func TestRoundTrip_ComputePricingSpec(t *testing.T) {
 					Term:          PricingTermOnDemand,
 					SchemaVersion: "1",
 				},
-				OS:            "Linux",
-				HoursPerMonth: 730.0,
+				OS:              "Linux",
+				HoursPerMonth:   730.0,
+				PaymentOption:   &defaultPayOpt,
+				CommitmentYears: &defaultYears,
 			},
 		},
 		{
@@ -47,9 +53,11 @@ func TestRoundTrip_ComputePricingSpec(t *testing.T) {
 					Term:          PricingTermReserved1Yr,
 					SchemaVersion: "1",
 				},
-				ResourceType:  "m5.xlarge",
-				OS:            "Linux",
-				HoursPerMonth: 730.0,
+				ResourceType:    "m5.xlarge",
+				OS:              "Linux",
+				HoursPerMonth:   730.0,
+				PaymentOption:   &defaultPayOpt,
+				CommitmentYears: &defaultYears,
 			},
 		},
 		{
@@ -63,10 +71,12 @@ func TestRoundTrip_ComputePricingSpec(t *testing.T) {
 					Term:          PricingTermOnDemand,
 					SchemaVersion: "1",
 				},
-				OS:            "Linux",
-				VCPU:          ptr(4.0),
-				MemoryGB:      ptr(8.0),
-				HoursPerMonth: 730.0,
+				OS:              "Linux",
+				VCPU:            ptr(4.0),
+				MemoryGB:        ptr(8.0),
+				HoursPerMonth:   730.0,
+				PaymentOption:   &defaultPayOpt,
+				CommitmentYears: &defaultYears,
 			},
 		},
 		{
@@ -79,9 +89,11 @@ func TestRoundTrip_ComputePricingSpec(t *testing.T) {
 					Term:          PricingTermOnDemand,
 					SchemaVersion: "1",
 				},
-				ResourceType:  "n2-standard-4",
-				OS:            "Windows",
-				HoursPerMonth: 730.0,
+				ResourceType:    "n2-standard-4",
+				OS:              "Windows",
+				HoursPerMonth:   730.0,
+				PaymentOption:   &defaultPayOpt,
+				CommitmentYears: &defaultYears,
 			},
 		},
 	}
@@ -924,8 +936,9 @@ func TestCacheKey_ComputePricingSpec(t *testing.T) {
 				OS:            "Linux",
 				HoursPerMonth: 730.0,
 			},
-			// format: base:resource_type:os:vcpu:memory_gb
-			want: "aws:compute::us-east-1:on_demand::Linux::",
+			// format: base:resource_type:os:vcpu:memory_gb:payment_option:commitment_years
+			// PaymentOption and CommitmentYears are nil when constructed directly (not via UnmarshalJSON).
+			want: "aws:compute::us-east-1:on_demand::Linux::::",
 		},
 		{
 			name: "with instance type",
@@ -940,7 +953,7 @@ func TestCacheKey_ComputePricingSpec(t *testing.T) {
 				OS:            "Linux",
 				HoursPerMonth: 730.0,
 			},
-			want: "aws:compute::us-east-1:on_demand:m5.xlarge:Linux::",
+			want: "aws:compute::us-east-1:on_demand:m5.xlarge:Linux::::",
 		},
 		{
 			name: "fargate with vcpu and memory",
@@ -957,7 +970,7 @@ func TestCacheKey_ComputePricingSpec(t *testing.T) {
 				MemoryGB:      ptr(8.0),
 				HoursPerMonth: 730.0,
 			},
-			want: "aws:compute:fargate:us-east-1:on_demand::Linux:4:8",
+			want: "aws:compute:fargate:us-east-1:on_demand::Linux:4:8::",
 		},
 	}
 

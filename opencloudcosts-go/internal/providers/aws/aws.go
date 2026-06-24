@@ -200,12 +200,15 @@ func (p *Provider) SupportedTerms(domain models.PricingDomain, service string) [
 	switch domain { //nolint:exhaustive // unlisted domains only support on-demand (the base slice)
 	case models.PricingDomainCompute:
 		base = append(base,
+			models.PricingTermSpot,
 			models.PricingTermReserved1Yr,
 			models.PricingTermReserved1YrPartial,
 			models.PricingTermReserved1YrAll,
 			models.PricingTermReserved3Yr,
 			models.PricingTermReserved3YrPartial,
 			models.PricingTermReserved3YrAll,
+			models.PricingTermComputeSP,
+			models.PricingTermEC2InstanceSP,
 		)
 	case models.PricingDomainDatabase:
 		base = append(base,

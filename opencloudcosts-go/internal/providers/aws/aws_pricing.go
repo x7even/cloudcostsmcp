@@ -914,6 +914,11 @@ func (p *Provider) GetPrice(ctx context.Context, spec models.PricingSpec) (*mode
 		if !ok {
 			return nil, fmt.Errorf("aws: GetPrice: expected *ComputePricingSpec")
 		}
+		// Route Savings Plan terms to the SP pricing handler, which returns its
+		// own PricingResult (with Breakdown and ContractedPrices) directly.
+		if cs.GetTerm() == models.PricingTermComputeSP || cs.GetTerm() == models.PricingTermEC2InstanceSP {
+			return p.GetSavingsPlanPrice(ctx, cs)
+		}
 		prices, err = p.GetComputePrice(ctx, cs.ResourceType, cs.GetRegion(), cs.OS, cs.GetTerm())
 
 	case models.PricingDomainStorage:

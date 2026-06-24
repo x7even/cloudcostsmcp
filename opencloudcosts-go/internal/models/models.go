@@ -248,12 +248,24 @@ type ComputePricingSpec struct {
 	VCPU          *float64 `json:"vcpu,omitempty"`
 	MemoryGB      *float64 `json:"memory_gb,omitempty"`
 	HoursPerMonth float64  `json:"hours_per_month"`
+	// Savings Plan fields — only relevant when Term is compute_savings_plan or ec2_instance_savings_plan.
+	// PaymentOption selects the SP payment structure: 'No Upfront' | 'Partial Upfront' | 'All Upfront'.
+	// Defaults to 'No Upfront'.
+	PaymentOption *string `json:"payment_option,omitempty"`
+	// CommitmentYears is the SP commitment duration in years: 1 or 3. Defaults to 1.
+	CommitmentYears *int `json:"commitment_years,omitempty"`
+	// EDPDiscountPct is a fractional EDP/PPA discount (0.0–1.0) applied on top of the SP rate.
+	// EDP is a confidential negotiated rate; supply your contract percentage to calculate
+	// the adjusted effective rate. Pointer so that absent means "no EDP" (not 0%).
+	EDPDiscountPct *float64 `json:"edp_discount_pct,omitempty"`
 }
 
 // Compile-time interface guard.
 var _ PricingSpec = (*ComputePricingSpec)(nil)
 
 // CacheKey implements PricingSpec.
+// Note: EDPDiscountPct is intentionally excluded — the public SP rate is cached once
+// and the EDP multiplier is applied after retrieval, so different EDP values share one cache entry.
 func (s *ComputePricingSpec) CacheKey() string {
 	vcpu := ""
 	if s.VCPU != nil {
@@ -263,17 +275,30 @@ func (s *ComputePricingSpec) CacheKey() string {
 	if s.MemoryGB != nil {
 		mem = fmt.Sprintf("%v", *s.MemoryGB)
 	}
-	return fmt.Sprintf("%s:%s:%s:%s:%s", s.baseCacheKey(), s.ResourceType, s.OS, vcpu, mem)
+	paymentOption := ""
+	if s.PaymentOption != nil {
+		paymentOption = *s.PaymentOption
+	}
+	commitmentYears := ""
+	if s.CommitmentYears != nil {
+		commitmentYears = fmt.Sprintf("%d", *s.CommitmentYears)
+	}
+	return fmt.Sprintf("%s:%s:%s:%s:%s:%s:%s", s.baseCacheKey(), s.ResourceType, s.OS, vcpu, mem, paymentOption, commitmentYears)
 }
 
 // UnmarshalJSON handles the instance_type → resource_type alias (mirrors
 // the Python model_validator) in addition to standard field decoding.
+// Defaults for SP fields: PaymentOption='No Upfront', CommitmentYears=1.
 func (s *ComputePricingSpec) UnmarshalJSON(data []byte) error {
+	defaultPaymentOption := "No Upfront"
+	defaultCommitmentYears := 1
 	// Pre-populate defaults before unmarshal so absent fields keep them.
 	*s = ComputePricingSpec{
 		BasePricingSpec: defaultBase(),
 		OS:              "Linux",
 		HoursPerMonth:   730.0,
+		PaymentOption:   &defaultPaymentOption,
+		CommitmentYears: &defaultCommitmentYears,
 	}
 
 	// Use an alias to avoid infinite recursion.
@@ -580,6 +605,21 @@ func (s *EgressPricingSpec) UnmarshalJSON(data []byte) error {
 	}
 	type alias EgressPricingSpec
 	return json.Unmarshal(data, (*alias)(s))
+}
+
+// NormalizePaymentOption returns the canonical SP payment option string or an
+// error for unknown values. The SP JSON uses these exact case-sensitive strings.
+func NormalizePaymentOption(s string) (string, error) {
+	switch s {
+	case "No Upfront", "no upfront", "no-upfront", "none":
+		return "No Upfront", nil
+	case "Partial Upfront", "partial upfront", "partial-upfront", "partial":
+		return "Partial Upfront", nil
+	case "All Upfront", "all upfront", "all-upfront", "all":
+		return "All Upfront", nil
+	default:
+		return "", fmt.Errorf("models: unknown payment option %q: must be 'No Upfront', 'Partial Upfront', or 'All Upfront'", s)
+	}
 }
 
 // --------------------------------------------------------------------------
