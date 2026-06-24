@@ -1071,6 +1071,32 @@ func (h *Handler) HandleDescribeCatalog(
 		out["usage"] = "Pass example_invocation directly to get_price(spec=...)."
 	}
 
+	// When service was omitted and the domain has exactly one service, auto-forward to it.
+	// This collapses a two-round describe_catalog dance into one call for single-service domains.
+	if in.Service == "" && !haTerms && !haHints && !haEx {
+		if svcs := catalog.Services[in.Domain]; len(svcs) == 1 {
+			autoKey := in.Domain + "/" + svcs[0]
+			if t, ok := catalog.SupportedTerms[autoKey]; ok {
+				out["supported_terms"] = t
+				haTerms = true
+			}
+			if h, ok := catalog.FilterHints[autoKey]; ok {
+				out["filter_hints"] = h
+				haHints = true
+			}
+			if e, ok := catalog.ExampleInvocations[autoKey]; ok {
+				out["example_invocation"] = e
+				out["usage"] = "Pass example_invocation directly to get_price(spec=...)."
+				haEx = true
+			}
+			if haTerms || haHints || haEx {
+				out["service"] = svcs[0]
+				out["available_services"] = svcs
+				out["auto_resolved"] = fmt.Sprintf("service omitted; auto-resolved to '%s' (only service in this domain)", svcs[0])
+			}
+		}
+	}
+
 	// When nothing was found: show available services (mirrors Python).
 	if !haTerms && !haHints && !haEx {
 		availSvcs := catalog.Services[in.Domain]
