@@ -30,6 +30,25 @@ var termUsageType = map[models.PricingTerm]termMapping{
 	models.PricingTermCUD3Yr:   {"Commit3Yr", "cudCPU", "cudRAM"},
 }
 
+// sudMonthlyHours is the GCP billing month in hours.
+const sudMonthlyHours = 730.0
+
+// sudTier represents one GCP SUD discount tier.
+type sudTier struct {
+	startHr float64 // inclusive
+	endHr   float64 // exclusive
+	factor  float64 // price multiplier (1.0 = no discount, 0.4 = 60% off)
+}
+
+// sudTiers is GCP's official, published Sustained Use Discount schedule.
+// Source: https://cloud.google.com/compute/docs/sustained-use-discounts
+var sudTiers = [4]sudTier{
+	{0, 182.5, 1.00},   // 0-25% of month: no discount
+	{182.5, 365, 0.80}, // 25-50%: 20% off
+	{365, 547.5, 0.60}, // 50-75%: 40% off
+	{547.5, 730, 0.40}, // 75-100%: 60% off
+}
+
 // familySKUDesc returns the CPU / RAM description strings from the spec-based mapping.
 func familySKUDesc(fsku utils.FamilySKU, cpuKey, ramKey string) (string, string) {
 	switch cpuKey {
@@ -109,6 +128,7 @@ func (p *Provider) SupportedTerms(domain models.PricingDomain, service string) [
 			models.PricingTermSpot,
 			models.PricingTermCUD1Yr,
 			models.PricingTermCUD3Yr,
+			models.PricingTermSUD,
 		}
 	case models.PricingDomainStorage:
 		return []models.PricingTerm{models.PricingTermOnDemand}
@@ -209,6 +229,11 @@ func (p *Provider) GetComputePrice(
 			family, sortedFamilyKeys())
 	}
 
+	// SUD is computed from on-demand rates + published tier schedule, not from catalog SKUs.
+	if term == models.PricingTermSUD {
+		return p.gcpSUDPrice(ctx, instanceType, region, os)
+	}
+
 	tm, hasTerm := termUsageType[term]
 	if !hasTerm {
 		return nil, fmt.Errorf("gcp: unsupported term %q for compute pricing", term)
@@ -290,6 +315,142 @@ func (p *Provider) GetComputePrice(
 		},
 		PricingTerm:  term,
 		PricePerUnit: totalPrice,
+		Unit:         models.PriceUnitPerHour,
+		Currency:     "USD",
+	}
+
+	// For on-demand requests on SUD-eligible families, annotate a hint with the
+	// blended SUD rate. Use the base CPU+RAM total (before Windows license) so
+	// the SUD hint reflects the VM resource cost, not the license.
+	if term == models.PricingTermOnDemand && utils.SUDEligible(family) {
+		onDemandBase := float64(vcpus)*cpuPrice + memGB*ramPrice
+		price.Attributes["sud_eligible"] = "true"
+		price.Attributes["sud_blended_rate_at_100pct"] = fmt.Sprintf(
+			"$%.6f/hr (30%% off on-demand; use term='sud' for full tier breakdown)",
+			onDemandBase*0.7,
+		)
+	}
+
+	result := annotateFresh([]models.NormalizedPrice{price})
+
+	if raw, err := json.Marshal(result); err == nil {
+		p.cache.Set(cacheKey, raw, p.cfg.CacheTTL())
+	}
+	return result, nil
+}
+
+// --------------------------------------------------------------------------
+// gcpSUDPrice — Sustained Use Discount pricing
+// --------------------------------------------------------------------------
+
+// gcpSUDPrice computes the blended Sustained Use Discount rate for a GCP
+// Compute Engine instance assuming 100% monthly (continuous 24/7) usage.
+//
+// SUD is a billing-time discount — there are no "SUD" SKUs in the catalog.
+// We fetch the on-demand rate and apply GCP's published contractual tier schedule:
+//   - 0-25%  of month (0-182.5 hrs):   0% off   (factor 1.00)
+//   - 25-50% of month (182.5-365 hrs): 20% off   (factor 0.80)
+//   - 50-75% of month (365-547.5 hrs): 40% off   (factor 0.60)
+//   - 75-100% of month (547.5-730 hrs): 60% off  (factor 0.40)
+//   Blended for 100% usage = on_demand × 0.700 (30% off)
+//
+// Returns an empty slice (not an error) when the family is SUD-ineligible
+// (e.g. a2, a3, g2 GPU families).
+func (p *Provider) gcpSUDPrice(
+	ctx context.Context,
+	instanceType string,
+	region string,
+	os string,
+) ([]models.NormalizedPrice, error) {
+	vcpus, memGB, ok := utils.ParseInstanceType(instanceType)
+	if !ok {
+		return nil, fmt.Errorf("gcp: unknown instance type %q — use ListInstanceTypes to discover valid types", instanceType)
+	}
+	family := utils.GetMachineFamily(instanceType)
+
+	// SUD eligibility check — GPU/accelerator families are not eligible.
+	if !utils.SUDEligible(family) {
+		slog.Info("gcp: SUD not eligible for family", "family", family)
+		return []models.NormalizedPrice{}, nil
+	}
+
+	fsku, hasFSKU := utils.GCPFamilySKU[family]
+	if !hasFSKU {
+		return nil, fmt.Errorf("gcp: machine family %q is not supported; supported: %v",
+			family, sortedFamilyKeys())
+	}
+
+	// Get on-demand CPU/RAM description strings for this family.
+	cpuDesc, ramDesc := familySKUDesc(fsku, "cpu", "ram")
+	if cpuDesc == "" || ramDesc == "" {
+		slog.Info("gcp: no on-demand SKU desc for SUD family", "family", family)
+		return []models.NormalizedPrice{}, nil
+	}
+
+	// Check cache.
+	cacheKey := fmt.Sprintf("gcp:compute:%s:%s:%s:sud", instanceType, region, os)
+	if cached, ok := p.cache.Get(cacheKey); ok {
+		var prices []models.NormalizedPrice
+		if err := json.Unmarshal(cached, &prices); err == nil {
+			return stampCacheAge(prices), nil
+		}
+	}
+
+	idx, err := p.buildComputePriceIndex(ctx, region)
+	if err != nil {
+		return nil, err
+	}
+
+	cpuPrice, found := lookupPrice(idx, cpuDesc, "OnDemand")
+	if !found {
+		slog.Warn("gcp: SUD — CPU SKU not found", "desc", cpuDesc, "instance", instanceType, "region", region)
+		return []models.NormalizedPrice{}, nil
+	}
+	ramPrice, found := lookupPrice(idx, ramDesc, "OnDemand")
+	if !found {
+		slog.Warn("gcp: SUD — RAM SKU not found", "desc", ramDesc, "instance", instanceType, "region", region)
+		return []models.NormalizedPrice{}, nil
+	}
+
+	// on-demand hourly total for this instance.
+	onDemandTotal := float64(vcpus)*cpuPrice + memGB*ramPrice
+
+	// Compute per-tier rates (full instance, not per-component).
+	tier0rate := onDemandTotal * sudTiers[0].factor
+	tier1rate := onDemandTotal * sudTiers[1].factor
+	tier2rate := onDemandTotal * sudTiers[2].factor
+	tier3rate := onDemandTotal * sudTiers[3].factor
+
+	// Blended rate for 100% monthly usage.
+	// Sum of tier contributions: each tier spans 182.5 hrs.
+	// = (182.5×1.00 + 182.5×0.80 + 182.5×0.60 + 182.5×0.40) × onDemandTotal / 730
+	// = (182.5 × 2.80) × onDemandTotal / 730 = 511 × onDemandTotal / 730 = 0.70 × onDemandTotal
+	blendedRate := onDemandTotal * 0.70
+
+	price := models.NormalizedPrice{
+		Provider:      models.CloudProviderGCP,
+		Service:       "compute",
+		SKUID:         "gcp-sud-" + strings.ToLower(instanceType),
+		ProductFamily: "Compute Instance",
+		Description:   fmt.Sprintf("%s — SUD blended rate (100%% monthly, 30%% off on-demand)", instanceType),
+		Region:        region,
+		Attributes: map[string]string{
+			"instanceType":              instanceType,
+			"vcpu":                      fmt.Sprintf("%d", vcpus),
+			"memory":                    fmt.Sprintf("%.4g GB", memGB),
+			"operatingSystem":           os,
+			"sud_rate_source":           "gcp_catalog_ondemand+published_sud_schedule",
+			"sud_tier_0":                fmt.Sprintf("0-182.5 hrs (0-25%% of month): $%.6f/hr (0%% off)", tier0rate),
+			"sud_tier_1":                fmt.Sprintf("182.5-365 hrs (25-50%% of month): $%.6f/hr (20%% off)", tier1rate),
+			"sud_tier_2":                fmt.Sprintf("365-547.5 hrs (50-75%% of month): $%.6f/hr (40%% off)", tier2rate),
+			"sud_tier_3":                fmt.Sprintf("547.5-730 hrs (75-100%% of month): $%.6f/hr (60%% off)", tier3rate),
+			"sud_blended_factor":        "0.700",
+			"sud_discount_pct":          "30.0",
+			"usage_assumption":          "730 hours/month (100% continuous)",
+			"note":                      "SUD is applied automatically by GCP for qualifying VMs. No commitment required. Effective rate varies with actual monthly usage — this rate assumes continuous 24/7 operation.",
+		},
+		PricingTerm:  models.PricingTermSUD,
+		PricePerUnit: blendedRate,
 		Unit:         models.PriceUnitPerHour,
 		Currency:     "USD",
 	}

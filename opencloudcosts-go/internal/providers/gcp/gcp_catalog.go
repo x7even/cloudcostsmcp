@@ -49,7 +49,7 @@ func gcpDescribeCatalog() *models.ProviderCatalog {
 			"inter_region_egress": {},
 		},
 		SupportedTerms: map[string][]string{
-			"compute/compute_engine":         {"on_demand", "spot", "cud_1yr", "cud_3yr"},
+			"compute/compute_engine":         {"on_demand", "spot", "cud_1yr", "cud_3yr", "sud"},
 			"storage/gcs":                    {"on_demand"},
 			"storage/persistent_disk":        {"on_demand"},
 			"database/cloud_sql":             {"on_demand"},
@@ -70,7 +70,7 @@ func gcpDescribeCatalog() *models.ProviderCatalog {
 			"compute/compute_engine": {
 				"resource_type": "GCP machine type e.g. 'n1-standard-4', 'e2-medium', 'c2-standard-8'",
 				"os":            "'Linux' (default) or 'Windows' (N1/N2/N2D/C2 only)",
-				"term":          "on_demand | spot | cud_1yr | cud_3yr",
+				"term":          "on_demand | spot | cud_1yr | cud_3yr | sud",
 			},
 			"storage/gcs": {
 				"storage_type": "standard | nearline | coldline | archive",
@@ -159,6 +159,14 @@ func gcpDescribeCatalog() *models.ProviderCatalog {
 				"region":        "us-central1",
 				"os":            "Linux",
 				"term":          "on_demand",
+			},
+			"compute/compute_engine/sud": {
+				"provider":      "gcp",
+				"domain":        "compute",
+				"resource_type": "n1-standard-4",
+				"region":        "us-central1",
+				"os":            "Linux",
+				"term":          "sud",
 			},
 			"storage/gcs": {
 				"provider":     "gcp",

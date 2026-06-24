@@ -2,7 +2,10 @@
 // This file ports gcp_specs.py: GCP instance family → SKU mapping data.
 package utils
 
-import "strconv"
+import (
+	"strconv"
+	"strings"
+)
 
 // InstanceSpec holds vCPU and memory for a GCP instance type.
 type InstanceSpec struct {
@@ -381,6 +384,21 @@ var GCPFamilySKU = map[string]FamilySKU{
 		CUDCPUDesc:     "Commitment v1: A2 Cpu",
 		CUDRAMDesc:     "Commitment v1: A2 Ram",
 	},
+}
+
+// sudEligibleFamilies lists GCP machine families that qualify for Sustained Use
+// Discounts. GPU/accelerator families (a2, a3, g2) are not eligible.
+var sudEligibleFamilies = map[string]bool{
+	"n1": true, "n2": true, "n2d": true, "e2": true,
+	"c2": true, "c2d": true, "c3": true, "t2d": true, "t2a": true,
+	"m1": true, "m2": true, "m3": true,
+}
+
+// SUDEligible reports whether the given machine family qualifies for GCP
+// Sustained Use Discounts. GPU families (a2, a3, g2) and preemptible VMs
+// are not eligible.
+func SUDEligible(family string) bool {
+	return sudEligibleFamilies[strings.ToLower(family)]
 }
 
 // CloudSQLInstanceSpecs maps Cloud SQL instance type names to (vcpu, memoryGB).
