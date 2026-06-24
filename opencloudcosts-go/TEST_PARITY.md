@@ -8,18 +8,25 @@
 | aws-bulk | 3 | 0 | 0 | 3 |
 | aws-finops | 2 | 0 | 0 | 2 |
 | azure | 8 | 0 | 0 | 8 |
+| azure-cosmosdb | 5 | 0 | 0 | 5 |
+| azure-monitor | 5 | 0 | 0 | 5 |
+| azure-frontdoor | 4 | 0 | 0 | 4 |
 | gcp-networking | 9 | 0 | 0 | 9 |
 | gcp-armor | 4 | 0 | 0 | 4 |
 | gcp-compute | 4 | 0 | 0 | 4 |
+| gcp-compute-sud | 11 | 0 | 0 | 11 |
+| gcp-vertex-ai | 5 | 0 | 0 | 5 |
 | gcp-gke | 5 | 0 | 0 | 5 |
 | gcp-database | 3 | 0 | 0 | 3 |
-| tools-lookup | 0 | 3 | 0 | 3 |
+| tools-lookup | 5 | 3 | 0 | 8 |
+| tools-lookup-no-results | 4 | 0 | 0 | 4 |
 | provider-contract | 2 | 0 | 0 | 2 |
+| provider-term-invariants | 11 | 0 | 0 | 11 |
 | models | 4 | 0 | 0 | 4 |
 | cache | 2 | 0 | 0 | 2 |
 | bom | 1 | 1 | 0 | 2 |
 | egress | 3 | 0 | 0 | 3 |
-| **Totals** | **52** | **6** | **0** | **58** |
+| **Totals** | **102** | **6** | **0** | **108** |
 
 ## Implemented Tests
 
@@ -90,6 +97,24 @@
 | TestGetStoragePrice_GCS_AllTiers | 2018cd0 | Tests GetStoragePrice returns non-empty results for all four GCS tiers: standard ($0.020), nearline ($0.010), coldline ($0.004), archive ($0.0012). Uses a single httptest.Server with four SKUs matching the gcsStorageClasses map. Verifies price and unit for each tier. |
 | TestGetStoragePrice_PricingOrder | 12283df | Verifies GCS tier pricing order invariant: archive <= coldline <= nearline <= standard. Uses httptest.NewServer with realistic GCS pricing. Tests both the dominance of standard over all cheaper tiers and the full ordering chain. |
 | TestGetComputePrice_CustomMachineType | 5c96cc2 | Tests that n2-standard-200 (not in GCPInstanceSpecs table) falls back to naming-convention parsing (200 vCPU, 800 GB RAM) and returns 200x$0.031611 + 800x$0.004237 = $9.7118/hr. Verifies instanceType attribute is set correctly. |
+
+### gcp-compute-sud
+
+New capability (no Python equivalent — SUD is a Go-only addition). All 11 tests added in commit 30d5c54.
+
+| Test Name | Commit | Notes |
+|---|---|---|
+| TestGetComputePrice_SUD_EligibleN1_ReturnsTerm | 30d5c54 | Verifies that n1-standard-4 with term=sud returns a non-empty result with Term==PricingTermSUD. Mock server serves on-demand CPU and RAM SKUs; gcpSUDPrice fetches these and derives SUD from them. |
+| TestGetComputePrice_SUD_BlendedRateMath | 30d5c54 | Asserts blended SUD PricePerUnit = on_demand_total × 0.70 within 1e-4 tolerance. For n1-standard-4 (4 vCPU × $0.031611 + 15 GB × $0.004237 = $0.190/hr on-demand), blended = $0.133/hr. |
+| TestGetComputePrice_SUD_TermLabelIsSUD | 30d5c54 | Asserts Term==models.PricingTermSUD, NOT on_demand or any other string. Guards against mis-labelling the SUD rate as the on-demand rate. |
+| TestGetComputePrice_SUD_AttributesComplete | 30d5c54 | Asserts all required attribute keys present: sud_tier_0 through sud_tier_3, sud_blended_factor (=="0.700"), sud_discount_pct (=="30.0"), usage_assumption, sud_rate_source (contains "catalog"), note. |
+| TestGetComputePrice_SUD_TierRatesDescending | 30d5c54 | Parses dollar amounts from tier attribute strings and asserts tier_0 > tier_1 > tier_2 > tier_3 > 0. Validates the published 0%/20%/40%/60% discount schedule produces strictly decreasing rates. |
+| TestGetComputePrice_SUD_IneligibleA2_ReturnsEmpty | 30d5c54 | Verifies that a2-highgpu-1g with term=sud returns an empty slice and no error. GPU families do not qualify; returning empty (not error) lets callers distinguish "not eligible" from "pricing failure". |
+| TestGetComputePrice_SUD_IneligibleG2_ReturnsEmpty | 30d5c54 | Same ineligibility check for g2-standard-4. GPU families (a2, a3, g2) are all excluded from SUD. |
+| TestGetComputePrice_PriceLadder_SpotLtCUD3LtCUD1LtSUDLtOnDemand | 30d5c54 | Pricing ladder invariant for n2-standard-4: spot < cud_3yr < cud_1yr < sud < on_demand. Mock server serves SKUs for all five terms; asserts the strict ordering holds. SUD must always undercut on_demand but cost more than a 1-year CUD commitment. |
+| TestGetComputePrice_OnDemand_SUDHintPresent | 30d5c54 | Verifies on_demand result for n1-standard-4 carries Attributes["sud_eligible"]=="true" and a non-empty "sud_blended_rate_at_100pct" hint mentioning "30". Allows callers to discover SUD eligibility from any on_demand response. |
+| TestGetComputePrice_OnDemand_SUDHintAbsentForGPU | 30d5c54 | Verifies a2-highgpu-1g on_demand result does NOT carry sud_eligible="true". GPU instances must not mislead callers into thinking they qualify for SUD. |
+| TestSUDEligible_Families | 30d5c54 | Table-driven test of utils.SUDEligible(): n1,n2,n2d,e2,c2,c2d,c3,t2d,t2a,m1,m2,m3 → true; a2,a3,g2 → false. Also verifies case-insensitivity (N1 → true). |
 
 ### gcp-gke
 
@@ -171,7 +196,7 @@
 
 ## Failed Implementations
 
-No test implementations failed during this workplan run. All 58 items were resolved as either IMPLEMENTED (52), INVALID (3), or SKIP (3).
+No test implementations failed during this workplan. All 58 original items resolved as IMPLEMENTED (52), INVALID (3), or SKIP (3). 50 additional tests were added post-parity (azure-cosmosdb, azure-monitor, azure-frontdoor, gcp-vertex-ai, gcp-compute-sud, tools-lookup expansions, provider-term-invariants) for a running total of 102 implemented, 6 invalid/skip.
 
 ## Remaining Backlog
 
