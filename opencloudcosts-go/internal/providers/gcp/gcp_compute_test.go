@@ -2049,3 +2049,62 @@ func TestGetComputePrice_FlexCUD_SupportedTermsIncludesFlexCUD(t *testing.T) {
 			models.PricingTermFlexCUD, terms)
 	}
 }
+
+// --------------------------------------------------------------------------
+// DescribeCatalog catalog unit tests (tests 8–10)
+// --------------------------------------------------------------------------
+
+// listContainsTerm reports whether t appears in the slice of terms.
+func listContainsTerm(terms []string, s string) bool {
+	for _, v := range terms {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
+// TestGCPDescribeCatalog_ComputeHasFlexCUD verifies that the GCP catalog
+// SupportedTerms for compute/compute_engine contains "flex_cud".
+// This is a regression guard: if someone removes flex_cud from the catalog
+// declaration the test catches it immediately.
+func TestGCPDescribeCatalog_ComputeHasFlexCUD(t *testing.T) {
+	cat := gcpDescribeCatalog()
+	terms, ok := cat.SupportedTerms["compute/compute_engine"]
+	if !ok {
+		t.Fatal("SupportedTerms[\"compute/compute_engine\"] not found in GCP catalog")
+	}
+	if !listContainsTerm(terms, "flex_cud") {
+		t.Errorf("SupportedTerms[compute/compute_engine] missing \"flex_cud\"; got: %v", terms)
+	}
+}
+
+// TestGCPDescribeCatalog_ComputeHasSUD verifies that the GCP catalog
+// SupportedTerms for compute/compute_engine contains "sud".
+func TestGCPDescribeCatalog_ComputeHasSUD(t *testing.T) {
+	cat := gcpDescribeCatalog()
+	terms, ok := cat.SupportedTerms["compute/compute_engine"]
+	if !ok {
+		t.Fatal("SupportedTerms[\"compute/compute_engine\"] not found in GCP catalog")
+	}
+	if !listContainsTerm(terms, "sud") {
+		t.Errorf("SupportedTerms[compute/compute_engine] missing \"sud\"; got: %v", terms)
+	}
+}
+
+// TestGCPDescribeCatalog_ExampleInvocationsPresent verifies that the GCP catalog
+// ExampleInvocations contains keys for the three most important compute_engine
+// pricing scenarios.
+func TestGCPDescribeCatalog_ExampleInvocationsPresent(t *testing.T) {
+	cat := gcpDescribeCatalog()
+	requiredKeys := []string{
+		"compute/compute_engine",
+		"compute/compute_engine/sud",
+		"compute/compute_engine/flex_cud",
+	}
+	for _, key := range requiredKeys {
+		if _, ok := cat.ExampleInvocations[key]; !ok {
+			t.Errorf("ExampleInvocations missing key %q", key)
+		}
+	}
+}

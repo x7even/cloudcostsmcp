@@ -7,7 +7,10 @@ import (
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	awsprovider "github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/providers/aws"
 	azureprovider "github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/providers/azure"
+	gcpprovider "github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/providers/gcp"
+	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/config"
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/models"
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/providers"
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/tools"
@@ -1205,6 +1208,263 @@ func TestDescribeCatalog_AzureFrontDoorAlias(t *testing.T) {
 	hasFallback := resp["available_services"] != nil
 	if !hasGuidance && !hasFallback {
 		t.Errorf("expected either guidance fields or available_services fallback, got: %v", resp)
+	}
+}
+
+// --------------------------------------------------------------------------
+// Real-provider helpers for describe_catalog tests
+// --------------------------------------------------------------------------
+
+// realGCPProvider returns a *gcpprovider.Provider sufficient for DescribeCatalog,
+// which is a pure static function requiring no HTTP client or API key.
+func realGCPProvider(t *testing.T) *gcpprovider.Provider {
+	t.Helper()
+	p, err := gcpprovider.NewProvider(&config.Config{}, nil)
+	if err != nil {
+		t.Fatalf("gcpprovider.NewProvider: %v", err)
+	}
+	return p
+}
+
+// realAWSProvider returns a *awsprovider.Provider sufficient for DescribeCatalog.
+// AWS DescribeCatalog is purely static; NewProvider is called with an empty
+// config so no credentials are required.
+func realAWSProvider(t *testing.T) *awsprovider.Provider {
+	t.Helper()
+	p, err := awsprovider.NewProvider(&config.Config{}, nil)
+	if err != nil {
+		t.Fatalf("awsprovider.NewProvider: %v", err)
+	}
+	return p
+}
+
+// listContainsStr reports whether the []any (from JSON-decoded arrays) contains s.
+func listContainsStr(list []any, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
+// --------------------------------------------------------------------------
+// Tests: describe_catalog — per-provider terms completeness (end-to-end)
+// --------------------------------------------------------------------------
+
+// TestDescribeCatalog_GCP_ComputeTermsComplete verifies that the GCP catalog
+// includes ALL expected pricing terms for compute/compute_engine when called
+// with provider+domain+service.
+func TestDescribeCatalog_GCP_ComputeTermsComplete(t *testing.T) {
+	realGCP := realGCPProvider(t)
+	pvdr := &mockProvider{
+		name:          "gcp",
+		defaultRegion: "us-central1",
+		describeCatFunc: func(ctx context.Context) (*models.ProviderCatalog, error) {
+			return realGCP.DescribeCatalog(ctx)
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"gcp": pvdr})
+	resp := callDescribeCatalog(t, h, tools.DescribeCatalogInput{
+		Provider: "gcp",
+		Domain:   "compute",
+		Service:  "compute_engine",
+	})
+	if resp["error"] != nil {
+		t.Fatalf("unexpected error: %v", resp)
+	}
+
+	terms, ok := resp["supported_terms"].([]any)
+	if !ok {
+		t.Fatalf("supported_terms missing or wrong type: %T %v", resp["supported_terms"], resp["supported_terms"])
+	}
+
+	expectedTerms := []string{"on_demand", "spot", "cud_1yr", "cud_3yr", "sud", "flex_cud"}
+	for _, want := range expectedTerms {
+		if !listContainsStr(terms, want) {
+			t.Errorf("supported_terms missing %q; got: %v", want, terms)
+		}
+	}
+}
+
+// TestDescribeCatalog_GCP_ServiceListNonEmpty verifies that a domain-only GCP
+// describe_catalog call returns a non-empty available_services list containing
+// "compute_engine".
+func TestDescribeCatalog_GCP_ServiceListNonEmpty(t *testing.T) {
+	realGCP := realGCPProvider(t)
+	pvdr := &mockProvider{
+		name:          "gcp",
+		defaultRegion: "us-central1",
+		describeCatFunc: func(ctx context.Context) (*models.ProviderCatalog, error) {
+			return realGCP.DescribeCatalog(ctx)
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"gcp": pvdr})
+	// Domain-only — GCP keys are under domain/service, so the handler returns
+	// available_services (the fallback branch).
+	resp := callDescribeCatalog(t, h, tools.DescribeCatalogInput{
+		Provider: "gcp",
+		Domain:   "compute",
+	})
+	if resp["error"] != nil {
+		t.Fatalf("unexpected error: %v", resp)
+	}
+
+	svcs, ok := resp["available_services"].([]any)
+	if !ok || len(svcs) == 0 {
+		t.Fatalf("available_services missing or empty: %v", resp["available_services"])
+	}
+	if !listContainsStr(svcs, "compute_engine") {
+		t.Errorf("available_services should contain compute_engine; got: %v", svcs)
+	}
+}
+
+// TestDescribeCatalog_AWS_DomainsPresent verifies that AWS compute describe_catalog
+// returns supported_terms containing on_demand and spot (AWS keys under bare domain).
+func TestDescribeCatalog_AWS_DomainsPresent(t *testing.T) {
+	realAWS := realAWSProvider(t)
+	pvdr := &mockProvider{
+		name:          "aws",
+		defaultRegion: "us-east-1",
+		describeCatFunc: func(ctx context.Context) (*models.ProviderCatalog, error) {
+			return realAWS.DescribeCatalog(ctx)
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"aws": pvdr})
+	resp := callDescribeCatalog(t, h, tools.DescribeCatalogInput{
+		Provider: "aws",
+		Domain:   "compute",
+	})
+	if resp["error"] != nil {
+		t.Fatalf("unexpected error: %v", resp)
+	}
+
+	terms, ok := resp["supported_terms"].([]any)
+	if !ok {
+		t.Fatalf("supported_terms missing or wrong type: %T %v", resp["supported_terms"], resp["supported_terms"])
+	}
+	for _, want := range []string{"on_demand", "spot"} {
+		if !listContainsStr(terms, want) {
+			t.Errorf("AWS supported_terms missing %q; got: %v", want, terms)
+		}
+	}
+}
+
+// TestDescribeCatalog_Azure_DomainsPresent verifies that Azure compute describe_catalog
+// returns supported_terms containing on_demand.
+func TestDescribeCatalog_Azure_DomainsPresent(t *testing.T) {
+	realAzure := realAzureProvider()
+	pvdr := &mockProvider{
+		name:          "azure",
+		defaultRegion: "eastus",
+		describeCatFunc: func(ctx context.Context) (*models.ProviderCatalog, error) {
+			return realAzure.DescribeCatalog(ctx)
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"azure": pvdr})
+	// Azure keys are under compute/vm; pass service to get terms directly.
+	resp := callDescribeCatalog(t, h, tools.DescribeCatalogInput{
+		Provider: "azure",
+		Domain:   "compute",
+		Service:  "vm",
+	})
+	if resp["error"] != nil {
+		t.Fatalf("unexpected error: %v", resp)
+	}
+
+	terms, ok := resp["supported_terms"].([]any)
+	if !ok {
+		t.Fatalf("supported_terms missing or wrong type: %T %v", resp["supported_terms"], resp["supported_terms"])
+	}
+	if !listContainsStr(terms, "on_demand") {
+		t.Errorf("Azure supported_terms missing on_demand; got: %v", terms)
+	}
+}
+
+// TestDescribeCatalog_UnknownProvider_ReturnsError verifies that an unknown provider
+// returns an error key in the response.
+func TestDescribeCatalog_UnknownProvider_ReturnsError(t *testing.T) {
+	h := tools.New(map[string]tools.Provider{})
+	resp := callDescribeCatalog(t, h, tools.DescribeCatalogInput{
+		Provider: "unknown_xyz",
+		Domain:   "compute",
+	})
+	if resp["error"] == nil {
+		t.Errorf("expected error key for unknown provider, got: %v", resp)
+	}
+}
+
+// TestDescribeCatalog_GCP_FilterHintsHasSUDNote verifies that the filter_hints
+// for compute/compute_engine contain a sud_note key that mentions get_price and term='sud'.
+func TestDescribeCatalog_GCP_FilterHintsHasSUDNote(t *testing.T) {
+	realGCP := realGCPProvider(t)
+	pvdr := &mockProvider{
+		name:          "gcp",
+		defaultRegion: "us-central1",
+		describeCatFunc: func(ctx context.Context) (*models.ProviderCatalog, error) {
+			return realGCP.DescribeCatalog(ctx)
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"gcp": pvdr})
+	resp := callDescribeCatalog(t, h, tools.DescribeCatalogInput{
+		Provider: "gcp",
+		Domain:   "compute",
+		Service:  "compute_engine",
+	})
+	if resp["error"] != nil {
+		t.Fatalf("unexpected error: %v", resp)
+	}
+
+	hints, ok := resp["filter_hints"].(map[string]any)
+	if !ok {
+		t.Fatalf("filter_hints missing or wrong type: %T %v", resp["filter_hints"], resp["filter_hints"])
+	}
+	sudNote, ok := hints["sud_note"].(string)
+	if !ok || sudNote == "" {
+		t.Fatalf("filter_hints missing sud_note key or empty; hints: %v", hints)
+	}
+	if !contains(sudNote, "get_price") {
+		t.Errorf("sud_note should mention get_price; got: %q", sudNote)
+	}
+	if !contains(sudNote, "term='sud'") {
+		t.Errorf("sud_note should mention term='sud'; got: %q", sudNote)
+	}
+}
+
+// TestDescribeCatalog_GCP_AllDomainsReachable verifies that each GCP domain
+// returns a non-error response with non-empty available_services.
+func TestDescribeCatalog_GCP_AllDomainsReachable(t *testing.T) {
+	realGCP := realGCPProvider(t)
+	pvdr := &mockProvider{
+		name:          "gcp",
+		defaultRegion: "us-central1",
+		describeCatFunc: func(ctx context.Context) (*models.ProviderCatalog, error) {
+			return realGCP.DescribeCatalog(ctx)
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"gcp": pvdr})
+
+	domains := []string{
+		"compute", "storage", "database", "container",
+		"ai", "analytics", "network", "observability",
+	}
+	for _, domain := range domains {
+		domain := domain
+		t.Run(domain, func(t *testing.T) {
+			resp := callDescribeCatalog(t, h, tools.DescribeCatalogInput{
+				Provider: "gcp",
+				Domain:   domain,
+			})
+			if resp["error"] != nil {
+				t.Fatalf("domain %q returned error: %v", domain, resp)
+			}
+			// Domain-only calls for GCP fall into the available_services fallback
+			// branch because all GCP catalog keys are "domain/service".
+			svcs, ok := resp["available_services"].([]any)
+			if !ok || len(svcs) == 0 {
+				t.Errorf("domain %q: expected non-empty available_services, got: %v", domain, resp["available_services"])
+			}
+		})
 	}
 }
 
