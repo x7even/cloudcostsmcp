@@ -279,7 +279,31 @@ func (p *Provider) GetComputePrice(
 		return []models.NormalizedPrice{}, nil
 	}
 
-	totalPrice := float64(vcpus)*cpuPrice + memGB*ramPrice
+	cpuRamTotal := float64(vcpus)*cpuPrice + memGB*ramPrice
+	totalPrice := cpuRamTotal
+
+	// GPU accelerator cost: only for on-demand term.
+	// Spot/CUD GPU pricing uses different SKU patterns not yet implemented.
+	var gpuAttrs map[string]string
+	if term == models.PricingTermOnDemand {
+		if gpuInfo, hasGPU := utils.GCPInstanceGPU[instanceType]; hasGPU {
+			gpuPrice, gpuFound := lookupPrice(idx, gpuInfo.OnDemand, "OnDemand")
+			if gpuFound {
+				gpuCost := gpuPrice * float64(gpuInfo.Count)
+				totalPrice += gpuCost
+				gpuAttrs = map[string]string{
+					"gpu_count":          fmt.Sprintf("%d", gpuInfo.Count),
+					"gpu_model":          gpuInfo.Model,
+					"gpu_rate_per_hour":  fmt.Sprintf("$%.6f", gpuPrice),
+					"gpu_cost_per_hour":  fmt.Sprintf("$%.6f", gpuCost),
+					"pricing_components": "cpu+ram+gpu",
+				}
+			} else {
+				slog.Warn("gcp: GPU SKU not found — returning CPU+RAM only",
+					"instance", instanceType, "gpu_desc", gpuInfo.OnDemand, "region", region)
+			}
+		}
+	}
 
 	// Windows licensing: add per-vCPU and per-GB-RAM Windows Server cost.
 	// Windows SKUs are always looked up at usageType "OnDemand" regardless of term.
@@ -323,15 +347,19 @@ func (p *Provider) GetComputePrice(
 		Currency:     "USD",
 	}
 
+	// Merge GPU attributes if present.
+	for k, v := range gpuAttrs {
+		price.Attributes[k] = v
+	}
+
 	// For on-demand requests on SUD-eligible families, annotate a hint with the
 	// blended SUD rate. Use the base CPU+RAM total (before Windows license) so
 	// the SUD hint reflects the VM resource cost, not the license.
 	if term == models.PricingTermOnDemand && utils.SUDEligible(family) {
-		onDemandBase := float64(vcpus)*cpuPrice + memGB*ramPrice
 		price.Attributes["sud_eligible"] = "true"
 		price.Attributes["sud_blended_rate_at_100pct"] = fmt.Sprintf(
 			"$%.6f/hr (30%% off on-demand; use term='sud' for full tier breakdown)",
-			onDemandBase*0.7,
+			cpuRamTotal*0.7,
 		)
 	}
 
@@ -652,7 +680,7 @@ func (p *Provider) ListInstanceTypes(
 	minMemoryGB float64,
 	gpu bool,
 ) ([]models.InstanceTypeInfo, error) {
-	gpuFamilies := map[string]bool{"a2": true}
+	gpuFamilies := map[string]bool{"a2": true, "g2": true, "a3": true}
 
 	var results []models.InstanceTypeInfo
 	for itype, spec := range utils.GCPInstanceSpecs {
@@ -676,8 +704,12 @@ func (p *Provider) ListInstanceTypes(
 		}
 
 		gpuCount := 0
-		if isGPU {
-			gpuCount = 1
+		gpuType := ""
+		if gpuInfo, ok := utils.GCPInstanceGPU[itype]; ok {
+			gpuCount = gpuInfo.Count
+			gpuType = gpuInfo.Model
+		} else if isGPU {
+			gpuCount = 1 // fallback for GPU families without per-instance data
 		}
 		results = append(results, models.InstanceTypeInfo{
 			Provider:     models.CloudProviderGCP,
@@ -685,6 +717,7 @@ func (p *Provider) ListInstanceTypes(
 			VCPU:         spec.VCPU,
 			MemoryGB:     spec.MemoryGB,
 			GPUCount:     gpuCount,
+			GPUType:      gpuType,
 			Region:       region,
 			Available:    true,
 		})

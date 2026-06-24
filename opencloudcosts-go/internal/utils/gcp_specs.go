@@ -197,7 +197,7 @@ var GCPInstanceSpecs = map[string]InstanceSpec{
 	"m2-ultramem-416": {416, 11776.0},
 	"m2-megamem-416":  {416, 5888.0},
 	"m2-hypermem-416": {416, 8832.0},
-	// ---- A2 (GPU, A100) ----
+	// ---- A2 (GPU, A100 40GB for highgpu/megagpu; A100 80GB for ultragpu) ----
 	"a2-highgpu-1g":  {12, 85.0},
 	"a2-highgpu-2g":  {24, 170.0},
 	"a2-highgpu-4g":  {48, 340.0},
@@ -207,6 +207,17 @@ var GCPInstanceSpecs = map[string]InstanceSpec{
 	"a2-ultragpu-2g": {24, 340.0},
 	"a2-ultragpu-4g": {48, 680.0},
 	"a2-ultragpu-8g": {96, 1360.0},
+	// ---- G2 (GPU, L4) — non-linear GPU counts ----
+	"g2-standard-4":  {4, 16.0},
+	"g2-standard-8":  {8, 32.0},
+	"g2-standard-12": {12, 48.0},
+	"g2-standard-16": {16, 64.0},
+	"g2-standard-24": {24, 96.0},
+	"g2-standard-32": {32, 128.0},
+	"g2-standard-48": {48, 192.0},
+	"g2-standard-96": {96, 384.0},
+	// ---- A3 (GPU, H100 80GB) ----
+	"a3-highgpu-8g": {208, 1872.0},
 }
 
 // seriesRamRatio is GB/vCPU by series name.
@@ -292,6 +303,11 @@ type FamilySKU struct {
 	CUDRAMDesc     string
 	FlexCUDCPUDesc string // CmtCudPremium usageType description (empty = not eligible for Flex CUD)
 	FlexCUDRAMDesc string
+	// GPUDesc is the on-demand accelerator SKU description substring for the entire
+	// family when every instance in the family has the same GPU model (a2 is an
+	// exception — see GCPInstanceGPU for per-instance overrides). Empty = no bundled GPU
+	// at the family level; use GCPInstanceGPU for per-type lookup instead.
+	GPUDesc string
 }
 
 // GCPFamilySKU maps machine family to SKU description patterns.
@@ -411,7 +427,71 @@ var GCPFamilySKU = map[string]FamilySKU{
 		// A2 (GPU family) does not offer Flex CUD.
 		FlexCUDCPUDesc: "",
 		FlexCUDRAMDesc: "",
+		// A2 has two different GPU models (A100 40GB vs A100 80GB) depending on instance type.
+		// Per-instance GPU info is in GCPInstanceGPU; GPUDesc is intentionally empty here.
+		GPUDesc: "",
 	},
+	"g2": {
+		CPUDesc:        "G2 Instance Core",
+		RAMDesc:        "G2 Instance Ram",
+		PreemptCPUDesc: "Spot Preemptible G2 Instance Core",
+		PreemptRAMDesc: "Spot Preemptible G2 Instance Ram",
+		CUDCPUDesc:     "Commitment v1: G2 Cpu",
+		CUDRAMDesc:     "Commitment v1: G2 Ram",
+		// G2 supports Flex CUD ("CmtCudPremium") via the "G2 Custom Instance" billing labels.
+		FlexCUDCPUDesc: "Committed Use Discount Premium for G2 Custom Instance Core",
+		FlexCUDRAMDesc: "Committed Use Discount Premium for G2 Custom Instance Ram",
+		// G2 GPU info (L4) is in GCPInstanceGPU; GPUDesc is intentionally empty here.
+		GPUDesc: "",
+	},
+	"a3": {
+		CPUDesc:        "A3 Instance Core",
+		RAMDesc:        "A3 Instance Ram",
+		PreemptCPUDesc: "Spot Preemptible A3 Instance Core",
+		PreemptRAMDesc: "Spot Preemptible A3 Instance Ram",
+		CUDCPUDesc:     "Commitment v1: A3 Cpu",
+		CUDRAMDesc:     "Commitment v1: A3 Ram",
+		// A3 does not offer Flex CUD.
+		FlexCUDCPUDesc: "",
+		FlexCUDRAMDesc: "",
+		// A3 GPU info (H100 80GB) is in GCPInstanceGPU; GPUDesc is intentionally empty here.
+		GPUDesc: "",
+	},
+}
+
+// InstanceGPU holds the GPU accelerator specification bundled with an instance type.
+type InstanceGPU struct {
+	Count    int    // number of GPU accelerators in this instance
+	Model    string // human-readable GPU model name (e.g. "A100 40GB", "L4", "H100 80GB")
+	OnDemand string // on-demand SKU description substring (partial, case-insensitive match)
+}
+
+// GCPInstanceGPU maps instance type → GPU spec for GCP instances with bundled accelerators.
+// Only covers instances whose GPU pricing can be looked up from the Compute Engine catalog.
+// SKU descriptions have been verified against the GCP Cloud Billing Catalog API (June 2026).
+var GCPInstanceGPU = map[string]InstanceGPU{
+	// ---- A2 highgpu / megagpu — 1× to 16× NVIDIA A100 40GB ----
+	"a2-highgpu-1g":  {1, "A100 40GB", "Nvidia Tesla A100 GPU running in"},
+	"a2-highgpu-2g":  {2, "A100 40GB", "Nvidia Tesla A100 GPU running in"},
+	"a2-highgpu-4g":  {4, "A100 40GB", "Nvidia Tesla A100 GPU running in"},
+	"a2-highgpu-8g":  {8, "A100 40GB", "Nvidia Tesla A100 GPU running in"},
+	"a2-megagpu-16g": {16, "A100 40GB", "Nvidia Tesla A100 GPU running in"},
+	// ---- A2 ultragpu — 1× to 8× NVIDIA A100 80GB ----
+	"a2-ultragpu-1g": {1, "A100 80GB", "Nvidia Tesla A100 80GB GPU running in"},
+	"a2-ultragpu-2g": {2, "A100 80GB", "Nvidia Tesla A100 80GB GPU running in"},
+	"a2-ultragpu-4g": {4, "A100 80GB", "Nvidia Tesla A100 80GB GPU running in"},
+	"a2-ultragpu-8g": {8, "A100 80GB", "Nvidia Tesla A100 80GB GPU running in"},
+	// ---- G2 — non-linear L4 GPU counts per GCP docs ----
+	"g2-standard-4":  {1, "L4", "Nvidia L4 GPU running in"},
+	"g2-standard-8":  {1, "L4", "Nvidia L4 GPU running in"},
+	"g2-standard-12": {1, "L4", "Nvidia L4 GPU running in"},
+	"g2-standard-16": {1, "L4", "Nvidia L4 GPU running in"},
+	"g2-standard-24": {2, "L4", "Nvidia L4 GPU running in"},
+	"g2-standard-32": {1, "L4", "Nvidia L4 GPU running in"},
+	"g2-standard-48": {4, "L4", "Nvidia L4 GPU running in"},
+	"g2-standard-96": {8, "L4", "Nvidia L4 GPU running in"},
+	// ---- A3 highgpu — 8× NVIDIA H100 80GB ----
+	"a3-highgpu-8g": {8, "H100 80GB", "Nvidia H100 80GB GPU running in"},
 }
 
 // sudEligibleFamilies lists GCP machine families that qualify for Sustained Use

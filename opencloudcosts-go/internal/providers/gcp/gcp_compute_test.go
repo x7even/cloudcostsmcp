@@ -598,7 +598,7 @@ func TestListInstanceTypes(t *testing.T) {
 		}
 	}
 
-	// GPU filter — should return only A2 family.
+	// GPU filter — should return only A2/G2/A3 GPU families.
 	gpuTypes, err := p.ListInstanceTypes(ctx, "us-central1", "", 0, 0, true)
 	if err != nil {
 		t.Fatalf("ListInstanceTypes (gpu): %v", err)
@@ -606,9 +606,14 @@ func TestListInstanceTypes(t *testing.T) {
 	if len(gpuTypes) == 0 {
 		t.Fatal("expected non-empty GPU instance list")
 	}
+	gpuFamilies := map[string]bool{"a2": true, "g2": true, "a3": true}
 	for _, it := range gpuTypes {
-		if !startsWith(it.InstanceType, "a2") {
-			t.Errorf("GPU filter returned non-A2 type: %q", it.InstanceType)
+		fam := it.InstanceType
+		if dash := strings.Index(it.InstanceType, "-"); dash >= 0 {
+			fam = it.InstanceType[:dash]
+		}
+		if !gpuFamilies[fam] {
+			t.Errorf("GPU filter returned non-GPU type: %q", it.InstanceType)
 		}
 	}
 }
@@ -1386,11 +1391,10 @@ func TestGetComputePrice_SUD_IneligibleA2_ReturnsEmpty(t *testing.T) {
 	}
 }
 
-// TestGetComputePrice_SUD_IneligibleG2_ReturnsError verifies that g2-standard-4
-// returns an error when term=sud because g2 is not in GCPFamilySKU at all.
-// (g2 is not a recognized machine family in this provider — distinct from a2 which
-// is SUD-ineligible but is a supported family.)
-func TestGetComputePrice_SUD_IneligibleG2_ReturnsError(t *testing.T) {
+// TestGetComputePrice_SUD_IneligibleG2_ReturnsEmpty verifies that g2-standard-4
+// returns an empty slice (not an error) when term=sud because g2 is a valid but
+// SUD-ineligible GPU family (same behaviour as a2).
+func TestGetComputePrice_SUD_IneligibleG2_ReturnsEmpty(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(skuResponse(nil))
@@ -1400,9 +1404,12 @@ func TestGetComputePrice_SUD_IneligibleG2_ReturnsError(t *testing.T) {
 	p := newTestProvider(t, ts)
 	ctx := context.Background()
 
-	_, err := p.GetComputePrice(ctx, "g2-standard-4", "us-central1", "Linux", models.PricingTermSUD)
-	if err == nil {
-		t.Error("expected error for unsupported g2 family, got nil")
+	prices, err := p.GetComputePrice(ctx, "g2-standard-4", "us-central1", "Linux", models.PricingTermSUD)
+	if err != nil {
+		t.Errorf("unexpected error for SUD-ineligible g2 family: %v", err)
+	}
+	if len(prices) != 0 {
+		t.Errorf("expected empty slice for SUD-ineligible g2, got %d prices", len(prices))
 	}
 }
 
