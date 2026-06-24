@@ -319,8 +319,9 @@ var GCPFamilySKU = map[string]FamilySKU{
 		PreemptRAMDesc: "Preemptible E2 Instance Ram",
 		CUDCPUDesc:     "Commitment v1: E2 Cpu",
 		CUDRAMDesc:     "Commitment v1: E2 Ram",
-		FlexCUDCPUDesc: "Commitment v1: E2 Cpu",
-		FlexCUDRAMDesc: "Commitment v1: E2 Ram",
+		// E2 does not support Flex CUD (CmtCudPremium); only N2, N2D, C2, C2D are eligible.
+		FlexCUDCPUDesc: "",
+		FlexCUDRAMDesc: "",
 	},
 	"n1": {
 		CPUDesc:        "N1 Predefined Instance Core",
@@ -438,9 +439,9 @@ var GCPFamilySKU = map[string]FamilySKU{
 		PreemptRAMDesc: "Spot Preemptible G2 Instance Ram",
 		CUDCPUDesc:     "Commitment v1: G2 Cpu",
 		CUDRAMDesc:     "Commitment v1: G2 Ram",
-		// G2 supports Flex CUD ("CmtCudPremium") via the "G2 Custom Instance" billing labels.
-		FlexCUDCPUDesc: "Committed Use Discount Premium for G2 Custom Instance Core",
-		FlexCUDRAMDesc: "Committed Use Discount Premium for G2 Custom Instance Ram",
+		// G2 is a GPU family; it does not qualify for Flex CUD (CmtCudPremium).
+		FlexCUDCPUDesc: "",
+		FlexCUDRAMDesc: "",
 		// G2 GPU info (L4) is in GCPInstanceGPU; GPUDesc is intentionally empty here.
 		GPUDesc: "",
 	},
