@@ -1270,15 +1270,17 @@ func TestNetworkEgress_Internet_FilterValue(t *testing.T) {
 },
 "terms": {
   "OnDemand": {
-    "EGRESS_SKU1.JRTCKXETXF": {
-      "priceDimensions": {
-        "EGRESS_SKU1.JRTCKXETXF.DIM": {
-          "unit": "GB",
-          "pricePerUnit": {"USD": "0.0200000000"},
-          "description": "$0.020 per GB data transferred out"
-        }
-      },
-      "termAttributes": {}
+    "EGRESS_SKU1": {
+      "EGRESS_SKU1.JRTCKXETXF": {
+        "priceDimensions": {
+          "EGRESS_SKU1.JRTCKXETXF.DIM": {
+            "unit": "GB",
+            "pricePerUnit": {"USD": "0.0200000000"},
+            "description": "$0.020 per GB data transferred out"
+          }
+        },
+        "termAttributes": {}
+      }
     }
   },
   "Reserved": {}
@@ -1403,29 +1405,33 @@ func TestGetComputePrice_ReservedCheaperThanOnDemand(t *testing.T) {
   },
   "terms": {
     "OnDemand": {
-      "INVSKU1.ODTERM": {
-        "priceDimensions": {
-          "INVSKU1.ODTERM.DIM": {
-            "unit": "Hrs",
-            "pricePerUnit": {"USD": "0.1920000000"},
-            "description": "$0.192 per On Demand Linux m5.xlarge Instance Hour"
-          }
-        },
-        "termAttributes": {}
+      "INVSKU1": {
+        "INVSKU1.ODTERM": {
+          "priceDimensions": {
+            "INVSKU1.ODTERM.DIM": {
+              "unit": "Hrs",
+              "pricePerUnit": {"USD": "0.1920000000"},
+              "description": "$0.192 per On Demand Linux m5.xlarge Instance Hour"
+            }
+          },
+          "termAttributes": {}
+        }
       }
     },
     "Reserved": {
-      "INVSKU1.4NA7Y5ZX": {
-        "priceDimensions": {
-          "INVSKU1.4NA7Y5ZX.DIM": {
-            "unit": "Hrs",
-            "pricePerUnit": {"USD": "0.1140000000"},
-            "description": "$0.114 per Reserved Linux m5.xlarge Instance Hour"
+      "INVSKU1": {
+        "INVSKU1.4NA7Y5ZX": {
+          "priceDimensions": {
+            "INVSKU1.4NA7Y5ZX.DIM": {
+              "unit": "Hrs",
+              "pricePerUnit": {"USD": "0.1140000000"},
+              "description": "$0.114 per Reserved Linux m5.xlarge Instance Hour"
+            }
+          },
+          "termAttributes": {
+            "LeaseContractLength": "1yr",
+            "PurchaseOption":      "No Upfront"
           }
-        },
-        "termAttributes": {
-          "LeaseContractLength": "1yr",
-          "PurchaseOption":      "No Upfront"
         }
       }
     }
@@ -1491,30 +1497,32 @@ func TestGetComputePrice_Reserved3YrCheaperThan1Yr(t *testing.T) {
   "terms": {
     "OnDemand": {},
     "Reserved": {
-      "INVSKU2.R1NOTERM": {
-        "priceDimensions": {
-          "INVSKU2.R1NOTERM.DIM": {
-            "unit": "Hrs",
-            "pricePerUnit": {"USD": "0.1140000000"},
-            "description": "$0.114 per Reserved 1yr No-Upfront m5.xlarge Instance Hour"
+      "INVSKU2": {
+        "INVSKU2.R1NOTERM": {
+          "priceDimensions": {
+            "INVSKU2.R1NOTERM.DIM": {
+              "unit": "Hrs",
+              "pricePerUnit": {"USD": "0.1140000000"},
+              "description": "$0.114 per Reserved 1yr No-Upfront m5.xlarge Instance Hour"
+            }
+          },
+          "termAttributes": {
+            "LeaseContractLength": "1yr",
+            "PurchaseOption":      "No Upfront"
           }
         },
-        "termAttributes": {
-          "LeaseContractLength": "1yr",
-          "PurchaseOption":      "No Upfront"
-        }
-      },
-      "INVSKU2.R3NOTERM": {
-        "priceDimensions": {
-          "INVSKU2.R3NOTERM.DIM": {
-            "unit": "Hrs",
-            "pricePerUnit": {"USD": "0.0750000000"},
-            "description": "$0.075 per Reserved 3yr No-Upfront m5.xlarge Instance Hour"
+        "INVSKU2.R3NOTERM": {
+          "priceDimensions": {
+            "INVSKU2.R3NOTERM.DIM": {
+              "unit": "Hrs",
+              "pricePerUnit": {"USD": "0.0750000000"},
+              "description": "$0.075 per Reserved 3yr No-Upfront m5.xlarge Instance Hour"
+            }
+          },
+          "termAttributes": {
+            "LeaseContractLength": "3yr",
+            "PurchaseOption":      "No Upfront"
           }
-        },
-        "termAttributes": {
-          "LeaseContractLength": "3yr",
-          "PurchaseOption":      "No Upfront"
         }
       }
     }
@@ -1587,53 +1595,55 @@ func TestGetComputePrice_ReservedUpfrontOptions(t *testing.T) {
   "terms": {
     "OnDemand": {},
     "Reserved": {
-      "INVSKU3.NOUPFRONT": {
-        "priceDimensions": {
-          "INVSKU3.NOUPFRONT.DIM": {
-            "unit": "Hrs",
-            "pricePerUnit": {"USD": "0.1140000000"},
-            "description": "$0.114 per Reserved 1yr No-Upfront m5.xlarge Instance Hour"
-          }
-        },
-        "termAttributes": {
-          "LeaseContractLength": "1yr",
-          "PurchaseOption":      "No Upfront"
-        }
-      },
-      "INVSKU3.PARTIAL": {
-        "priceDimensions": {
-          "INVSKU3.PARTIAL.HRS": {
-            "unit": "Hrs",
-            "pricePerUnit": {"USD": "0.0500000000"},
-            "description": "$0.050 per Reserved 1yr Partial-Upfront m5.xlarge Instance Hour"
+      "INVSKU3": {
+        "INVSKU3.NOUPFRONT": {
+          "priceDimensions": {
+            "INVSKU3.NOUPFRONT.DIM": {
+              "unit": "Hrs",
+              "pricePerUnit": {"USD": "0.1140000000"},
+              "description": "$0.114 per Reserved 1yr No-Upfront m5.xlarge Instance Hour"
+            }
           },
-          "INVSKU3.PARTIAL.QTY": {
-            "unit": "Quantity",
-            "pricePerUnit": {"USD": "438.0000000000"},
-            "description": "Upfront Fee"
+          "termAttributes": {
+            "LeaseContractLength": "1yr",
+            "PurchaseOption":      "No Upfront"
           }
         },
-        "termAttributes": {
-          "LeaseContractLength": "1yr",
-          "PurchaseOption":      "Partial Upfront"
-        }
-      },
-      "INVSKU3.ALL": {
-        "priceDimensions": {
-          "INVSKU3.ALL.HRS": {
-            "unit": "Hrs",
-            "pricePerUnit": {"USD": "0.0000000000"},
-            "description": "$0.000 per Reserved 1yr All-Upfront m5.xlarge Instance Hour"
+        "INVSKU3.PARTIAL": {
+          "priceDimensions": {
+            "INVSKU3.PARTIAL.HRS": {
+              "unit": "Hrs",
+              "pricePerUnit": {"USD": "0.0500000000"},
+              "description": "$0.050 per Reserved 1yr Partial-Upfront m5.xlarge Instance Hour"
+            },
+            "INVSKU3.PARTIAL.QTY": {
+              "unit": "Quantity",
+              "pricePerUnit": {"USD": "438.0000000000"},
+              "description": "Upfront Fee"
+            }
           },
-          "INVSKU3.ALL.QTY": {
-            "unit": "Quantity",
-            "pricePerUnit": {"USD": "779.6400000000"},
-            "description": "Upfront Fee"
+          "termAttributes": {
+            "LeaseContractLength": "1yr",
+            "PurchaseOption":      "Partial Upfront"
           }
         },
-        "termAttributes": {
-          "LeaseContractLength": "1yr",
-          "PurchaseOption":      "All Upfront"
+        "INVSKU3.ALL": {
+          "priceDimensions": {
+            "INVSKU3.ALL.HRS": {
+              "unit": "Hrs",
+              "pricePerUnit": {"USD": "0.0000000000"},
+              "description": "$0.000 per Reserved 1yr All-Upfront m5.xlarge Instance Hour"
+            },
+            "INVSKU3.ALL.QTY": {
+              "unit": "Quantity",
+              "pricePerUnit": {"USD": "779.6400000000"},
+              "description": "Upfront Fee"
+            }
+          },
+          "termAttributes": {
+            "LeaseContractLength": "1yr",
+            "PurchaseOption":      "All Upfront"
+          }
         }
       }
     }
@@ -1720,15 +1730,17 @@ func TestGetComputePrice_SpotTermNotSupportedInGetComputePrice(t *testing.T) {
   },
   "terms": {
     "OnDemand": {
-      "INVSKU4.ODTERM": {
-        "priceDimensions": {
-          "INVSKU4.ODTERM.DIM": {
-            "unit": "Hrs",
-            "pricePerUnit": {"USD": "0.1920000000"},
-            "description": "$0.192 per On Demand Linux m5.xlarge Instance Hour"
-          }
-        },
-        "termAttributes": {}
+      "INVSKU4": {
+        "INVSKU4.ODTERM": {
+          "priceDimensions": {
+            "INVSKU4.ODTERM.DIM": {
+              "unit": "Hrs",
+              "pricePerUnit": {"USD": "0.1920000000"},
+              "description": "$0.192 per On Demand Linux m5.xlarge Instance Hour"
+            }
+          },
+          "termAttributes": {}
+        }
       }
     },
     "Reserved": {}

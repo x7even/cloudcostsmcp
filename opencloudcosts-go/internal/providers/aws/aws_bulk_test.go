@@ -19,10 +19,11 @@ import (
 // ---------------------------------------------------------------------------
 
 // minimalBulkJSON is a single-product bulk JSON fixture with one OnDemand term.
-const minimalBulkJSON = `{"products":{"SKU1":{"sku":"SKU1","productFamily":"Compute Instance","attributes":{"instanceType":"m5.xlarge","operatingSystem":"Linux","location":"US East (N. Virginia)","tenancy":"Shared","capacitystatus":"Used"}}},"terms":{"OnDemand":{"SKU1.JRTCKXETXF":{"offerTermCode":"JRTCKXETXF","priceDimensions":{"SKU1.JRTCKXETXF.6YS6EN2CT7":{"unit":"Hrs","pricePerUnit":{"USD":"0.1920000000"}}}}},"Reserved":{}}}`
+// Terms use the real AWS bulk file two-level nesting: outer key = SKU, inner key = "SKU.termCode".
+const minimalBulkJSON = `{"products":{"SKU1":{"sku":"SKU1","productFamily":"Compute Instance","attributes":{"instanceType":"m5.xlarge","operatingSystem":"Linux","location":"US East (N. Virginia)","tenancy":"Shared","capacitystatus":"Used"}}},"terms":{"OnDemand":{"SKU1":{"SKU1.JRTCKXETXF":{"offerTermCode":"JRTCKXETXF","priceDimensions":{"SKU1.JRTCKXETXF.6YS6EN2CT7":{"unit":"Hrs","pricePerUnit":{"USD":"0.1920000000"}}}}}},"Reserved":{}}}`
 
 // multiProductBulkJSON has three matching products to test maxResults.
-const multiProductBulkJSON = `{"products":{"SKU1":{"sku":"SKU1","productFamily":"Compute Instance","attributes":{"instanceType":"m5.xlarge","operatingSystem":"Linux","location":"US East (N. Virginia)","tenancy":"Shared","capacitystatus":"Used"}},"SKU2":{"sku":"SKU2","productFamily":"Compute Instance","attributes":{"instanceType":"m5.xlarge","operatingSystem":"Linux","location":"US East (N. Virginia)","tenancy":"Shared","capacitystatus":"Used"}},"SKU3":{"sku":"SKU3","productFamily":"Compute Instance","attributes":{"instanceType":"m5.xlarge","operatingSystem":"Linux","location":"US East (N. Virginia)","tenancy":"Shared","capacitystatus":"Used"}}},"terms":{"OnDemand":{"SKU1.JRTCKXETXF":{"offerTermCode":"JRTCKXETXF","priceDimensions":{"SKU1.JRTCKXETXF.6YS6EN2CT7":{"unit":"Hrs","pricePerUnit":{"USD":"0.1920000000"}}}},"SKU2.JRTCKXETXF":{"offerTermCode":"JRTCKXETXF","priceDimensions":{"SKU2.JRTCKXETXF.6YS6EN2CT7":{"unit":"Hrs","pricePerUnit":{"USD":"0.1920000000"}}}},"SKU3.JRTCKXETXF":{"offerTermCode":"JRTCKXETXF","priceDimensions":{"SKU3.JRTCKXETXF.6YS6EN2CT7":{"unit":"Hrs","pricePerUnit":{"USD":"0.1920000000"}}}}},"Reserved":{}}}`
+const multiProductBulkJSON = `{"products":{"SKU1":{"sku":"SKU1","productFamily":"Compute Instance","attributes":{"instanceType":"m5.xlarge","operatingSystem":"Linux","location":"US East (N. Virginia)","tenancy":"Shared","capacitystatus":"Used"}},"SKU2":{"sku":"SKU2","productFamily":"Compute Instance","attributes":{"instanceType":"m5.xlarge","operatingSystem":"Linux","location":"US East (N. Virginia)","tenancy":"Shared","capacitystatus":"Used"}},"SKU3":{"sku":"SKU3","productFamily":"Compute Instance","attributes":{"instanceType":"m5.xlarge","operatingSystem":"Linux","location":"US East (N. Virginia)","tenancy":"Shared","capacitystatus":"Used"}}},"terms":{"OnDemand":{"SKU1":{"SKU1.JRTCKXETXF":{"offerTermCode":"JRTCKXETXF","priceDimensions":{"SKU1.JRTCKXETXF.6YS6EN2CT7":{"unit":"Hrs","pricePerUnit":{"USD":"0.1920000000"}}}}},"SKU2":{"SKU2.JRTCKXETXF":{"offerTermCode":"JRTCKXETXF","priceDimensions":{"SKU2.JRTCKXETXF.6YS6EN2CT7":{"unit":"Hrs","pricePerUnit":{"USD":"0.1920000000"}}}}},"SKU3":{"SKU3.JRTCKXETXF":{"offerTermCode":"JRTCKXETXF","priceDimensions":{"SKU3.JRTCKXETXF.6YS6EN2CT7":{"unit":"Hrs","pricePerUnit":{"USD":"0.1920000000"}}}}}},"Reserved":{}}}`
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -285,18 +286,20 @@ func TestGetProductsBulk_ReservedTermsCollected(t *testing.T) {
 		"terms": {
 			"OnDemand": {},
 			"Reserved": {
-				"` + bulkSKU + `.RESERVED": {
-					"priceDimensions": {
-						"` + bulkSKU + `.R.DIM": {
-							"unit": "Hrs",
-							"pricePerUnit": {"USD": "0.0500000000"},
-							"description": "Reserved hourly"
+				"` + bulkSKU + `": {
+					"` + bulkSKU + `.RESERVED": {
+						"priceDimensions": {
+							"` + bulkSKU + `.R.DIM": {
+								"unit": "Hrs",
+								"pricePerUnit": {"USD": "0.0500000000"},
+								"description": "Reserved hourly"
+							}
+						},
+						"termAttributes": {
+							"LeaseContractLength": "1yr",
+							"PurchaseOption": "No Upfront",
+							"OfferingClass": "standard"
 						}
-					},
-					"termAttributes": {
-						"LeaseContractLength": "1yr",
-						"PurchaseOption": "No Upfront",
-						"OfferingClass": "standard"
 					}
 				}
 			}
@@ -361,15 +364,17 @@ func TestGetProductsBulk_ProductFamilyFilter(t *testing.T) {
 		},
 		"terms": {
 			"OnDemand": {
-				"STORAGE_SKU.TERM": {
-					"priceDimensions": {
-						"STORAGE_SKU.DIM": {
-							"unit": "GB-Mo",
-							"pricePerUnit": {"USD": "0.0800000000"},
-							"description": "$0.08 per GB-month"
-						}
-					},
-					"termAttributes": {}
+				"STORAGE_SKU": {
+					"STORAGE_SKU.TERM": {
+						"priceDimensions": {
+							"STORAGE_SKU.DIM": {
+								"unit": "GB-Mo",
+								"pricePerUnit": {"USD": "0.0800000000"},
+								"description": "$0.08 per GB-month"
+							}
+						},
+						"termAttributes": {}
+					}
 				}
 			},
 			"Reserved": {}

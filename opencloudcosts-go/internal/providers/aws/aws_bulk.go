@@ -322,9 +322,20 @@ func matchesProduct(raw json.RawMessage, attrFilters []attrFilter) bool {
 }
 
 // collectTermsForSKUs streams through a term-type object (e.g. the value of
-// "OnDemand") and returns only entries whose key has a prefix matching one of
-// the provided SKUs. The decoder must be positioned immediately before the
-// opening "{" of the term-type object.
+// "OnDemand") and returns only inner offer-term entries whose parent SKU matches
+// one of the provided SKUs. The decoder must be positioned immediately before
+// the opening "{" of the term-type object.
+//
+// The AWS bulk file uses two levels of nesting:
+//
+//	"OnDemand": {
+//	  "SKU": {                      ← outer key = SKU
+//	    "SKU.termCode": {offerTerm} ← inner key = offer term entry
+//	  }
+//	}
+//
+// We unwrap the outer SKU level so the returned map has keys "SKU.termCode"
+// directly, matching the format expected by parsedSKU.Terms.OnDemand.
 func collectTermsForSKUs(dec *json.Decoder, skus map[string]json.RawMessage) (map[string]json.RawMessage, error) {
 	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
 		return nil, fmt.Errorf("expected term-type object")
@@ -332,32 +343,51 @@ func collectTermsForSKUs(dec *json.Decoder, skus map[string]json.RawMessage) (ma
 
 	result := make(map[string]json.RawMessage)
 	for dec.More() {
-		termKeyTok, err := dec.Token()
+		// Outer key = SKU (e.g. "DW64VZC89TS9M2P2").
+		outerKeyTok, err := dec.Token()
 		if err != nil {
-			return nil, fmt.Errorf("reading term key: %w", err)
+			return nil, fmt.Errorf("reading outer term key: %w", err)
 		}
-		termKey, ok := termKeyTok.(string)
+		outerKey, ok := outerKeyTok.(string)
 		if !ok {
-			return nil, fmt.Errorf("expected string term key, got %T", termKeyTok)
+			return nil, fmt.Errorf("expected string outer term key, got %T", outerKeyTok)
 		}
 
-		var termRaw json.RawMessage
-		if err := dec.Decode(&termRaw); err != nil {
-			return nil, fmt.Errorf("decoding term %s: %w", termKey, err)
+		_, matched := skus[outerKey]
+		if !matched {
+			// Not a SKU we care about — skip the entire inner object.
+			var skip json.RawMessage
+			if err := dec.Decode(&skip); err != nil {
+				return nil, fmt.Errorf("aws bulk: skipping terms for sku %s: %w", outerKey, err)
+			}
+			continue
 		}
 
-		// Term keys are "{sku}.{termCode}". Check if any matched SKU is a prefix.
-		dotIdx := strings.Index(termKey, ".")
-		skuPart := termKey
-		if dotIdx >= 0 {
-			skuPart = termKey[:dotIdx]
+		// Matched SKU: open the inner object and collect each "SKU.termCode" entry.
+		if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+			return nil, fmt.Errorf("aws bulk: expected inner term object for sku %s", outerKey)
 		}
-		if _, matched := skus[skuPart]; matched {
-			result[termKey] = termRaw
+		for dec.More() {
+			innerKeyTok, err := dec.Token()
+			if err != nil {
+				return nil, fmt.Errorf("aws bulk: reading inner term key for sku %s: %w", outerKey, err)
+			}
+			innerKey, ok := innerKeyTok.(string)
+			if !ok {
+				return nil, fmt.Errorf("aws bulk: expected string inner term key for sku %s, got %T", outerKey, innerKeyTok)
+			}
+			var termRaw json.RawMessage
+			if err := dec.Decode(&termRaw); err != nil {
+				return nil, fmt.Errorf("aws bulk: decoding term %s: %w", innerKey, err)
+			}
+			result[innerKey] = termRaw
+		}
+		if _, err := dec.Token(); err != nil {
+			return nil, fmt.Errorf("aws bulk: closing inner term object for sku %s: %w", outerKey, err)
 		}
 	}
 
-	// Consume closing "}".
+	// Consume closing "}" of the term-type object.
 	if _, err := dec.Token(); err != nil {
 		return nil, fmt.Errorf("closing term-type object: %w", err)
 	}
