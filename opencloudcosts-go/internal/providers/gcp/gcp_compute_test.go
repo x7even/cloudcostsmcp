@@ -1590,7 +1590,6 @@ func TestMain(m *testing.M) {
 func TestGetComputePrice_GPU_A2HighGPU_IncludesAcceleratorCost(t *testing.T) {
 	const cpuRate = 0.031611
 	const ramRate = 0.004237
-	const gpuRate = 2.933400 // ~real A100 40GB on-demand rate
 
 	skus := []map[string]any{
 		makeSKU("A2 Instance Core", "OnDemand", "us-central1", "0", 31_611_000),
@@ -1674,7 +1673,6 @@ func TestGetComputePrice_GPU_A2_GPUCostMath(t *testing.T) {
 func TestGetComputePrice_GPU_G2Standard4_L4(t *testing.T) {
 	const cpuRate = 0.024200
 	const ramRate = 0.003250
-	const gpuRate = 0.700600 // realistic L4 on-demand rate
 
 	skus := []map[string]any{
 		makeSKU("G2 Instance Core", "OnDemand", "us-central1", "0", 24_200_000),
