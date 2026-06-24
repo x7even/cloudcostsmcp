@@ -19,8 +19,8 @@ import (
 // cpuDescKey / ramDescKey reference the FamilySKU fields.
 type termMapping struct {
 	usageType string
-	cpuKey    string // "cpu" | "preemptCPU" | "cudCPU"
-	ramKey    string // "ram" | "preemptRAM" | "cudRAM"
+	cpuKey    string // "cpu" | "preemptCPU" | "cudCPU" | "flexCudCPU"
+	ramKey    string // "ram" | "preemptRAM" | "cudRAM" | "flexCudRAM"
 }
 
 var termUsageType = map[models.PricingTerm]termMapping{
@@ -28,6 +28,7 @@ var termUsageType = map[models.PricingTerm]termMapping{
 	models.PricingTermSpot:     {"Preemptible", "preemptCPU", "preemptRAM"},
 	models.PricingTermCUD1Yr:   {"Commit1Yr", "cudCPU", "cudRAM"},
 	models.PricingTermCUD3Yr:   {"Commit3Yr", "cudCPU", "cudRAM"},
+	models.PricingTermFlexCUD:  {"CmtCudPremium", "flexCudCPU", "flexCudRAM"},
 }
 
 // sudMonthlyHours is the GCP billing month in hours.
@@ -56,6 +57,8 @@ func familySKUDesc(fsku utils.FamilySKU, cpuKey, ramKey string) (string, string)
 		return fsku.PreemptCPUDesc, fsku.PreemptRAMDesc
 	case "cudCPU":
 		return fsku.CUDCPUDesc, fsku.CUDRAMDesc
+	case "flexCudCPU":
+		return fsku.FlexCUDCPUDesc, fsku.FlexCUDRAMDesc
 	default: // "cpu"
 		return fsku.CPUDesc, fsku.RAMDesc
 	}
@@ -129,6 +132,7 @@ func (p *Provider) SupportedTerms(domain models.PricingDomain, service string) [
 			models.PricingTermCUD1Yr,
 			models.PricingTermCUD3Yr,
 			models.PricingTermSUD,
+			models.PricingTermFlexCUD,
 		}
 	case models.PricingDomainStorage:
 		return []models.PricingTerm{models.PricingTermOnDemand}

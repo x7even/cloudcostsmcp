@@ -49,7 +49,7 @@ func gcpDescribeCatalog() *models.ProviderCatalog {
 			"inter_region_egress": {},
 		},
 		SupportedTerms: map[string][]string{
-			"compute/compute_engine":         {"on_demand", "spot", "cud_1yr", "cud_3yr", "sud"},
+			"compute/compute_engine":         {"on_demand", "spot", "cud_1yr", "cud_3yr", "sud", "flex_cud"},
 			"storage/gcs":                    {"on_demand"},
 			"storage/persistent_disk":        {"on_demand"},
 			"database/cloud_sql":             {"on_demand"},
@@ -70,8 +70,9 @@ func gcpDescribeCatalog() *models.ProviderCatalog {
 			"compute/compute_engine": {
 				"resource_type": "GCP machine type e.g. 'n1-standard-4', 'e2-medium', 'c2-standard-8'",
 				"os":            "'Linux' (default) or 'Windows' (N1/N2/N2D/C2 only)",
-				"term":          "on_demand | spot | cud_1yr | cud_3yr | sud",
+				"term":          "on_demand | spot | cud_1yr | cud_3yr | sud | flex_cud",
 				"sud_note":      "SUD (Sustained Use Discount) is a billing-engine discount — it is NOT a catalog SKU and will NOT appear in search_pricing results. To get SUD pricing call get_price with term='sud' directly; the response includes the per-tier breakdown and blended effective rate. Eligible families: n1, n2, n2d, e2, c2, c2d, c3, t2d, t2a, m1, m2, m3. GPU families (a2, a3, g2) are not eligible.",
+				"flex_cud_note": "Flex CUD (Flexible Committed Use Discount, usageType=CmtCudPremium) — no minimum commitment term; discount falls between on_demand and cud_1yr. Eligible families: n2, n2d, c2, c2d, e2. Use term='flex_cud'.",
 			},
 			"storage/gcs": {
 				"storage_type": "standard | nearline | coldline | archive",
@@ -168,6 +169,14 @@ func gcpDescribeCatalog() *models.ProviderCatalog {
 				"region":        "us-central1",
 				"os":            "Linux",
 				"term":          "sud",
+			},
+			"compute/compute_engine/flex_cud": {
+				"provider":      "gcp",
+				"domain":        "compute",
+				"resource_type": "n2-standard-8",
+				"region":        "us-central1",
+				"os":            "Linux",
+				"term":          "flex_cud",
 			},
 			"storage/gcs": {
 				"provider":     "gcp",

@@ -183,7 +183,7 @@ var serviceToDomain = map[string]models.PricingDomain{
 // validTerms is shown in error hints when an invalid term is supplied.
 const validTerms = "on_demand, spot, reserved_1yr, reserved_1yr_partial, reserved_1yr_all, " +
 	"reserved_3yr, reserved_3yr_partial, reserved_3yr_all, " +
-	"cud_1yr, cud_3yr, sud, compute_savings_plan, ec2_instance_savings_plan"
+	"cud_1yr, cud_3yr, flex_cud, sud, compute_savings_plan, ec2_instance_savings_plan"
 
 // fillDomain adds a "domain" key to spec if it can be inferred. Mirrors
 // fill_domain() in utils/spec_infer.py.

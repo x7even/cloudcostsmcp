@@ -290,6 +290,8 @@ type FamilySKU struct {
 	PreemptRAMDesc string
 	CUDCPUDesc     string
 	CUDRAMDesc     string
+	FlexCUDCPUDesc string // CmtCudPremium usageType description (empty = not eligible for Flex CUD)
+	FlexCUDRAMDesc string
 }
 
 // GCPFamilySKU maps machine family to SKU description patterns.
@@ -301,15 +303,19 @@ var GCPFamilySKU = map[string]FamilySKU{
 		PreemptRAMDesc: "Preemptible E2 Instance Ram",
 		CUDCPUDesc:     "Commitment v1: E2 Cpu",
 		CUDRAMDesc:     "Commitment v1: E2 Ram",
+		FlexCUDCPUDesc: "Commitment v1: E2 Cpu",
+		FlexCUDRAMDesc: "Commitment v1: E2 Ram",
 	},
 	"n1": {
 		CPUDesc:        "N1 Predefined Instance Core",
 		RAMDesc:        "N1 Predefined Instance Ram",
 		PreemptCPUDesc: "Preemptible N1 Predefined Instance Core",
 		PreemptRAMDesc: "Preemptible N1 Predefined Instance Ram",
-		// N1 uses Sustained Use Discounts, not CUDs.
-		CUDCPUDesc: "",
-		CUDRAMDesc: "",
+		// N1 uses Sustained Use Discounts, not CUDs. No Flex CUD either.
+		CUDCPUDesc:     "",
+		CUDRAMDesc:     "",
+		FlexCUDCPUDesc: "",
+		FlexCUDRAMDesc: "",
 	},
 	"n2": {
 		CPUDesc:        "N2 Instance Core",
@@ -318,6 +324,8 @@ var GCPFamilySKU = map[string]FamilySKU{
 		PreemptRAMDesc: "Preemptible N2 Instance Ram",
 		CUDCPUDesc:     "Commitment v1: N2 Cpu",
 		CUDRAMDesc:     "Commitment v1: N2 Ram",
+		FlexCUDCPUDesc: "Commitment v1: N2 Cpu",
+		FlexCUDRAMDesc: "Commitment v1: N2 Ram",
 	},
 	"n2d": {
 		CPUDesc:        "N2D AMD Instance Core",
@@ -326,6 +334,8 @@ var GCPFamilySKU = map[string]FamilySKU{
 		PreemptRAMDesc: "Preemptible N2D AMD Instance Ram",
 		CUDCPUDesc:     "Commitment v1: N2D AMD Cpu",
 		CUDRAMDesc:     "Commitment v1: N2D AMD Ram",
+		FlexCUDCPUDesc: "Commitment v1: N2D AMD Cpu",
+		FlexCUDRAMDesc: "Commitment v1: N2D AMD Ram",
 	},
 	"c2": {
 		CPUDesc:        "Compute optimized Core",
@@ -334,6 +344,8 @@ var GCPFamilySKU = map[string]FamilySKU{
 		PreemptRAMDesc: "Preemptible Compute optimized Ram",
 		CUDCPUDesc:     "Commitment: Compute optimized Core",
 		CUDRAMDesc:     "Commitment: Compute optimized Ram",
+		FlexCUDCPUDesc: "Commitment: Compute optimized Core",
+		FlexCUDRAMDesc: "Commitment: Compute optimized Ram",
 	},
 	"c2d": {
 		CPUDesc:        "C2D AMD Instance Core",
@@ -342,6 +354,8 @@ var GCPFamilySKU = map[string]FamilySKU{
 		PreemptRAMDesc: "Preemptible C2D AMD Instance Ram",
 		CUDCPUDesc:     "Commitment v1: C2D AMD Cpu",
 		CUDRAMDesc:     "Commitment v1: C2D AMD Ram",
+		FlexCUDCPUDesc: "Commitment v1: C2D AMD Cpu",
+		FlexCUDRAMDesc: "Commitment v1: C2D AMD Ram",
 	},
 	"c3": {
 		CPUDesc:        "C3 Instance Core",
@@ -350,6 +364,9 @@ var GCPFamilySKU = map[string]FamilySKU{
 		PreemptRAMDesc: "Spot Preemptible C3 Instance Ram",
 		CUDCPUDesc:     "Commitment v1: C3 Cpu",
 		CUDRAMDesc:     "Commitment v1: C3 Ram",
+		// C3 does not offer Flex CUD.
+		FlexCUDCPUDesc: "",
+		FlexCUDRAMDesc: "",
 	},
 	"t2d": {
 		CPUDesc:        "T2D AMD Instance Core",
@@ -358,15 +375,20 @@ var GCPFamilySKU = map[string]FamilySKU{
 		PreemptRAMDesc: "Preemptible T2D AMD Instance Ram",
 		CUDCPUDesc:     "Commitment v1: T2D AMD Cpu",
 		CUDRAMDesc:     "Commitment v1: T2D AMD Ram",
+		// T2D does not offer Flex CUD.
+		FlexCUDCPUDesc: "",
+		FlexCUDRAMDesc: "",
 	},
 	"t2a": {
 		CPUDesc:        "T2A Arm Instance Core",
 		RAMDesc:        "T2A Arm Instance Ram",
 		PreemptCPUDesc: "Preemptible T2A Arm Instance Core",
 		PreemptRAMDesc: "Preemptible T2A Arm Instance Ram",
-		// T2A does not offer CUDs.
-		CUDCPUDesc: "",
-		CUDRAMDesc: "",
+		// T2A does not offer CUDs or Flex CUD.
+		CUDCPUDesc:     "",
+		CUDRAMDesc:     "",
+		FlexCUDCPUDesc: "",
+		FlexCUDRAMDesc: "",
 	},
 	"m1": {
 		CPUDesc:        "Memory-optimized Instance Core",
@@ -375,6 +397,9 @@ var GCPFamilySKU = map[string]FamilySKU{
 		PreemptRAMDesc: "Preemptible Memory-optimized Instance Ram",
 		CUDCPUDesc:     "Commitment v1: Memory-optimized Cpu",
 		CUDRAMDesc:     "Commitment v1: Memory-optimized Ram",
+		// M1 does not offer Flex CUD.
+		FlexCUDCPUDesc: "",
+		FlexCUDRAMDesc: "",
 	},
 	"a2": {
 		CPUDesc:        "A2 Instance Core",
@@ -383,6 +408,9 @@ var GCPFamilySKU = map[string]FamilySKU{
 		PreemptRAMDesc: "Preemptible A2 Instance Ram",
 		CUDCPUDesc:     "Commitment v1: A2 Cpu",
 		CUDRAMDesc:     "Commitment v1: A2 Ram",
+		// A2 (GPU family) does not offer Flex CUD.
+		FlexCUDCPUDesc: "",
+		FlexCUDRAMDesc: "",
 	},
 }
 
