@@ -4,9 +4,11 @@ package gcp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -1153,6 +1155,401 @@ func TestGetComputePrice_AllTermsOrderedCorrectly(t *testing.T) {
 	}
 	if cud1YrPrice >= onDemandPrice {
 		t.Errorf("price invariant violated: cud_1yr ($%.6f) must be < on_demand ($%.6f)", cud1YrPrice, onDemandPrice)
+	}
+}
+
+// --------------------------------------------------------------------------
+// SUD pricing tests
+// --------------------------------------------------------------------------
+
+// makeN1SUDServer returns an httptest.Server serving N1 on-demand CPU and RAM SKUs.
+// gcpSUDPrice fetches on-demand rates and derives the SUD blended price from them.
+func makeN1SUDServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	skus := []map[string]any{
+		makeSKU("N1 Predefined Instance Core", "OnDemand", "us-central1", "0", 31_611_000),
+		makeSKU("N1 Predefined Instance Ram", "OnDemand", "us-central1", "0", 4_237_000),
+	}
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(skuResponse(skus))
+	}))
+}
+
+// TestGetComputePrice_SUD_EligibleN1_ReturnsTerm verifies that n1-standard-4 with
+// term=sud returns a non-empty result with Term == "sud".
+func TestGetComputePrice_SUD_EligibleN1_ReturnsTerm(t *testing.T) {
+	ts := makeN1SUDServer(t)
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	ctx := context.Background()
+
+	prices, err := p.GetComputePrice(ctx, "n1-standard-4", "us-central1", "Linux", models.PricingTermSUD)
+	if err != nil {
+		t.Fatalf("GetComputePrice (sud): %v", err)
+	}
+	if len(prices) == 0 {
+		t.Fatal("expected at least 1 SUD price, got 0")
+	}
+	if prices[0].PricingTerm != models.PricingTermSUD {
+		t.Errorf("Term = %q, want %q", prices[0].PricingTerm, models.PricingTermSUD)
+	}
+}
+
+// TestGetComputePrice_SUD_BlendedRateMath verifies the 30%-off blended calculation.
+// n1-standard-4: 4 vCPU, 15.0 GB RAM.
+// on_demand = 4*0.031611 + 15*0.004237 = 0.126444 + 0.063555 = 0.189999 /hr
+// blended   = on_demand * 0.70
+func TestGetComputePrice_SUD_BlendedRateMath(t *testing.T) {
+	ts := makeN1SUDServer(t)
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	ctx := context.Background()
+
+	prices, err := p.GetComputePrice(ctx, "n1-standard-4", "us-central1", "Linux", models.PricingTermSUD)
+	if err != nil {
+		t.Fatalf("GetComputePrice (sud): %v", err)
+	}
+	if len(prices) == 0 {
+		t.Fatal("expected 1 SUD price, got 0")
+	}
+
+	const cpuRate = 0.031611
+	const ramRate = 0.004237
+	onDemandTotal := 4*cpuRate + 15.0*ramRate
+	wantBlended := onDemandTotal * 0.70
+
+	if abs(prices[0].PricePerUnit-wantBlended) > 1e-4 {
+		t.Errorf("SUD blended PricePerUnit = %.6f, want %.6f (30%% off %.6f)",
+			prices[0].PricePerUnit, wantBlended, onDemandTotal)
+	}
+}
+
+// TestGetComputePrice_SUD_TermLabelIsSUD asserts the returned pricing term is exactly
+// models.PricingTermSUD, not on_demand or any other term.
+func TestGetComputePrice_SUD_TermLabelIsSUD(t *testing.T) {
+	ts := makeN1SUDServer(t)
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	ctx := context.Background()
+
+	prices, err := p.GetComputePrice(ctx, "n1-standard-4", "us-central1", "Linux", models.PricingTermSUD)
+	if err != nil {
+		t.Fatalf("GetComputePrice (sud): %v", err)
+	}
+	if len(prices) == 0 {
+		t.Fatal("expected 1 SUD price, got 0")
+	}
+
+	got := prices[0].PricingTerm
+	if got != models.PricingTermSUD {
+		t.Errorf("PricingTerm = %q, want %q (not on_demand, not spot, not cud_*)", got, models.PricingTermSUD)
+	}
+}
+
+// TestGetComputePrice_SUD_AttributesComplete asserts that the SUD result carries all
+// required informational attributes with the correct sentinel values.
+func TestGetComputePrice_SUD_AttributesComplete(t *testing.T) {
+	ts := makeN1SUDServer(t)
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	ctx := context.Background()
+
+	prices, err := p.GetComputePrice(ctx, "n1-standard-4", "us-central1", "Linux", models.PricingTermSUD)
+	if err != nil {
+		t.Fatalf("GetComputePrice (sud): %v", err)
+	}
+	if len(prices) == 0 {
+		t.Fatal("expected 1 SUD price, got 0")
+	}
+
+	attrs := prices[0].Attributes
+
+	// Required attribute keys.
+	required := []string{
+		"sud_tier_0", "sud_tier_1", "sud_tier_2", "sud_tier_3",
+		"sud_blended_factor", "sud_discount_pct", "usage_assumption",
+		"sud_rate_source", "note",
+	}
+	for _, key := range required {
+		if _, ok := attrs[key]; !ok {
+			t.Errorf("missing required attribute %q", key)
+		}
+	}
+
+	// Sentinel value checks.
+	if attrs["sud_blended_factor"] != "0.700" {
+		t.Errorf("sud_blended_factor = %q, want %q", attrs["sud_blended_factor"], "0.700")
+	}
+	if attrs["sud_discount_pct"] != "30.0" {
+		t.Errorf("sud_discount_pct = %q, want %q", attrs["sud_discount_pct"], "30.0")
+	}
+	if !strings.Contains(attrs["sud_rate_source"], "catalog") {
+		t.Errorf("sud_rate_source = %q, want it to contain %q", attrs["sud_rate_source"], "catalog")
+	}
+}
+
+// TestGetComputePrice_SUD_TierRatesDescending verifies that tier rates are strictly
+// decreasing (tier_0 > tier_1 > tier_2 > tier_3 > 0), reflecting GCP's published
+// 0/20/40/60% discount schedule.
+func TestGetComputePrice_SUD_TierRatesDescending(t *testing.T) {
+	ts := makeN1SUDServer(t)
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	ctx := context.Background()
+
+	prices, err := p.GetComputePrice(ctx, "n1-standard-4", "us-central1", "Linux", models.PricingTermSUD)
+	if err != nil {
+		t.Fatalf("GetComputePrice (sud): %v", err)
+	}
+	if len(prices) == 0 {
+		t.Fatal("expected 1 SUD price, got 0")
+	}
+
+	attrs := prices[0].Attributes
+
+	// Extract the dollar rate from each tier attribute.
+	// Format: "0-182.5 hrs (0-25% of month): $0.189999/hr (0% off)"
+	parseTierRate := func(key string) float64 {
+		t.Helper()
+		s, ok := attrs[key]
+		if !ok {
+			t.Errorf("attribute %q not found", key)
+			return 0
+		}
+		// Find '$' and parse the number after it.
+		dollarIdx := strings.Index(s, "$")
+		if dollarIdx < 0 {
+			t.Errorf("attribute %q has no '$': %q", key, s)
+			return 0
+		}
+		rest := s[dollarIdx+1:]
+		slashIdx := strings.Index(rest, "/hr")
+		if slashIdx < 0 {
+			t.Errorf("attribute %q has no '/hr': %q", key, s)
+			return 0
+		}
+		var rate float64
+		if _, err := fmt.Sscanf(rest[:slashIdx], "%f", &rate); err != nil {
+			t.Errorf("cannot parse rate from %q: %v", rest[:slashIdx], err)
+		}
+		return rate
+	}
+
+	tier0 := parseTierRate("sud_tier_0")
+	tier1 := parseTierRate("sud_tier_1")
+	tier2 := parseTierRate("sud_tier_2")
+	tier3 := parseTierRate("sud_tier_3")
+
+	if tier0 <= 0 {
+		t.Errorf("tier_0 rate = %v, want > 0", tier0)
+	}
+	if tier0 <= tier1 {
+		t.Errorf("tier_0 ($%.6f) must be > tier_1 ($%.6f)", tier0, tier1)
+	}
+	if tier1 <= tier2 {
+		t.Errorf("tier_1 ($%.6f) must be > tier_2 ($%.6f)", tier1, tier2)
+	}
+	if tier2 <= tier3 {
+		t.Errorf("tier_2 ($%.6f) must be > tier_3 ($%.6f)", tier2, tier3)
+	}
+	if tier3 <= 0 {
+		t.Errorf("tier_3 rate = %v, want > 0", tier3)
+	}
+}
+
+// TestGetComputePrice_SUD_IneligibleA2_ReturnsEmpty verifies that a2-highgpu-1g
+// (a GPU family) returns an empty slice with no error when term=sud.
+// a2 IS in GCPFamilySKU but fails the SUDEligible check inside gcpSUDPrice.
+func TestGetComputePrice_SUD_IneligibleA2_ReturnsEmpty(t *testing.T) {
+	// No SKUs needed — gcpSUDPrice short-circuits before any HTTP call.
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(skuResponse(nil))
+	}))
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	ctx := context.Background()
+
+	prices, err := p.GetComputePrice(ctx, "a2-highgpu-1g", "us-central1", "Linux", models.PricingTermSUD)
+	if err != nil {
+		t.Fatalf("GetComputePrice (a2 sud): unexpected error: %v", err)
+	}
+	if len(prices) != 0 {
+		t.Errorf("expected empty slice for SUD-ineligible a2, got %d price(s)", len(prices))
+	}
+}
+
+// TestGetComputePrice_SUD_IneligibleG2_ReturnsError verifies that g2-standard-4
+// returns an error when term=sud because g2 is not in GCPFamilySKU at all.
+// (g2 is not a recognized machine family in this provider — distinct from a2 which
+// is SUD-ineligible but is a supported family.)
+func TestGetComputePrice_SUD_IneligibleG2_ReturnsError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(skuResponse(nil))
+	}))
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	ctx := context.Background()
+
+	_, err := p.GetComputePrice(ctx, "g2-standard-4", "us-central1", "Linux", models.PricingTermSUD)
+	if err == nil {
+		t.Error("expected error for unsupported g2 family, got nil")
+	}
+}
+
+// TestGetComputePrice_PriceLadder_SpotLtCUD3LtCUD1LtSUDLtOnDemand verifies the full
+// five-term price ladder for n2-standard-4: spot < cud_3yr < cud_1yr < sud < on_demand.
+// SUD (70% of on-demand) must be cheaper than on_demand but more expensive than CUD terms.
+func TestGetComputePrice_PriceLadder_SpotLtCUD3LtCUD1LtSUDLtOnDemand(t *testing.T) {
+	// n2-standard-4: 4 vCPU, 16 GB RAM.
+	// Rates chosen so all five terms are strictly ordered.
+	skus := []map[string]any{
+		// OnDemand SKUs: $0.031611/vCPU, $0.004237/GB
+		// on_demand total = 4*0.031611 + 16*0.004237 = 0.194236
+		// sud total = 0.194236 * 0.70 = 0.135965
+		makeSKU("N2 Instance Core", "OnDemand", "us-central1", "0", 31_611_000),
+		makeSKU("N2 Instance Ram", "OnDemand", "us-central1", "0", 4_237_000),
+		// CUD 1-year SKUs: $0.019560/vCPU, $0.002626/GB
+		// cud_1yr total = 4*0.019560 + 16*0.002626 = 0.120256
+		makeSKU("Commitment v1: N2 Cpu in Americas for 1 Year", "Commit1Yr", "us-central1", "0", 19_560_000),
+		makeSKU("Commitment v1: N2 Ram in Americas for 1 Year", "Commit1Yr", "us-central1", "0", 2_626_000),
+		// CUD 3-year SKUs: $0.013972/vCPU, $0.001874/GB
+		// cud_3yr total = 4*0.013972 + 16*0.001874 = 0.085872
+		makeSKU("Commitment v1: N2 Cpu in Americas for 3 Years", "Commit3Yr", "us-central1", "0", 13_972_000),
+		makeSKU("Commitment v1: N2 Ram in Americas for 3 Years", "Commit3Yr", "us-central1", "0", 1_874_000),
+		// Preemptible (spot) SKUs: $0.006700/vCPU, $0.000900/GB
+		// spot total = 4*0.006700 + 16*0.000900 = 0.041200
+		makeSKU("Preemptible N2 Instance Core", "Preemptible", "us-central1", "0", 6_700_000),
+		makeSKU("Preemptible N2 Instance Ram", "Preemptible", "us-central1", "0", 900_000),
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(skuResponse(skus))
+	}))
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	ctx := context.Background()
+
+	getPrice := func(term models.PricingTerm) float64 {
+		t.Helper()
+		prices, err := p.GetComputePrice(ctx, "n2-standard-4", "us-central1", "Linux", term)
+		if err != nil {
+			t.Fatalf("GetComputePrice (term=%s): %v", term, err)
+		}
+		if len(prices) != 1 {
+			t.Fatalf("GetComputePrice (term=%s): expected 1 price, got %d", term, len(prices))
+		}
+		return prices[0].PricePerUnit
+	}
+
+	spotPrice := getPrice(models.PricingTermSpot)
+	cud3YrPrice := getPrice(models.PricingTermCUD3Yr)
+	cud1YrPrice := getPrice(models.PricingTermCUD1Yr)
+	sudPrice := getPrice(models.PricingTermSUD)
+	onDemandPrice := getPrice(models.PricingTermOnDemand)
+
+	// Full ladder: spot < cud_3yr < cud_1yr < sud < on_demand
+	if spotPrice >= cud3YrPrice {
+		t.Errorf("ladder violated: spot ($%.6f) must be < cud_3yr ($%.6f)", spotPrice, cud3YrPrice)
+	}
+	if cud3YrPrice >= cud1YrPrice {
+		t.Errorf("ladder violated: cud_3yr ($%.6f) must be < cud_1yr ($%.6f)", cud3YrPrice, cud1YrPrice)
+	}
+	if cud1YrPrice >= sudPrice {
+		t.Errorf("ladder violated: cud_1yr ($%.6f) must be < sud ($%.6f)", cud1YrPrice, sudPrice)
+	}
+	if sudPrice >= onDemandPrice {
+		t.Errorf("ladder violated: sud ($%.6f) must be < on_demand ($%.6f)", sudPrice, onDemandPrice)
+	}
+}
+
+// TestGetComputePrice_OnDemand_SUDHintPresent verifies that on-demand results for
+// SUD-eligible families carry the sud_eligible="true" and sud_blended_rate_at_100pct
+// hint attributes.
+func TestGetComputePrice_OnDemand_SUDHintPresent(t *testing.T) {
+	ts := makeN1SUDServer(t)
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	ctx := context.Background()
+
+	prices, err := p.GetComputePrice(ctx, "n1-standard-4", "us-central1", "Linux", models.PricingTermOnDemand)
+	if err != nil {
+		t.Fatalf("GetComputePrice (on_demand): %v", err)
+	}
+	if len(prices) == 0 {
+		t.Fatal("expected 1 on_demand price, got 0")
+	}
+
+	attrs := prices[0].Attributes
+	if attrs["sud_eligible"] != "true" {
+		t.Errorf("sud_eligible = %q, want %q", attrs["sud_eligible"], "true")
+	}
+	hint, ok := attrs["sud_blended_rate_at_100pct"]
+	if !ok || hint == "" {
+		t.Error("sud_blended_rate_at_100pct attribute is missing or empty")
+	}
+	if !strings.Contains(hint, "30") {
+		t.Errorf("sud_blended_rate_at_100pct = %q, want it to mention 30%% discount", hint)
+	}
+}
+
+// TestGetComputePrice_OnDemand_SUDHintAbsentForGPU verifies that on-demand results
+// for a2 (SUD-ineligible GPU family) do NOT carry sud_eligible="true".
+func TestGetComputePrice_OnDemand_SUDHintAbsentForGPU(t *testing.T) {
+	skus := []map[string]any{
+		makeSKU("A2 Instance Core", "OnDemand", "us-central1", "0", 31_611_000),
+		makeSKU("A2 Instance Ram", "OnDemand", "us-central1", "0", 4_237_000),
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(skuResponse(skus))
+	}))
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	ctx := context.Background()
+
+	prices, err := p.GetComputePrice(ctx, "a2-highgpu-1g", "us-central1", "Linux", models.PricingTermOnDemand)
+	if err != nil {
+		t.Fatalf("GetComputePrice (a2 on_demand): %v", err)
+	}
+	if len(prices) == 0 {
+		t.Fatal("expected 1 on_demand price for a2, got 0")
+	}
+
+	attrs := prices[0].Attributes
+	if attrs["sud_eligible"] == "true" {
+		t.Errorf("a2 (GPU family) should not have sud_eligible=true, but it does")
+	}
+}
+
+// TestSUDEligible_Families verifies the SUDEligible predicate for all documented
+// eligible families and the three explicitly ineligible GPU families.
+func TestSUDEligible_Families(t *testing.T) {
+	eligible := []string{"n1", "n2", "n2d", "e2", "c2", "c2d", "c3", "t2d", "t2a", "m1", "m2", "m3"}
+	ineligible := []string{"a2", "a3", "g2"}
+
+	for _, family := range eligible {
+		if !utils.SUDEligible(family) {
+			t.Errorf("SUDEligible(%q) = false, want true", family)
+		}
+	}
+	for _, family := range ineligible {
+		if utils.SUDEligible(family) {
+			t.Errorf("SUDEligible(%q) = true, want false", family)
+		}
 	}
 }
 
