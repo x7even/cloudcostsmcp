@@ -533,6 +533,12 @@ TEST_PROMPTS = {
         "Compare Vertex AI training cost for n1-standard-4 vs n1-standard-8 "
         "for a 200-hour monthly training job in us-central1. Which is cheaper per hour?"
     ),
+    "GV6": (
+        "How much does it cost to run a GCP n1-standard-8 in us-central1 for an entire month "
+        "of continuous 24/7 operation, with GCP's Sustained Use Discount applied? "
+        "Show me the per-tier breakdown and compare the SUD effective rate to the on-demand "
+        "and 1-year CUD rates."
+    ),
     # -----------------------------------------------------------------------
     # GCP Networking — LB, CDN, NAT (GN) [v0.7.6]
     # -----------------------------------------------------------------------
