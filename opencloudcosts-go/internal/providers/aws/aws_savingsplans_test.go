@@ -66,12 +66,18 @@ func overrideSPBaseURL(t *testing.T, serverURL string) {
 
 // minimalSPFixture returns a minimal SP bulk JSON with:
 //   - 2 CSP products (1yr No Upfront, 3yr No Upfront)
+//   - 1 CSP product (1yr All Upfront) — exercises $0.00/hr All-Upfront indexing
 //   - 2 ISP products (1yr No Upfront for m5 family, 1yr No Upfront for c5 family)
 //   - Matching terms with synthetic rates
 //
 // CSP rates carry real discountedInstanceType values (e.g. "m5.xlarge",
 // "c5.xlarge") matching how the AWS bulk API actually works. The CSP vs ISP
 // distinction is in SPType, not by having an empty instanceType for CSP.
+//
+// The CSP1YR term includes a DedicatedUsage:m5.xlarge rate (higher price) placed
+// AFTER the BoxUsage rate. Without the Dedicated filter, the last-write-wins
+// collision would cause callers to see the dedicated (higher) rate instead of
+// the shared (lower) rate. Tests assert the shared rate is returned.
 //
 // Structure: {"products":[...],"terms":{"savingsPlan":[...]}}
 // products is an ARRAY (not a map) — critical for the stream parser.
@@ -82,6 +88,14 @@ const minimalSPFixtureJSON = `{
       "productFamily": "ComputeSavingsPlans",
       "attributes": {
         "purchaseOption": "No Upfront",
+        "purchaseTerm": "1yr"
+      }
+    },
+    {
+      "sku": "CSP1YR_ALL",
+      "productFamily": "ComputeSavingsPlans",
+      "attributes": {
+        "purchaseOption": "All Upfront",
         "purchaseTerm": "1yr"
       }
     },
@@ -150,6 +164,36 @@ const minimalSPFixtureJSON = `{
             "rateCode": "CSP1YR.EC2_M5_XLARGE_WIN",
             "unit": "Hrs",
             "discountedRate": {"price": "0.2800", "currency": "USD"},
+            "discountedRegionCode": "us-east-1",
+            "discountedInstanceType": "m5.xlarge"
+          },
+          {
+            "discountedSku": "EC2_M5_XLARGE_DEDICATED",
+            "discountedUsageType": "DedicatedUsage:m5.xlarge",
+            "discountedOperation": "RunInstances",
+            "discountedServiceCode": "AmazonEC2",
+            "rateCode": "CSP1YR.EC2_M5_XLARGE_DED",
+            "unit": "Hrs",
+            "discountedRate": {"price": "0.1980", "currency": "USD"},
+            "discountedRegionCode": "us-east-1",
+            "discountedInstanceType": "m5.xlarge"
+          }
+        ]
+      },
+      {
+        "sku": "CSP1YR_ALL",
+        "description": "Compute Savings Plan 1yr All Upfront",
+        "effectiveDate": "2026-01-01T00:00:00Z",
+        "leaseContractLength": {"duration": 1, "unit": "year"},
+        "rates": [
+          {
+            "discountedSku": "EC2_M5_XLARGE",
+            "discountedUsageType": "BoxUsage:m5.xlarge",
+            "discountedOperation": "RunInstances",
+            "discountedServiceCode": "AmazonEC2",
+            "rateCode": "CSP1YR_ALL.EC2_M5_XLARGE",
+            "unit": "Hrs",
+            "discountedRate": {"price": "0.0000", "currency": "USD"},
             "discountedRegionCode": "us-east-1",
             "discountedInstanceType": "m5.xlarge"
           }
@@ -666,5 +710,93 @@ func TestCSP_TwoInstanceTypes_ReturnDistinctRates(t *testing.T) {
 	}
 	if m5Rate == c5Rate {
 		t.Errorf("CSP m5.xlarge and c5.xlarge returned identical rates (%v) — index is likely keyed by empty instanceType", m5Rate)
+	}
+}
+
+// TestDedicatedTenancy_NotColliding verifies that a DedicatedUsage rate (higher
+// price) placed after a BoxUsage rate in the fixture does NOT overwrite the
+// shared-tenancy rate in the index. Without the Dedicated filter, the last-write-
+// wins collision would silently substitute the dedicated (higher) rate.
+func TestDedicatedTenancy_NotColliding(t *testing.T) {
+	p, srv := setupSPTest(t, "us-east-1")
+	defer srv.Close()
+
+	p.bulkFallback = true
+
+	payOpt := "No Upfront"
+	years := 1
+	spec := &models.ComputePricingSpec{
+		BasePricingSpec: models.BasePricingSpec{
+			Provider: models.CloudProviderAWS,
+			Domain:   models.PricingDomainCompute,
+			Region:   "us-east-1",
+			Term:     models.PricingTermComputeSP,
+		},
+		ResourceType:    "m5.xlarge",
+		OS:              "Linux",
+		PaymentOption:   &payOpt,
+		CommitmentYears: &years,
+	}
+
+	result, err := p.GetSavingsPlanPrice(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("GetSavingsPlanPrice: %v", err)
+	}
+	if len(result.PublicPrices) == 0 {
+		t.Fatalf("expected public prices, got empty (note=%q)", result.Note)
+	}
+	got := result.PublicPrices[0].PricePerUnit
+	// The BoxUsage (shared tenancy) rate is 0.141; the DedicatedUsage rate is
+	// 0.198. The dedicated entry comes AFTER the box entry in the fixture, so
+	// without filtering, the index would hold the dedicated rate. Assert we get
+	// the shared (lower) rate.
+	const wantShared = 0.141
+	const dedicatedRate = 0.198
+	if got == dedicatedRate {
+		t.Errorf("CSP m5.xlarge returned dedicated-tenancy rate (%v) instead of shared-tenancy rate (%v) — Dedicated filter is not working", got, wantShared)
+	}
+	if got != wantShared {
+		t.Errorf("CSP m5.xlarge rate = %v, want shared-tenancy %v", got, wantShared)
+	}
+}
+
+// TestAllUpfront_PriceIndexed verifies that All-Upfront SP rates (which AWS
+// expresses as $0.00/hr) are indexed and returned, not silently dropped.
+// Before the fix, the price==0 guard caused All-Upfront lookups to return
+// a "not covered" Note instead of the actual rate entry.
+func TestAllUpfront_PriceIndexed(t *testing.T) {
+	p, srv := setupSPTest(t, "us-east-1")
+	defer srv.Close()
+
+	p.bulkFallback = true
+
+	payOpt := "All Upfront"
+	years := 1
+	spec := &models.ComputePricingSpec{
+		BasePricingSpec: models.BasePricingSpec{
+			Provider: models.CloudProviderAWS,
+			Domain:   models.PricingDomainCompute,
+			Region:   "us-east-1",
+			Term:     models.PricingTermComputeSP,
+		},
+		ResourceType:    "m5.xlarge",
+		OS:              "Linux",
+		PaymentOption:   &payOpt,
+		CommitmentYears: &years,
+	}
+
+	result, err := p.GetSavingsPlanPrice(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("GetSavingsPlanPrice All Upfront: %v", err)
+	}
+	// Must return a price entry — not a "not covered" Note — even though the
+	// AWS bulk API expresses All Upfront as $0.00/hr.
+	if len(result.PublicPrices) == 0 {
+		t.Fatalf("All Upfront SP returned 'not covered' (note=%q) — $0.00 rates are being dropped", result.Note)
+	}
+	got := result.PublicPrices[0].PricePerUnit
+	const wantAllUpfront = 0.0
+	if got != wantAllUpfront {
+		t.Errorf("All Upfront rate = %v, want %v (AWS expresses All Upfront as $0.00/hr ongoing)", got, wantAllUpfront)
 	}
 }

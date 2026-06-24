@@ -296,8 +296,18 @@ func fetchAndBuildSPIndex(ctx context.Context, regionURL string, client *http.Cl
 							continue
 						}
 						for _, rate := range term.Rates {
+							// Skip dedicated-tenancy entries to prevent collision with
+							// shared-tenancy entries that share the same
+							// (SPType, Years, PaymentOption, Operation, InstanceType) key.
+							// In the AWS SP bulk file, DedicatedUsage:m5.xlarge and
+							// BoxUsage:m5.xlarge are separate rate entries but map to the
+							// same index key; keeping only BoxUsage (shared tenancy) entries
+							// ensures callers always receive the shared-tenancy rate.
+							if strings.Contains(rate.DiscountedUsageType, "Dedicated") {
+								continue
+							}
 							price, parseErr := strconv.ParseFloat(rate.DiscountedRate.Price, 64)
-							if parseErr != nil || price == 0 {
+							if parseErr != nil {
 								continue
 							}
 							key := spRateKeyString(spRateKey{
@@ -556,10 +566,6 @@ func (p *Provider) GetSavingsPlanPrice(
 				"(payment_option=%q, commitment_years=%d)",
 			instanceType, os, spec.GetTerm(), region, paymentOption, years,
 		)
-		if paymentOption != "No Upfront" {
-			notCoveredNote += ". Note: only No Upfront is indexed in v1; " +
-				"Partial Upfront and All Upfront may require direct API lookup."
-		}
 		return &models.PricingResult{
 			PublicPrices:  nil,
 			AuthAvailable: false,
@@ -629,7 +635,23 @@ func (p *Provider) GetSavingsPlanPrice(
 			"Market range: ~5% at $1M/yr commitment to ~20% at $50M+/yr",
 	}
 
-	if odRate > 0 {
+	// 3-year commitment risk warning — material for enterprise FinOps decisions.
+	if years == 3 {
+		breakdown["commitment_risk_warning"] = "3-year SP commitments include a ratchet clause: " +
+			"your commitment amount cannot decrease year-over-year during the term. " +
+			"If your workload shrinks or migrates, you continue paying the full commitment, " +
+			"resulting in wasted spend. Ensure you have high confidence in 3-year growth " +
+			"before choosing 3yr over 1yr. Consider starting with 1yr and renewing at 3yr " +
+			"once utilisation is proven stable."
+	}
+
+	if paymentOption == "All Upfront" {
+		breakdown["all_upfront_note"] = "All Upfront SP: the full commitment cost is paid upfront; " +
+			"the ongoing hourly charge is $0.00. The effective hourly rate represents " +
+			"the amortised prepayment (upfront amount ÷ commitment hours)."
+	}
+
+	if odRate > 0 && spRate > 0 {
 		spDiscount := (odRate - spRate) / odRate
 		breakdown["on_demand_rate"] = odRate
 		breakdown["sp_discount_pct"] = fmt.Sprintf("%.1f%%", spDiscount*100)
@@ -641,6 +663,8 @@ func (p *Provider) GetSavingsPlanPrice(
 				"pct":  fmt.Sprintf("%.1f%%", spDiscount*100),
 			},
 		}
+	} else if odRate > 0 && spRate == 0 {
+		breakdown["on_demand_rate"] = odRate
 	}
 
 	// EDP post-processing — STEP 8.
@@ -681,13 +705,20 @@ func (p *Provider) GetSavingsPlanPrice(
 
 		// Extended breakdown with EDP tier.
 		discountBreakdown := []map[string]any{}
-		if odRate > 0 {
+		if odRate > 0 && spRate > 0 {
 			spDiscount := (odRate - spRate) / odRate
 			discountBreakdown = append(discountBreakdown, map[string]any{
 				"type": "savings_plan",
 				"from": odRate,
 				"to":   spRate,
 				"pct":  fmt.Sprintf("%.1f%%", spDiscount*100),
+			})
+		} else if odRate > 0 && spRate == 0 {
+			discountBreakdown = append(discountBreakdown, map[string]any{
+				"type": "savings_plan",
+				"from": odRate,
+				"to":   spRate,
+				"note": "All Upfront: $0/hr ongoing charge; cost is prepaid",
 			})
 		}
 		discountBreakdown = append(discountBreakdown, map[string]any{
