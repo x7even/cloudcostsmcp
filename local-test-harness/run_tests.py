@@ -997,6 +997,77 @@ TEST_PROMPTS = {
         "2x c5.2xlarge Linux web (us-east-1), 1x r6i.xlarge Linux DB (us-east-1), 500 GB gp3 EBS."
     ),
     "REC1": ("Price a t3.medium Linux instance."),
+    # -----------------------------------------------------------------------
+    # AWS Savings Plans + EDP (AV)
+    # -----------------------------------------------------------------------
+    "AV1": (
+        "Compare the cost of running an m5.4xlarge (16 vCPU, 64 GB RAM) in us-east-1 on AWS: "
+        "on-demand vs 1-year Compute Savings Plan vs 3-year Compute Savings Plan. "
+        "Show hourly and monthly costs and the discount percentage for each."
+    ),
+    "AV2": (
+        "I have a 1-year AWS Compute Savings Plan. Will it cover costs for both m5 instances "
+        "in us-east-1 AND c5 instances in us-west-2 simultaneously? Explain how CSP flexibility "
+        "works and show the rates for c5.2xlarge in both regions."
+    ),
+    "AV3": (
+        "What is the Compute Savings Plan rate for a c7g.4xlarge (Graviton3, ARM) instance in "
+        "us-east-1 for a 1-year term? How does it compare to on-demand?"
+    ),
+    "AV4": (
+        "I need 64 vCPU and 256 GB RAM of compute capacity on AWS for 1 year. Compare using "
+        "m5.16xlarge on-demand vs 1yr Compute SP vs 3yr Compute SP. "
+        "What is the total annual cost for each?"
+    ),
+    "AV5": (
+        "I always run m5 instances in us-east-1 and will continue to do so for the next year. "
+        "Should I choose a Compute Savings Plan or an EC2 Instance Savings Plan? "
+        "Show the rates for m5.4xlarge under each plan type."
+    ),
+    "AV6": (
+        "Compare 1-year vs 3-year EC2 Instance Savings Plan for r5.4xlarge in us-east-1. "
+        "At what monthly savings does the 3-year plan break even vs the 1-year plan, "
+        "assuming we re-invest the savings?"
+    ),
+    "AV7": (
+        "What is the cost of running a Windows Server m6i.4xlarge in us-east-1 under a "
+        "1-year EC2 Instance Savings Plan? Compare to Windows on-demand pricing."
+    ),
+    "AV8": (
+        "Our company has a 20% AWS Enterprise Discount Program agreement. What is our effective "
+        "hourly rate for m5.4xlarge in us-east-1 under a 1-year Compute Savings Plan with the "
+        "EDP applied?"
+    ),
+    "AV9": (
+        "We have 15% EDP on AWS. Compare our effective rate for 16 vCPU 64GB: AWS m5.4xlarge "
+        "with 3yr EC2 Instance SP + EDP vs GCP n2-standard-16 with 3yr CUD. "
+        "Which is cheaper per month?"
+    ),
+    "AV10": (
+        "What is the absolute maximum discount achievable on EC2 m5.4xlarge in us-east-1? "
+        "Walk through: on-demand baseline, then best Savings Plan rate, then with a 25% EDP "
+        "on top. Show the final effective rate and total savings %."
+    ),
+    "AV11": (
+        "Compare the cheapest monthly cost for 8 vCPU 32 GB compute workload: AWS c5.2xlarge "
+        "with best Savings Plan vs GCP c2-standard-8 with best CUD. Use us-east-1 for AWS and "
+        "us-central1 for GCP. Assume Linux, 3-year commitment."
+    ),
+    "AV12": (
+        "We are choosing between AWS and GCP for a 3-year memory-optimized database workload "
+        "requiring 16 vCPU and 128 GB RAM. Compare AWS r5.4xlarge (best SP rate) vs GCP "
+        "n2-highmem-16 (best CUD). Include all available discounts."
+    ),
+    "AV13": (
+        "Compare GPU instance pricing: AWS p3.2xlarge (1x V100 GPU, 8 vCPU, 61 GB RAM) vs "
+        "GCP a2-highgpu-1g (1x A100 GPU, 12 vCPU, 85 GB RAM) in us-east-1/us-central1. "
+        "Include any applicable Savings Plans or CUDs."
+    ),
+    "AV14": (
+        "Total 3-year cost of ownership for running 100 general-purpose VMs each with "
+        "4 vCPU 16 GB RAM on AWS vs GCP. Use AWS m5.xlarge with best discount vs GCP "
+        "n2-standard-4 with best discount. Assume Linux, us-east-1 / us-central1."
+    ),
 }
 
 
