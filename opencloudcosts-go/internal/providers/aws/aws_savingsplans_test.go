@@ -69,6 +69,10 @@ func overrideSPBaseURL(t *testing.T, serverURL string) {
 //   - 2 ISP products (1yr No Upfront for m5 family, 1yr No Upfront for c5 family)
 //   - Matching terms with synthetic rates
 //
+// CSP rates carry real discountedInstanceType values (e.g. "m5.xlarge",
+// "c5.xlarge") matching how the AWS bulk API actually works. The CSP vs ISP
+// distinction is in SPType, not by having an empty instanceType for CSP.
+//
 // Structure: {"products":[...],"terms":{"savingsPlan":[...]}}
 // products is an ARRAY (not a map) — critical for the stream parser.
 const minimalSPFixtureJSON = `{
@@ -125,7 +129,18 @@ const minimalSPFixtureJSON = `{
             "unit": "Hrs",
             "discountedRate": {"price": "0.1410", "currency": "USD"},
             "discountedRegionCode": "us-east-1",
-            "discountedInstanceType": ""
+            "discountedInstanceType": "m5.xlarge"
+          },
+          {
+            "discountedSku": "EC2_C5_XLARGE_CSP",
+            "discountedUsageType": "BoxUsage:c5.xlarge",
+            "discountedOperation": "RunInstances",
+            "discountedServiceCode": "AmazonEC2",
+            "rateCode": "CSP1YR.EC2_C5_XLARGE",
+            "unit": "Hrs",
+            "discountedRate": {"price": "0.1230", "currency": "USD"},
+            "discountedRegionCode": "us-east-1",
+            "discountedInstanceType": "c5.xlarge"
           },
           {
             "discountedSku": "EC2_M5_XLARGE_WIN",
@@ -136,7 +151,7 @@ const minimalSPFixtureJSON = `{
             "unit": "Hrs",
             "discountedRate": {"price": "0.2800", "currency": "USD"},
             "discountedRegionCode": "us-east-1",
-            "discountedInstanceType": ""
+            "discountedInstanceType": "m5.xlarge"
           }
         ]
       },
@@ -155,7 +170,7 @@ const minimalSPFixtureJSON = `{
             "unit": "Hrs",
             "discountedRate": {"price": "0.0970", "currency": "USD"},
             "discountedRegionCode": "us-east-1",
-            "discountedInstanceType": ""
+            "discountedInstanceType": "m5.xlarge"
           }
         ]
       },
@@ -586,5 +601,70 @@ func TestWindowsOperationCode_Mapping(t *testing.T) {
 	// Verify the operation attribute is correct.
 	if op, ok := result.PublicPrices[0].Attributes["operation"]; !ok || op != "RunInstances:0010" {
 		t.Errorf("operation attribute = %q, want RunInstances:0010", op)
+	}
+}
+
+// TestCSP_TwoInstanceTypes_ReturnDistinctRates is a regression guard verifying
+// that CSP rates are keyed by instance type (not by empty string). If the index
+// were built with empty instanceType for all CSP entries, the second CSP rate
+// would overwrite the first and both lookups would return the same value.
+func TestCSP_TwoInstanceTypes_ReturnDistinctRates(t *testing.T) {
+	p, srv := setupSPTest(t, "us-east-1")
+	defer srv.Close()
+
+	p.bulkFallback = true
+
+	payOpt := "No Upfront"
+	years := 1
+
+	specM5 := &models.ComputePricingSpec{
+		BasePricingSpec: models.BasePricingSpec{
+			Provider: models.CloudProviderAWS,
+			Domain:   models.PricingDomainCompute,
+			Region:   "us-east-1",
+			Term:     models.PricingTermComputeSP,
+		},
+		ResourceType:    "m5.xlarge",
+		OS:              "Linux",
+		PaymentOption:   &payOpt,
+		CommitmentYears: &years,
+	}
+
+	specC5 := *specM5
+	specC5.ResourceType = "c5.xlarge"
+
+	rM5, err := p.GetSavingsPlanPrice(context.Background(), specM5)
+	if err != nil || len(rM5.PublicPrices) == 0 {
+		t.Fatalf("CSP m5.xlarge: err=%v note=%q", err, func() string {
+			if rM5 != nil {
+				return rM5.Note
+			}
+			return ""
+		}())
+	}
+
+	rC5, err := p.GetSavingsPlanPrice(context.Background(), &specC5)
+	if err != nil || len(rC5.PublicPrices) == 0 {
+		t.Fatalf("CSP c5.xlarge: err=%v note=%q", err, func() string {
+			if rC5 != nil {
+				return rC5.Note
+			}
+			return ""
+		}())
+	}
+
+	m5Rate := rM5.PublicPrices[0].PricePerUnit // fixture: 0.141
+	c5Rate := rC5.PublicPrices[0].PricePerUnit // fixture: 0.123
+
+	const wantM5 = 0.141
+	const wantC5 = 0.123
+	if m5Rate != wantM5 {
+		t.Errorf("CSP m5.xlarge rate = %v, want %v", m5Rate, wantM5)
+	}
+	if c5Rate != wantC5 {
+		t.Errorf("CSP c5.xlarge rate = %v, want %v", c5Rate, wantC5)
+	}
+	if m5Rate == c5Rate {
+		t.Errorf("CSP m5.xlarge and c5.xlarge returned identical rates (%v) — index is likely keyed by empty instanceType", m5Rate)
 	}
 }

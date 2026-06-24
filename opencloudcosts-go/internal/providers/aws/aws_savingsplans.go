@@ -105,7 +105,7 @@ type spRateKey struct {
 	Years         int    // 1 or 3
 	PaymentOption string // "No Upfront", "Partial Upfront", "All Upfront"
 	Operation     string // e.g. "RunInstances", "RunInstances:0010"
-	InstanceType  string // specific instance type (e.g. "m5.xlarge"); empty for CSP
+	InstanceType  string // specific instance type (e.g. "m5.xlarge") — populated for both CSP and ISP
 }
 
 // spRateKeyString serialises a spRateKey to a string suitable for use as a
@@ -481,9 +481,10 @@ func osToOperation(os string) string {
 // GetSavingsPlanPrice returns SP pricing (and optional EDP-adjusted pricing)
 // for an EC2 instance type. It builds and caches the SP rate index on first call.
 //
-// For CSP (compute_savings_plan): looks up by operation + empty instanceType
-// (CSP is not instance-family specific in the index; rates apply to all eligible).
-// For ISP (ec2_instance_savings_plan): looks up by operation + specific instance type.
+// Both CSP and ISP rates are looked up by operation + specific instance type.
+// Real AWS SP bulk data has discountedInstanceType populated for every rate
+// entry, including CSP. The CSP vs ISP distinction is captured by the SPType
+// field of the key, not by leaving instanceType empty.
 func (p *Provider) GetSavingsPlanPrice(
 	ctx context.Context,
 	spec *models.ComputePricingSpec,
@@ -536,29 +537,29 @@ func (p *Provider) GetSavingsPlanPrice(
 	}
 
 	// Build lookup key.
-	// For CSP: instanceType is empty (CSP applies broadly, not per instance type).
-	// For ISP: use the specific instance type (e.g. "m5.xlarge").
-	lookupInstanceType := ""
-	if spType == "isp" {
-		lookupInstanceType = instanceType
-	}
-
+	// Both CSP and ISP rates are indexed with the specific discountedInstanceType
+	// from the SP bulk file. Real AWS SP rates carry discountedInstanceType for
+	// every rate entry including CSP (e.g. "m5.xlarge"). The CSP/ISP distinction
+	// is captured by SPType; using the instance type in both avoids false matches.
 	keyStr := spRateKeyString(spRateKey{
 		SPType:        spType,
 		Years:         years,
 		PaymentOption: paymentOption,
 		Operation:     operation,
-		InstanceType:  lookupInstanceType,
+		InstanceType:  instanceType,
 	})
 
 	entry, found := index[keyStr]
 	if !found {
 		notCoveredNote := fmt.Sprintf(
 			"instance type %q with OS %q is not covered by %s in region %q "+
-				"(payment_option=%q, commitment_years=%d). "+
-				"Note: Partial Upfront and All Upfront term structure for SP is only supported in v1 for No Upfront.",
+				"(payment_option=%q, commitment_years=%d)",
 			instanceType, os, spec.GetTerm(), region, paymentOption, years,
 		)
+		if paymentOption != "No Upfront" {
+			notCoveredNote += ". Note: only No Upfront is indexed in v1; " +
+				"Partial Upfront and All Upfront may require direct API lookup."
+		}
 		return &models.PricingResult{
 			PublicPrices:  nil,
 			AuthAvailable: false,
