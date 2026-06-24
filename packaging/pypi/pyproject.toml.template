@@ -1,0 +1,18 @@
+[build-system]
+requires = ["flit_core>=3.2"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "opencloudcosts"
+version = "REPLACE_ME"  # e.g. "1.0.0"
+description = "MCP server for cloud pricing (AWS, GCP, Azure)"
+authors = [
+    { name = "x7even" },
+]
+license = { text = "MIT" }
+readme = "README.md"
+requires-python = ">=3.8"
+# No install-requires: the binary is bundled inside the wheel.
+
+[project.scripts]
+opencloudcosts = "opencloudcosts._binary:main"
