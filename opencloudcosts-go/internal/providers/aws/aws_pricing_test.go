@@ -873,11 +873,11 @@ func TestInterRegionRate(t *testing.T) {
 		dst  string
 		want float64
 	}{
-		{"us-east-1", "us-west-2", 0.02},      // us→us intra
-		{"us-east-1", "eu-west-1", 0.02},      // us→eu
-		{"us-east-1", "ap-southeast-1", 0.09}, // us→ap
-		{"us-east-1", "sa-east-1", 0.16},      // us→sa
-		{"eu-west-1", "ap-southeast-1", 0.09}, // eu→ap
+		{"us-east-1", "us-west-2", 0.02},           // us→us intra
+		{"us-east-1", "eu-west-1", 0.02},           // us→eu
+		{"us-east-1", "ap-southeast-1", 0.09},      // us→ap
+		{"us-east-1", "sa-east-1", 0.16},           // us→sa
+		{"eu-west-1", "ap-southeast-1", 0.09},      // eu→ap
 		{"ap-southeast-1", "ap-northeast-1", 0.09}, // ap→ap
 	}
 	for _, tc := range tests {
@@ -1994,8 +1994,8 @@ func TestGetElastiCachePrice_StaticFallback_404(t *testing.T) {
 	ctx := context.Background()
 
 	for _, tc := range []struct {
-		nodeType    string
-		wantPrice   float64
+		nodeType  string
+		wantPrice float64
 	}{
 		{"cache.r7g.large", 0.166},
 		{"cache.r6g.large", 0.166},
@@ -2040,5 +2040,187 @@ func TestGetElastiCachePrice_BulkLive_r7gLarge(t *testing.T) {
 	}
 	if len(result) == 0 {
 		t.Fatal("expected at least 1 price")
+	}
+}
+
+// --------------------------------------------------------------------------
+// EBS static fallback tests (Fix: bulkFallback io1/io2 avoid 449MB download)
+// --------------------------------------------------------------------------
+
+// TestGetStoragePrice_BulkFallback_io2_StaticRates verifies that in
+// bulkFallback mode (no AWS credentials), GetStoragePrice("io2", ...) returns
+// static hardcoded rates without touching the network, and the result includes:
+//   - at least one PriceUnitPerGBMonth entry
+//   - at least one PriceUnitPerIOPSMonth entry
+//   - Attributes["fallback"] == "true" on all entries
+func TestGetStoragePrice_BulkFallback_io2_StaticRates(t *testing.T) {
+	p := newTestProvider(t)
+	p.bulkFallback = true
+	ctx := context.Background()
+
+	result, err := p.GetStoragePrice(ctx, "io2", "us-west-2", 0)
+	if err != nil {
+		t.Fatalf("GetStoragePrice io2 bulkFallback: %v", err)
+	}
+	if len(result) == 0 {
+		t.Fatal("expected non-empty prices for io2 static fallback")
+	}
+
+	var hasGB, hasIOPS bool
+	for _, np := range result {
+		if np.Unit == models.PriceUnitPerGBMonth {
+			hasGB = true
+			if got := np.Attributes["fallback"]; got != "true" {
+				t.Errorf("io2 GB-month entry: Attributes[fallback] = %q, want \"true\"", got)
+			}
+			if np.PricePerUnit != 0.125 {
+				t.Errorf("io2 GB rate = %v, want 0.125", np.PricePerUnit)
+			}
+		}
+		if np.Unit == models.PriceUnitPerIOPSMonth {
+			hasIOPS = true
+			if got := np.Attributes["fallback"]; got != "true" {
+				t.Errorf("io2 IOPS-month entry: Attributes[fallback] = %q, want \"true\"", got)
+			}
+			if np.PricePerUnit != 0.065 {
+				t.Errorf("io2 IOPS rate = %v, want 0.065", np.PricePerUnit)
+			}
+		}
+	}
+	if !hasGB {
+		t.Error("expected at least one PriceUnitPerGBMonth entry for io2")
+	}
+	if !hasIOPS {
+		t.Error("expected at least one PriceUnitPerIOPSMonth entry for io2")
+	}
+}
+
+// TestGetStoragePrice_BulkFallback_io1_StaticRates verifies the io1 static
+// rates (different GB-month rate from io2).
+func TestGetStoragePrice_BulkFallback_io1_StaticRates(t *testing.T) {
+	p := newTestProvider(t)
+	p.bulkFallback = true
+	ctx := context.Background()
+
+	result, err := p.GetStoragePrice(ctx, "io1", "us-east-1", 0)
+	if err != nil {
+		t.Fatalf("GetStoragePrice io1 bulkFallback: %v", err)
+	}
+	if len(result) == 0 {
+		t.Fatal("expected non-empty prices for io1 static fallback")
+	}
+
+	var hasGB, hasIOPS bool
+	for _, np := range result {
+		if np.Unit == models.PriceUnitPerGBMonth {
+			hasGB = true
+			if np.PricePerUnit != 0.125 {
+				t.Errorf("io1 GB rate = %v, want 0.125", np.PricePerUnit)
+			}
+		}
+		if np.Unit == models.PriceUnitPerIOPSMonth {
+			hasIOPS = true
+			if np.PricePerUnit != 0.065 {
+				t.Errorf("io1 IOPS rate = %v, want 0.065", np.PricePerUnit)
+			}
+		}
+	}
+	if !hasGB {
+		t.Error("expected at least one PriceUnitPerGBMonth entry for io1")
+	}
+	if !hasIOPS {
+		t.Error("expected at least one PriceUnitPerIOPSMonth entry for io1")
+	}
+}
+
+// TestGetStoragePrice_BulkFallback_gp3 verifies that GetStoragePrice in
+// bulkFallback mode returns a single static GB-month entry for gp3 with the
+// correct rate ($0.08/GB-month) and the fallback attribute set.
+func TestGetStoragePrice_BulkFallback_gp3(t *testing.T) {
+	p := newTestProvider(t)
+	p.bulkFallback = true
+	ctx := context.Background()
+
+	result, err := p.GetStoragePrice(ctx, "gp3", "us-east-1", 0)
+	if err != nil {
+		t.Fatalf("GetStoragePrice gp3 bulkFallback: %v", err)
+	}
+	if len(result) == 0 {
+		t.Fatal("expected non-empty prices for gp3 static fallback")
+	}
+
+	var hasGB bool
+	for _, np := range result {
+		if np.Unit == models.PriceUnitPerGBMonth {
+			hasGB = true
+			if np.PricePerUnit != 0.08 {
+				t.Errorf("gp3 GB rate = %v, want 0.08", np.PricePerUnit)
+			}
+			if got := np.Attributes["fallback"]; got != "true" {
+				t.Errorf("gp3 GB-month entry: Attributes[fallback] = %q, want \"true\"", got)
+			}
+			if got := np.Attributes["fallback_note"]; got == "" {
+				t.Errorf("gp3 GB-month entry: Attributes[fallback_note] is empty, want non-empty")
+			}
+		}
+	}
+	if !hasGB {
+		t.Error("expected at least one PriceUnitPerGBMonth entry for gp3")
+	}
+}
+
+// TestGetStoragePrice_BulkFallback_gp2 verifies that GetStoragePrice in
+// bulkFallback mode returns a single static GB-month entry for gp2 with the
+// correct rate ($0.10/GB-month) and the fallback attribute set.
+func TestGetStoragePrice_BulkFallback_gp2(t *testing.T) {
+	p := newTestProvider(t)
+	p.bulkFallback = true
+	ctx := context.Background()
+
+	result, err := p.GetStoragePrice(ctx, "gp2", "us-west-2", 0)
+	if err != nil {
+		t.Fatalf("GetStoragePrice gp2 bulkFallback: %v", err)
+	}
+	if len(result) == 0 {
+		t.Fatal("expected non-empty prices for gp2 static fallback")
+	}
+
+	var hasGB bool
+	for _, np := range result {
+		if np.Unit == models.PriceUnitPerGBMonth {
+			hasGB = true
+			if np.PricePerUnit != 0.10 {
+				t.Errorf("gp2 GB rate = %v, want 0.10", np.PricePerUnit)
+			}
+			if got := np.Attributes["fallback"]; got != "true" {
+				t.Errorf("gp2 GB-month entry: Attributes[fallback] = %q, want \"true\"", got)
+			}
+		}
+	}
+	if !hasGB {
+		t.Error("expected at least one PriceUnitPerGBMonth entry for gp2")
+	}
+}
+
+// TestGetStoragePrice_BulkFallback_CacheHit verifies that a second call for
+// the same io2 region returns from cache (no re-computation needed).
+func TestGetStoragePrice_BulkFallback_CacheHit(t *testing.T) {
+	p := newTestProvider(t)
+	p.bulkFallback = true
+	ctx := context.Background()
+
+	// First call populates cache.
+	first, err := p.GetStoragePrice(ctx, "io2", "us-east-1", 0)
+	if err != nil {
+		t.Fatalf("first GetStoragePrice: %v", err)
+	}
+
+	// Second call should hit cache (same result).
+	second, err := p.GetStoragePrice(ctx, "io2", "us-east-1", 0)
+	if err != nil {
+		t.Fatalf("second GetStoragePrice: %v", err)
+	}
+	if len(first) != len(second) {
+		t.Errorf("cache hit returned %d prices, first call had %d", len(second), len(first))
 	}
 }
