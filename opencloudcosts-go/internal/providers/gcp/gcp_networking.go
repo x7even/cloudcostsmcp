@@ -899,7 +899,7 @@ func (p *Provider) priceNetworkArmor(
 		}
 	}
 
-	fallback = fallback || policyRate == 0
+	fallback = fallback || policyRate == 0 || requestRate == 0
 	if policyRate == 0 {
 		policyRate = 0.75
 	}
@@ -967,6 +967,7 @@ func (p *Provider) priceNetworkArmor(
 	}
 	if fallback {
 		breakdown["fallback"] = true
+		breakdown["fallback_note"] = "Using hardcoded fallback rates ($0.75/policy/month, $0.75/million requests); live SKU catalog unavailable or returned no match. Verify current rates at https://cloud.google.com/armor/pricing."
 	}
 	return annotateFresh(prices), breakdown, nil
 }

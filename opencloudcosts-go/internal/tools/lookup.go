@@ -371,6 +371,8 @@ func normalizedPriceSummary(p models.NormalizedPrice) map[string]any {
 		"storage_type":    true,
 		"volumeType":      true,
 		"fallback":        true,
+		"fallback_note":   true,
+		"note":            true,
 		"fromRegionCode":  true,
 		"toRegionCode":    true,
 	}
@@ -631,6 +633,7 @@ func (h *Handler) HandleGetPricesBatch(
 		vcpu          string
 		memory        string
 		description   string
+		fallback      bool
 	}
 
 	var entries []entry
@@ -646,6 +649,13 @@ func (h *Handler) HandleGetPricesBatch(
 			continue
 		}
 		p := fr.prices[0]
+		var hasFallback bool
+		for _, price := range fr.prices {
+			if price.Attributes["fallback"] == "true" {
+				hasFallback = true
+				break
+			}
+		}
 		e := entry{
 			instanceType:  fr.itype,
 			pricePerHour:  p.PricePerUnit,
@@ -653,6 +663,7 @@ func (h *Handler) HandleGetPricesBatch(
 			pricePerUnit:  priceDict(p.PricePerUnit, string(p.Unit)),
 			monthlyEstMap: moneyDict(p.MonthlyCost(), "/mo"),
 			description:   p.Description,
+			fallback:      hasFallback,
 		}
 		if v, ok := p.Attributes["vcpu"]; ok {
 			e.vcpu = v
@@ -683,6 +694,9 @@ func (h *Handler) HandleGetPricesBatch(
 		}
 		if e.description != "" {
 			row["description"] = e.description
+		}
+		if e.fallback {
+			row["fallback"] = "true"
 		}
 		resultList = append(resultList, row)
 	}
@@ -810,6 +824,9 @@ func (h *Handler) HandleComparePrices(
 		}
 		if p.Unit == models.PriceUnitPerHour || p.Unit == models.PriceUnitPerMonth {
 			e["monthly_estimate"] = moneyDict(p.MonthlyCost(), "/mo")
+		}
+		if p.Attributes["fallback"] == "true" {
+			e["fallback"] = "true"
 		}
 		entries = append(entries, e)
 	}

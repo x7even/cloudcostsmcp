@@ -545,3 +545,127 @@ func TestGetEgressPrice_CrossContinent(t *testing.T) {
 		t.Errorf("cross-continent egress rate = %.4f, want %.4f", prices[0].PricePerUnit, wantRate)
 	}
 }
+
+// --------------------------------------------------------------------------
+// Cloud Armor tests (Fix: fallback disclosure for missing policy/request rates)
+// --------------------------------------------------------------------------
+
+// fakeCloudArmorSKUs returns SKUs with both a policy-rate and a request-rate
+// entry so priceNetworkArmor can extract both from the live catalog.
+func fakeCloudArmorSKUs() []map[string]any {
+	return []map[string]any{
+		makeSKUMultiRegion(
+			"Cloud Armor Security Policy",
+			[]string{"global"},
+			"0", 750_000_000, // $0.75
+		),
+		makeSKUMultiRegion(
+			"Cloud Armor Request Evaluation",
+			[]string{"global"},
+			"0", 750_000_000, // $0.75
+		),
+	}
+}
+
+// TestPriceNetworkArmor_FetchError verifies that when the SKU server returns
+// HTTP 500, priceNetworkArmor uses hardcoded fallback rates and sets
+// breakdown["fallback"]=true and breakdown["fallback_note"] to a non-empty string.
+func TestPriceNetworkArmor_FetchError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer ts.Close()
+
+	p := newNetworkingTestProvider(t, ts)
+	ctx := context.Background()
+
+	spec := &models.NetworkPricingSpec{
+		BasePricingSpec: models.BasePricingSpec{Region: "global"},
+		PolicyCount:     1,
+	}
+	_, breakdown, err := p.priceNetworkArmor(ctx, spec)
+	if err != nil {
+		t.Fatalf("priceNetworkArmor (fetch error): %v", err)
+	}
+
+	if fb, ok := breakdown["fallback"]; !ok || fb != true {
+		t.Errorf("expected breakdown[\"fallback\"]=true on SKU fetch error, got %v (ok=%v)", fb, ok)
+	}
+	note, _ := breakdown["fallback_note"].(string)
+	if note == "" {
+		t.Error("expected non-empty breakdown[\"fallback_note\"] on SKU fetch error")
+	}
+}
+
+// TestPriceNetworkArmor_PartialSKU verifies that when the SKU list contains
+// only a policy-rate entry (no request-rate SKU), the missing request rate
+// triggers fallback=true (previously undisclosed). This exercises the fix to
+// broaden the fallback flag: `fallback = fallback || policyRate == 0 || requestRate == 0`.
+func TestPriceNetworkArmor_PartialSKU(t *testing.T) {
+	// Only provide the policy-rate SKU; omit the request-rate SKU.
+	partialSKUs := []map[string]any{
+		makeSKUMultiRegion(
+			"Cloud Armor Security Policy",
+			[]string{"global"},
+			"0", 750_000_000, // $0.75
+		),
+		// No request-rate SKU → requestRate stays 0 → fallback should trigger.
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(networkingSKUResponse(partialSKUs))
+	}))
+	defer ts.Close()
+
+	p := newNetworkingTestProvider(t, ts)
+	ctx := context.Background()
+
+	spec := &models.NetworkPricingSpec{
+		BasePricingSpec:         models.BasePricingSpec{Region: "global"},
+		PolicyCount:             2,
+		MonthlyRequestsMillions: 10,
+	}
+	_, breakdown, err := p.priceNetworkArmor(ctx, spec)
+	if err != nil {
+		t.Fatalf("priceNetworkArmor (partial SKU): %v", err)
+	}
+
+	if fb, ok := breakdown["fallback"]; !ok || fb != true {
+		t.Errorf("expected breakdown[\"fallback\"]=true when request-rate SKU is missing, got %v (ok=%v)", fb, ok)
+	}
+	note, _ := breakdown["fallback_note"].(string)
+	if note == "" {
+		t.Error("expected non-empty breakdown[\"fallback_note\"] when request-rate SKU is missing")
+	}
+}
+
+// TestPriceNetworkArmor_LiveSKU verifies that when the SKU list provides both
+// a policy-rate and a request-rate entry, breakdown["fallback"] is NOT set
+// (or is false) and breakdown["fallback_note"] is absent.
+func TestPriceNetworkArmor_LiveSKU(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(networkingSKUResponse(fakeCloudArmorSKUs()))
+	}))
+	defer ts.Close()
+
+	p := newNetworkingTestProvider(t, ts)
+	ctx := context.Background()
+
+	spec := &models.NetworkPricingSpec{
+		BasePricingSpec:         models.BasePricingSpec{Region: "global"},
+		PolicyCount:             1,
+		MonthlyRequestsMillions: 5,
+	}
+	_, breakdown, err := p.priceNetworkArmor(ctx, spec)
+	if err != nil {
+		t.Fatalf("priceNetworkArmor (live SKU): %v", err)
+	}
+
+	if fb := breakdown["fallback"]; fb == true {
+		t.Error("expected breakdown[\"fallback\"] to be absent/false when both SKUs are present")
+	}
+	if note := breakdown["fallback_note"]; note != nil {
+		t.Errorf("expected breakdown[\"fallback_note\"] to be absent, got %v", note)
+	}
+}

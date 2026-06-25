@@ -320,19 +320,19 @@ func pgResourceTypeToArmSkuName(resourceType string) string {
 
 // Static fallback rates.
 const (
-	functionsExecRate   = 0.0000002 // per execution
-	functionsGBSecRate  = 0.000016  // per GB-second
-	aksPremiumRate      = 0.10      // per cluster/hr (Standard tier)
+	functionsExecRate  = 0.0000002 // per execution
+	functionsGBSecRate = 0.000016  // per GB-second
+	aksPremiumRate     = 0.10      // per cluster/hr (Standard tier)
 	// sqlGPVCoreRate is the published on-demand rate for Azure SQL Database
 	// General Purpose Gen5 in us-east regions (per vCore per hour).
 	// Used only as a static fallback when the Retail Prices API returns no rows.
-	sqlGPVCoreRate = 0.1770 // per vCore-hour, GP Gen5
-	monitorLogRate      = 2.76      // per GB Analytics Logs
-	monitorBasicLogRate = 0.50      // per GB Basic Logs
-	monitorMetricsRate  = 0.16      // per 10M metric samples
-	monitorAlertRate    = 0.10      // per rule/month after 10 free
-	monitorFreeLogGB    = 5.0       // 5 GB/month free tier
-	monitorFreeAlerts   = 10        // first 10 metric alert rules free
+	sqlGPVCoreRate      = 0.1770 // per vCore-hour, GP Gen5
+	monitorLogRate      = 2.76   // per GB Analytics Logs
+	monitorBasicLogRate = 0.50   // per GB Basic Logs
+	monitorMetricsRate  = 0.16   // per 10M metric samples
+	monitorAlertRate    = 0.10   // per rule/month after 10 free
+	monitorFreeLogGB    = 5.0    // 5 GB/month free tier
+	monitorFreeAlerts   = 10     // first 10 metric alert rules free
 
 	cosmosProvisionedRate = 0.00008 // per 100 RU/s per hour (Provisioned/Autoscale)
 	cosmosServerlessRate  = 0.25    // per million Request Units consumed
@@ -514,7 +514,7 @@ func (p *Provider) Supports(domain models.PricingDomain, service string) bool {
 		{string(models.PricingDomainObservability), ""}:              true,
 		{string(models.PricingDomainObservability), "azure_monitor"}: true,
 		{string(models.PricingDomainObservability), "monitor"}:       true,
-		{string(models.PricingDomainObservability), "log_analytics"}:  true,
+		{string(models.PricingDomainObservability), "log_analytics"}: true,
 	}
 	return caps[key{string(domain), service}]
 }
@@ -1100,8 +1100,9 @@ func (p *Provider) GetSQLPrice(
 				Unit:          models.PriceUnitPerHour,
 				Currency:      "USD",
 				Attributes: map[string]string{
-					"source": "static_fallback",
-					"note":   "armSkuName mapping unverified or API returned no rows; rate is GP Gen5 us-east published price",
+					"source":   "static_fallback",
+					"fallback": "true",
+					"note":     "armSkuName mapping unverified or API returned no rows; rate is GP Gen5 us-east published price",
 				},
 			}}
 		}
@@ -1198,7 +1199,7 @@ func (p *Provider) GetCosmosPrice(
 					PricePerUnit:  cosmosServerlessRate,
 					Unit:          models.PriceUnitPerUnit,
 					Currency:      "USD",
-					Attributes:    map[string]string{"unit_label": "per million RUs", "source": "static_fallback"},
+					Attributes:    map[string]string{"unit_label": "per million RUs", "source": "static_fallback", "fallback": "true"},
 				},
 				{
 					Provider:      models.CloudProviderAzure,
@@ -1211,7 +1212,7 @@ func (p *Provider) GetCosmosPrice(
 					PricePerUnit:  cosmosStorageRate,
 					Unit:          models.PriceUnitPerGBMonth,
 					Currency:      "USD",
-					Attributes:    map[string]string{"cosmos_dimension": "storage", "source": "static_fallback"},
+					Attributes:    map[string]string{"cosmos_dimension": "storage", "source": "static_fallback", "fallback": "true"},
 				},
 			}
 		case "autoscale":
@@ -1227,7 +1228,7 @@ func (p *Provider) GetCosmosPrice(
 					PricePerUnit:  cosmosProvisionedRate,
 					Unit:          models.PriceUnitPerUnit,
 					Currency:      "USD",
-					Attributes:    map[string]string{"unit_label": "per 100 RU/s per hour", "source": "static_fallback"},
+					Attributes:    map[string]string{"unit_label": "per 100 RU/s per hour", "source": "static_fallback", "fallback": "true"},
 				},
 				{
 					Provider:      models.CloudProviderAzure,
@@ -1240,7 +1241,7 @@ func (p *Provider) GetCosmosPrice(
 					PricePerUnit:  cosmosStorageRate,
 					Unit:          models.PriceUnitPerGBMonth,
 					Currency:      "USD",
-					Attributes:    map[string]string{"cosmos_dimension": "storage", "source": "static_fallback"},
+					Attributes:    map[string]string{"cosmos_dimension": "storage", "source": "static_fallback", "fallback": "true"},
 				},
 			}
 		default: // provisioned
@@ -1256,7 +1257,7 @@ func (p *Provider) GetCosmosPrice(
 					PricePerUnit:  cosmosProvisionedRate,
 					Unit:          models.PriceUnitPerUnit,
 					Currency:      "USD",
-					Attributes:    map[string]string{"unit_label": "per 100 RU/s per hour", "source": "static_fallback"},
+					Attributes:    map[string]string{"unit_label": "per 100 RU/s per hour", "source": "static_fallback", "fallback": "true"},
 				},
 				{
 					Provider:      models.CloudProviderAzure,
@@ -1269,7 +1270,7 @@ func (p *Provider) GetCosmosPrice(
 					PricePerUnit:  cosmosStorageRate,
 					Unit:          models.PriceUnitPerGBMonth,
 					Currency:      "USD",
-					Attributes:    map[string]string{"cosmos_dimension": "storage", "source": "static_fallback"},
+					Attributes:    map[string]string{"cosmos_dimension": "storage", "source": "static_fallback", "fallback": "true"},
 				},
 			}
 		}
@@ -1350,8 +1351,9 @@ func (p *Provider) GetAKSPrice(
 				Unit:          models.PriceUnitPerHour,
 				Currency:      "USD",
 				Attributes: map[string]string{
-					"note":   "Worker node VMs billed separately via compute pricing",
-					"source": "static_fallback",
+					"note":     "Worker node VMs billed separately via compute pricing",
+					"source":   "static_fallback",
+					"fallback": "true",
 				},
 			}}
 		}
@@ -1447,7 +1449,7 @@ func (p *Provider) GetFunctionsPrice(
 					PricePerUnit:  functionsGBSecRate,
 					Unit:          models.PriceUnitPerGBSecond,
 					Currency:      "USD",
-					Attributes:    map[string]string{"free_tier": "400,000 GB-s/month", "source": "static_fallback"},
+					Attributes:    map[string]string{"free_tier": "400,000 GB-s/month", "source": "static_fallback", "fallback": "true"},
 				},
 				{
 					Provider:      models.CloudProviderAzure,
@@ -1460,7 +1462,7 @@ func (p *Provider) GetFunctionsPrice(
 					PricePerUnit:  functionsExecRate,
 					Unit:          models.PriceUnitPerRequest,
 					Currency:      "USD",
-					Attributes:    map[string]string{"free_tier": "1M executions/month", "source": "static_fallback"},
+					Attributes:    map[string]string{"free_tier": "1M executions/month", "source": "static_fallback", "fallback": "true"},
 				},
 			}
 		}
@@ -1645,6 +1647,7 @@ func (p *Provider) GetOpenAIPrice(
 							"token_type": "input",
 							"unit_label": "per 1K tokens",
 							"source":     "static_fallback",
+							"fallback":   "true",
 						},
 					},
 					{
@@ -1663,6 +1666,7 @@ func (p *Provider) GetOpenAIPrice(
 							"token_type": "output",
 							"unit_label": "per 1K tokens",
 							"source":     "static_fallback",
+							"fallback":   "true",
 						},
 					},
 				}
@@ -1891,7 +1895,7 @@ func (p *Provider) GetMonitorPrice(
 					PricePerUnit:  monitorLogRate,
 					Unit:          models.PriceUnitPerGB,
 					Currency:      "USD",
-					Attributes:    map[string]string{"free_tier": "5 GB/month", "source": "static_fallback", "log_tier": "analytics"},
+					Attributes:    map[string]string{"free_tier": "5 GB/month", "source": "static_fallback", "log_tier": "analytics", "fallback": "true"},
 				},
 				{
 					Provider:      models.CloudProviderAzure,
@@ -1904,7 +1908,7 @@ func (p *Provider) GetMonitorPrice(
 					PricePerUnit:  monitorBasicLogRate,
 					Unit:          models.PriceUnitPerGB,
 					Currency:      "USD",
-					Attributes:    map[string]string{"source": "static_fallback", "log_tier": "basic"},
+					Attributes:    map[string]string{"source": "static_fallback", "log_tier": "basic", "fallback": "true"},
 				},
 				{
 					Provider:      models.CloudProviderAzure,
@@ -1917,7 +1921,7 @@ func (p *Provider) GetMonitorPrice(
 					PricePerUnit:  monitorMetricsRate,
 					Unit:          models.PriceUnitPerUnit,
 					Currency:      "USD",
-					Attributes:    map[string]string{"unit_label": "per 10M metric samples", "source": "static_fallback"},
+					Attributes:    map[string]string{"unit_label": "per 10M metric samples", "source": "static_fallback", "fallback": "true"},
 				},
 			}
 		}
@@ -2083,6 +2087,7 @@ func (p *Provider) GetCDNPrice(
 					"cdn_zone": zoneLabel,
 					"cdn_sku":  sku,
 					"source":   "static_fallback",
+					"fallback": "true",
 					"note":     fmt.Sprintf("%s base tier (0-10 TB). Prices decrease at higher volumes.", zoneLabel),
 				},
 			}}
@@ -2218,7 +2223,7 @@ func (p *Provider) GetFrontDoorPrice(
 					PricePerUnit:  frontDoorBaseFee,
 					Unit:          models.PriceUnitPerMonth,
 					Currency:      "USD",
-					Attributes:    map[string]string{"cdn_zone": zoneLabel, "front_door_sku": sku, "source": "static_fallback", "note": "Standard tier base fee per month"},
+					Attributes:    map[string]string{"cdn_zone": zoneLabel, "front_door_sku": sku, "source": "static_fallback", "fallback": "true", "note": "Standard tier base fee per month"},
 				},
 				{
 					Provider:      models.CloudProviderAzure,
@@ -2231,7 +2236,7 @@ func (p *Provider) GetFrontDoorPrice(
 					PricePerUnit:  fdDTRate,
 					Unit:          models.PriceUnitPerGB,
 					Currency:      "USD",
-					Attributes:    map[string]string{"cdn_zone": zoneLabel, "front_door_sku": sku, "source": "static_fallback"},
+					Attributes:    map[string]string{"cdn_zone": zoneLabel, "front_door_sku": sku, "source": "static_fallback", "fallback": "true"},
 				},
 				{
 					Provider:      models.CloudProviderAzure,
@@ -2244,7 +2249,7 @@ func (p *Provider) GetFrontDoorPrice(
 					PricePerUnit:  fdReqRate,
 					Unit:          models.PriceUnitPerUnit,
 					Currency:      "USD",
-					Attributes:    map[string]string{"cdn_zone": zoneLabel, "front_door_sku": sku, "unit_label": "per 10K requests", "source": "static_fallback"},
+					Attributes:    map[string]string{"cdn_zone": zoneLabel, "front_door_sku": sku, "unit_label": "per 10K requests", "source": "static_fallback", "fallback": "true"},
 				},
 			}
 		}

@@ -2061,6 +2061,62 @@ func TestGetCDNPrice_CDNAlias(t *testing.T) {
 	}
 }
 
+// TestGetSQLPrice_StaticFallback_FallbackAttributeSet verifies that when the
+// Azure Retail Prices API returns zero rows, the static fallback NormalizedPrice
+// carries Attributes["fallback"]=="true" so that normalizedPriceSummary in
+// lookup.go surfaces the disclosure flag in the model-visible tool response.
+func TestGetSQLPrice_StaticFallback_FallbackAttributeSet(t *testing.T) {
+	// Server returns no items — triggers the static fallback path.
+	srv := mockServer(t, []azureItem{})
+	defer srv.Close()
+	p := newTestProvider(t, srv)
+
+	prices, err := p.GetSQLPrice(context.Background(), "General Purpose 8 vCores", "eastus", "SQL", "single-az", models.PricingTermOnDemand)
+	if err != nil {
+		t.Fatalf("GetSQLPrice static fallback: %v", err)
+	}
+	if len(prices) == 0 {
+		t.Fatal("expected non-empty prices from static fallback")
+	}
+
+	for _, price := range prices {
+		got := price.Attributes["fallback"]
+		if got != "true" {
+			t.Errorf("fallback price SKUID=%s: Attributes[\"fallback\"] = %q, want \"true\"", price.SKUID, got)
+		}
+	}
+}
+
+// TestGetSQLPrice_LivePath_NoFallbackAttribute verifies that when the API
+// returns real rows, the resulting prices do NOT carry Attributes["fallback"].
+func TestGetSQLPrice_LivePath_NoFallbackAttribute(t *testing.T) {
+	sqlItem := azureItem{
+		"retailPrice":   0.7345,
+		"productName":   "Azure SQL Database",
+		"skuName":       "4 vCores",
+		"serviceName":   "SQL Database",
+		"serviceFamily": "Databases",
+		"meterId":       "sql-gp4-vcores",
+		"meterName":     "4 vCores",
+		"armSkuName":    "SQLDB_GP_Compute_Gen5_4",
+		"armRegionName": "eastus",
+		"unitOfMeasure": "1 Hour",
+	}
+	srv := mockServer(t, []azureItem{sqlItem})
+	defer srv.Close()
+	p := newTestProvider(t, srv)
+
+	prices, err := p.GetSQLPrice(context.Background(), "General Purpose 4 vCores", "eastus", "SQL", "single-az", models.PricingTermOnDemand)
+	if err != nil {
+		t.Fatalf("GetSQLPrice live path: %v", err)
+	}
+	for _, price := range prices {
+		if f := price.Attributes["fallback"]; f == "true" {
+			t.Errorf("live API price SKUID=%s: Attributes[\"fallback\"] = \"true\", want absent", price.SKUID)
+		}
+	}
+}
+
 func TestMain(m *testing.M) {
 	// Ensure tests don't need real network.
 	fmt.Println("Running Azure provider tests with mock HTTP server...")

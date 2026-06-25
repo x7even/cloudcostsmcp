@@ -132,6 +132,107 @@ func mapEBSType(storageType string) string {
 	return storageType
 }
 
+// ebsIOPSStaticFallback returns hardcoded on-demand EBS pricing for io1/io2
+// volume types. These rates match AWS published prices as of 2024 and are used
+// in bulkFallback mode to avoid downloading the 449 MB AmazonEC2 bulk pricing
+// file. Two NormalizedPrice entries are returned: one for GB-month storage and
+// one for provisioned IOPS-month.
+//
+// Published rates (us-east-1, all regions within ~10%):
+//   - io2:  $0.125/GB-month  + $0.065/IOPS-month
+//   - io1:  $0.125/GB-month  + $0.065/IOPS-month
+//
+// The "fallback" attribute is set to "true" so that normalizedPriceSummary
+// in lookup.go surfaces this flag in the tool response.
+func ebsIOPSStaticFallback(storageTypeLower, region string) []models.NormalizedPrice {
+	var gbRate float64
+	switch storageTypeLower {
+	case "io2":
+		gbRate = 0.125
+	case "io1":
+		gbRate = 0.125
+	default:
+		gbRate = 0.065
+	}
+	iopsRate := 0.065
+
+	now := time.Now().UTC()
+	attrs := map[string]string{
+		"fallback":     "true",
+		"storage_type": storageTypeLower,
+	}
+	return []models.NormalizedPrice{
+		{
+			Provider:      models.CloudProviderAWS,
+			Service:       "storage",
+			SKUID:         fmt.Sprintf("aws:ebs:%s:%s:storage:static", storageTypeLower, region),
+			ProductFamily: "Storage",
+			Description:   fmt.Sprintf("AWS EBS %s provisioned storage — static rate ($%.3f/GB-month)", strings.ToUpper(storageTypeLower), gbRate),
+			Region:        region,
+			PricingTerm:   models.PricingTermOnDemand,
+			PricePerUnit:  gbRate,
+			Unit:          models.PriceUnitPerGBMonth,
+			Currency:      "USD",
+			Attributes:    attrs,
+			FetchedAt:     &now,
+		},
+		{
+			Provider:      models.CloudProviderAWS,
+			Service:       "storage",
+			SKUID:         fmt.Sprintf("aws:ebs:%s:%s:iops:static", storageTypeLower, region),
+			ProductFamily: "Storage",
+			Description:   fmt.Sprintf("AWS EBS %s provisioned IOPS — static rate ($%.3f/IOPS-month)", strings.ToUpper(storageTypeLower), iopsRate),
+			Region:        region,
+			PricingTerm:   models.PricingTermOnDemand,
+			PricePerUnit:  iopsRate,
+			Unit:          models.PriceUnitPerIOPSMonth,
+			Currency:      "USD",
+			Attributes:    attrs,
+			FetchedAt:     &now,
+		},
+	}
+}
+
+// ebsGBStaticFallback returns a single hardcoded NormalizedPrice for common
+// EBS volume types (gp2, gp3, st1, sc1, standard). It is used in bulkFallback
+// mode to avoid downloading the 449 MB AmazonEC2 bulk pricing file. Published
+// US East-1 on-demand rates as of 2024:
+//
+//   - gp3:      $0.080/GB-month
+//   - gp2:      $0.100/GB-month
+//   - st1:      $0.045/GB-month
+//   - sc1:      $0.015/GB-month
+//   - standard: $0.050/GB-month
+func ebsGBStaticFallback(storageTypeLower, region string) models.NormalizedPrice {
+	rates := map[string]float64{
+		"gp3":      0.08,
+		"gp2":      0.10,
+		"st1":      0.045,
+		"sc1":      0.015,
+		"standard": 0.05,
+	}
+	rate := rates[storageTypeLower]
+	now := time.Now().UTC()
+	return models.NormalizedPrice{
+		Provider:      models.CloudProviderAWS,
+		Service:       "storage",
+		SKUID:         fmt.Sprintf("aws:ebs:%s:%s:storage:static", storageTypeLower, region),
+		ProductFamily: "Storage",
+		Description:   fmt.Sprintf("AWS EBS %s storage — static rate ($%.3f/GB-month)", strings.ToUpper(storageTypeLower), rate),
+		Region:        region,
+		PricingTerm:   models.PricingTermOnDemand,
+		PricePerUnit:  rate,
+		Unit:          models.PriceUnitPerGBMonth,
+		Currency:      "USD",
+		Attributes: map[string]string{
+			"fallback":      "true",
+			"fallback_note": "static published rate — verify at https://aws.amazon.com/ebs/pricing/",
+			"storage_type":  storageTypeLower,
+		},
+		FetchedAt: &now,
+	}
+}
+
 // --------------------------------------------------------------------------
 // RDS engine display name mapping (mirrors _RDS_ENGINE_MAP in Python)
 // --------------------------------------------------------------------------
@@ -523,6 +624,31 @@ func (p *Provider) GetStoragePrice(
 	}
 
 	ebsTypes := map[string]bool{"gp2": true, "gp3": true, "io1": true, "io2": true, "st1": true, "sc1": true, "standard": true}
+
+	// In bulkFallback mode (no AWS credentials), fetching the full AmazonEC2
+	// per-region bulk pricing file (449 MB uncompressed) for io1/io2 queries
+	// would exhaust the MCP request timeout before the download completes.
+	// Use hardcoded static rates instead — these are the published AWS on-demand
+	// rates (io2: $0.125/GB-month + $0.065/IOPS-month;
+	// io1: $0.125/GB-month + $0.065/IOPS-month) which change at most quarterly.
+	stLower := strings.ToLower(storageType)
+	if p.bulkFallback && (stLower == "io1" || stLower == "io2") {
+		prices := ebsIOPSStaticFallback(stLower, region)
+		if data, err := json.Marshal(prices); err == nil {
+			ttl := time.Duration(p.cfg.CacheTTLHours) * time.Hour
+			p.cache.Set(cacheKey, data, ttl)
+		}
+		return prices, nil
+	}
+	gbFallbackTypes := map[string]bool{"gp2": true, "gp3": true, "st1": true, "sc1": true, "standard": true}
+	if p.bulkFallback && gbFallbackTypes[stLower] {
+		prices := []models.NormalizedPrice{ebsGBStaticFallback(stLower, region)}
+		if data, err := json.Marshal(prices); err == nil {
+			ttl := time.Duration(p.cfg.CacheTTLHours) * time.Hour
+			p.cache.Set(cacheKey, data, ttl)
+		}
+		return prices, nil
+	}
 
 	var rawItems []string
 	if ebsTypes[strings.ToLower(storageType)] {
