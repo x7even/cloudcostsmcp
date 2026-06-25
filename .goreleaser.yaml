@@ -35,3 +35,4 @@ release:
     owner: x7even
     name: cloudcostsmcp
   name_template: "v{{.Version}}"
+  prerelease: auto

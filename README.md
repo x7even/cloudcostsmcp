@@ -6,8 +6,7 @@ An open source MCP server that gives AI assistants accurate cloud pricing data f
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![PyPI version](https://badge.fury.io/py/opencloudcosts.svg)](https://pypi.org/project/opencloudcosts/)
-[![Tests](https://github.com/x7even/cloudcostmcp/actions/workflows/tests.yml/badge.svg)](https://github.com/x7even/cloudcostmcp/actions/workflows/tests.yml)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![Release](https://img.shields.io/github/v/release/x7even/cloudcostsmcp?include_prereleases)](https://github.com/x7even/cloudcostsmcp/releases/latest)
 
 Supports both **public list pricing** (no credentials needed for AWS and Azure; GCP requires a free API key) and **effective (custom Private Pricing Agreement) rates** (post-discount: Reserved Instances, Savings Plans, CUDs, EDPs).
 
@@ -19,7 +18,7 @@ Supports both **public list pricing** (no credentials needed for AWS and Azure; 
 - "List all c6g instances in eu-west-1 with >= 8 vCPUs"
 - "What's my effective hourly rate on m5.xlarge after Savings Plans?"
 
-## Tools (v0.9.2 — 15 tools)
+## Tools (v1.0.0 — 15 tools)
 
 **Pricing**
 
@@ -65,99 +64,72 @@ See [docs/tools.md](docs/tools.md) for full parameter reference and [docs/finops
 
 ## Setup
 
-### Quick install (recommended)
+### Option 1 — pip (easiest, cross-platform)
+
+The PyPI package wraps the native Go binary — no Go toolchain needed.
 
 ```bash
-# Run directly from PyPI — no clone needed
-uvx opencloudcosts
-
-# Or install permanently
 pip install opencloudcosts
-opencloudcosts
+opencloudcosts            # stdio mode (for local MCP clients)
+opencloudcosts --transport http --host 0.0.0.0 --port 8080  # HTTP mode
 ```
 
-### Prerequisites (for development / clone-based install)
-- [uv](https://docs.astral.sh/uv/) installed (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
-- AWS credentials (optional — public pricing works without them)
+### Option 2 — binary download
 
-### Clone & configure
+Download the pre-built binary for your platform from the [latest release](https://github.com/x7even/cloudcostsmcp/releases/latest):
 
 ```bash
-git clone https://github.com/x7even/cloudcostmcp opencloudcosts
-cd opencloudcosts
-cp .env.example .env
-# Edit .env if you want effective pricing / Cost Explorer
+# Linux (amd64)
+curl -L https://github.com/x7even/cloudcostsmcp/releases/latest/download/opencloudcosts_linux_amd64.tar.gz | tar xz
+./opencloudcosts
+
+# macOS (Apple Silicon)
+curl -L https://github.com/x7even/cloudcostsmcp/releases/latest/download/opencloudcosts_darwin_arm64.tar.gz | tar xz
+./opencloudcosts
 ```
 
-### Test it works
+### Option 3 — Docker / container
 
 ```bash
-uv run pytest
-```
-
-### Run the server
-
-```bash
-uv run opencloudcosts
-```
-
-### Run as HTTP server
-
-HTTP transport enables shared/remote deployments — one server, many clients.
-
-```bash
-# Localhost only (default)
-uv run opencloudcosts --transport http --port 8080
-
-# Bind to all interfaces (e.g. for Docker or remote access)
-uv run opencloudcosts --transport http --host 0.0.0.0 --port 8080
-```
-
-Environment variable equivalents: `OCC_HTTP_HOST` and `OCC_HTTP_PORT`.
-
-Connect to Claude Code via `.mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "cloudcost": {
-      "transport": "http",
-      "url": "http://localhost:8080/mcp/v1"
-    }
-  }
-}
-```
-
-### Docker
-
-```bash
-# Pull from registry (recommended)
-docker pull ghcr.io/x7even/opencloudcosts:latest
+# HTTP transport, bound to all interfaces
 docker run -p 8080:8080 \
   -e OCC_GCP_API_KEY=AIza... \
   -v ~/.aws:/root/.aws:ro \
-  ghcr.io/x7even/opencloudcosts:latest
-
-# Or build locally
-docker build -t opencloudcosts .
-docker run -p 8080:8080 opencloudcosts
+  ghcr.io/x7even/opencloudcosts-go:latest
 ```
 
-The container starts in HTTP transport mode by default (bound to `0.0.0.0:8080`).
-Pass cloud credentials via `-e` flags or mount your AWS credentials directory.
+The container image is ~15 MB (distroless scratch base). It starts in HTTP transport
+mode by default. Pass cloud credentials via `-e` flags or mount `~/.aws` for AWS.
+No credentials are required for AWS and Azure public pricing.
+
+```bash
+# Build locally from source
+cd opencloudcosts-go
+docker build -t opencloudcosts:local .
+docker run -p 8080:8080 opencloudcosts:local
+```
+
+### Option 4 — build from source
+
+```bash
+git clone https://github.com/x7even/cloudcostsmcp
+cd cloudcostsmcp/opencloudcosts-go
+CGO_ENABLED=0 go build -o opencloudcosts ./cmd/opencloudcosts
+./opencloudcosts
+```
 
 ### Connect to Claude Code
 
-Add to your project's `.mcp.json`:
+**Stdio (local process — recommended for single-user)**
+
+Add to `~/.claude/settings.json` or your project's `.mcp.json`:
 
 ```json
 {
   "mcpServers": {
     "cloudcost": {
-      "command": "uv",
-      "args": ["run", "--directory", "/path/to/opencloudcosts", "opencloudcosts"],
+      "command": "opencloudcosts",
       "env": {
-        "AWS_PROFILE": "default",
         "OCC_GCP_API_KEY": "AIza..."
       }
     }
@@ -165,23 +137,29 @@ Add to your project's `.mcp.json`:
 }
 ```
 
-Or to `~/.claude/settings.json` for global access:
+**HTTP (shared/remote server — one server, many clients)**
 
 ```json
 {
   "mcpServers": {
     "cloudcost": {
-      "command": "uv",
-      "args": ["run", "--directory", "/path/to/opencloudcosts", "opencloudcosts"]
+      "transport": "http",
+      "url": "http://localhost:8080/mcp"
     }
   }
 }
 ```
 
+### Kubernetes
+
+See `deploy/kubernetes/` for manifests. The image is `ghcr.io/x7even/opencloudcosts-go:latest`.
+Credentials are passed via environment variables or Kubernetes Secrets — same variable
+names as the Docker examples above.
+
 ### Test with MCP Inspector
 
 ```bash
-npx @modelcontextprotocol/inspector uv run --directory /path/to/opencloudcosts opencloudcosts
+npx @modelcontextprotocol/inspector opencloudcosts
 ```
 
 ## AWS Credentials
