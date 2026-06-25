@@ -31,6 +31,10 @@ spec:
             - containerPort: 8080
               name: http
 
+          env:
+            - name: OCC_RATE_LIMIT
+              value: "200"
+
           envFrom:
             - secretRef:
                 name: opencloudcosts-credentials

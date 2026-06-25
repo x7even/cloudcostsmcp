@@ -141,7 +141,7 @@ type Config struct {
 	// Default: 15s  (OCC_SHUTDOWN_TIMEOUT)
 	ShutdownTimeout time.Duration
 
-	// RateLimit is the maximum number of HTTP-transport requests per second
+	// RateLimit is the maximum number of HTTP-transport requests per second per server
 	// per client IP. 0 disables rate limiting.
 	// Default: 10  (OCC_RATE_LIMIT)
 	RateLimit float64
@@ -189,7 +189,7 @@ func Load() (*Config, error) {
 		RequestTimeout:  envDuration("OCC_REQUEST_TIMEOUT", 60*time.Second),
 		ProviderTimeout: envDuration("OCC_PROVIDER_TIMEOUT", 30*time.Second),
 		ShutdownTimeout: envDuration("OCC_SHUTDOWN_TIMEOUT", 15*time.Second),
-		RateLimit:       float64(envInt("OCC_RATE_LIMIT", 10)),
+		RateLimit:       float64(envInt("OCC_RATE_LIMIT", 200)),
 	}
 
 	// Expand ~ in CacheDir (mirrors Python's expanduser).
