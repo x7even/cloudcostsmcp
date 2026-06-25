@@ -937,7 +937,15 @@ func (p *Provider) GetPrice(ctx context.Context, spec models.PricingSpec) (*mode
 		if !ok {
 			return nil, fmt.Errorf("aws: GetPrice: expected *DatabasePricingSpec")
 		}
-		prices, err = p.GetDatabasePrice(ctx, ds.Engine, ds.ResourceType, ds.GetRegion(), ds.GetTerm())
+		// When the model passes service="elasticache" (or "redis"/"memcached") without
+		// an explicit engine field, Engine defaults to "MySQL" from DatabasePricingSpec.
+		// Use the service field to override routing for in-memory caches.
+		engine := ds.Engine
+		svc := strings.ToLower(ds.GetService())
+		if svc == "elasticache" || svc == "redis" || svc == "memcached" {
+			engine = svc
+		}
+		prices, err = p.GetDatabasePrice(ctx, engine, ds.ResourceType, ds.GetRegion(), ds.GetTerm())
 
 	case models.PricingDomainNetwork, models.PricingDomainInterRegionEgress:
 		svc := spec.GetService()
