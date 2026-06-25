@@ -36,10 +36,13 @@ jobs:
         run: python packaging/pypi/build_wheels.py
 
       - name: Publish to PyPI
-        if: ${{ secrets.PYPI_API_TOKEN != '' }}
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
         run: |
+          if [ -z "$TWINE_PASSWORD" ]; then
+            echo "PYPI_API_TOKEN not set — skipping PyPI publish"
+            exit 0
+          fi
           pip install twine
           twine upload dist/wheels/*.whl
