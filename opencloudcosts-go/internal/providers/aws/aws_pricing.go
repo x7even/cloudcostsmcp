@@ -940,7 +940,18 @@ func (p *Provider) GetPrice(ctx context.Context, spec models.PricingSpec) (*mode
 		prices, err = p.GetDatabasePrice(ctx, ds.Engine, ds.ResourceType, ds.GetRegion(), ds.GetTerm())
 
 	case models.PricingDomainNetwork, models.PricingDomainInterRegionEgress:
-		prices, err = p.GetNetworkPrice(ctx, spec, spec.GetRegion())
+		svc := spec.GetService()
+		switch svc {
+		case "nat", "cloud_nat":
+			prices, err = p.GetNATPrice(ctx, spec.GetRegion())
+		case "lb", "cloud_lb":
+			prices, err = p.GetALBPrice(ctx, spec.GetRegion())
+		default:
+			prices, err = p.GetNetworkPrice(ctx, spec, spec.GetRegion())
+		}
+
+	case models.PricingDomainObservability:
+		prices, err = p.GetCloudWatchPrice(ctx, spec.GetRegion())
 
 	case models.PricingDomainServerless:
 		ss, ok := spec.(*models.ServerlessPricingSpec)

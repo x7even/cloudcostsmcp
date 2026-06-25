@@ -1284,6 +1284,41 @@ def _loop_detected(recent_fingerprints: list[str]) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# XML hallucination detection
+# ---------------------------------------------------------------------------
+
+_XML_HALLUCINATION_PREFIXES = (
+    "<tool_call",
+    "<function_calls",
+    '{"name":',
+    '{"function_calls',
+)
+
+
+def _check_xml_hallucination(trace: dict) -> None:
+    """Detect when the model's final answer is a raw XML/JSON tool-call string.
+
+    Some models emit a <tool_call> or {"name": ...} block as their last message
+    instead of a plain-text answer. The harness would otherwise silently mark
+    these as passing. When detected, we set xml_hallucination=True and
+    loop_broken=True on the trace so callers can flag them in the summary.
+    """
+    answer = (trace.get("final_answer") or "").strip()
+    if not answer:
+        return
+    answer_lower = answer.lower()
+    for prefix in _XML_HALLUCINATION_PREFIXES:
+        if answer_lower.startswith(prefix.lower()):
+            trace["xml_hallucination"] = True
+            trace["loop_broken"] = True
+            trace.setdefault(
+                "error",
+                "XML hallucination: final answer is a raw tool-call string, not a plain-text answer",
+            )
+            return
+
+
+# ---------------------------------------------------------------------------
 # Core test runner
 # ---------------------------------------------------------------------------
 
@@ -1440,6 +1475,7 @@ async def run_single(
                     print(f"  ⚠ max_tokens hit at round {round_num + 1}")
                 else:
                     print(f"  ✓ Done in {round_num + 1} round(s)")
+                _check_xml_hallucination(trace)
                 preview = (trace["final_answer"] or "")[:300]
                 print(f"  Answer preview: {preview}")
                 break
@@ -1590,6 +1626,7 @@ async def run_single(
                             trace["messages"].append(final_msg)
                             trace["final_answer"] = content
                             trace["rounds"] = round_num + 1
+                            _check_xml_hallucination(trace)
                             print(
                                 f"  ✓ Loop broken — answer obtained after {round_num + 1} round(s)"
                             )
@@ -1667,6 +1704,7 @@ async def _run_prompt_with_fresh_session(pid, prompt, openai_tools, run_dir, res
                 "tools_used": list({tc["tool"] for tc in trace["tool_calls"]}),
                 "error": trace["error"],
                 "answer_preview": (trace["final_answer"] or "")[:200],
+                "xml_hallucination": trace.get("xml_hallucination", False),
             }
             return
         except Exception as e:
@@ -1783,11 +1821,14 @@ async def main(ids: list[str], parallel: int = 1):
     print(f"SUMMARY — results in {run_dir}")
     print(f"{'=' * 64}")
     for pid, r in summary["results"].items():
-        status = "✓" if r["status"] == "ok" else "✗"
-        print(
-            f"  {status} [{pid}] {r['rounds']} round(s), "
-            f"{r['tool_calls']} tool call(s)" + (f"  ERROR: {r['error']}" if r["error"] else "")
-        )
+        if r.get("xml_hallucination"):
+            print(f"  ✗ [{pid}] XML hallucination")
+        else:
+            status = "✓" if r["status"] == "ok" else "✗"
+            print(
+                f"  {status} [{pid}] {r['rounds']} round(s), "
+                f"{r['tool_calls']} tool call(s)" + (f"  ERROR: {r['error']}" if r["error"] else "")
+            )
     print(f"\nFull traces: {run_dir}/")
 
 

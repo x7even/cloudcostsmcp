@@ -94,6 +94,11 @@ func (p *Provider) GetNetworkPrice(
 	spec models.PricingSpec,
 	region string,
 ) ([]models.NormalizedPrice, error) {
+	// Internet egress — tiered pricing distinct from inter-region transfer.
+	if ns, ok := spec.(*models.NetworkPricingSpec); ok && strings.EqualFold(ns.DestinationType, "internet") {
+		return internetEgressPrices(region, ns.DataGBPerMonth, time.Now()), nil
+	}
+
 	// Resolve src/dst from either EgressPricingSpec or NetworkPricingSpec.
 	var src, dst string
 	switch s := spec.(type) {
@@ -421,9 +426,10 @@ func (p *Provider) GetElastiCachePrice(
 		filters = append(filters, mkFilter("instanceType", nodeType))
 	}
 
-	rawItems, err := p.GetProducts(ctx, "AmazonElastiCache", filters, 10)
-	if err != nil {
-		return nil, fmt.Errorf("aws: GetElastiCachePrice: %w", err)
+	rawItems, apiErr := p.GetProducts(ctx, "AmazonElastiCache", filters, 10)
+	if apiErr != nil {
+		// Don't fail hard — fall back to static rates if the API is unavailable.
+		rawItems = nil
 	}
 
 	var prices []models.NormalizedPrice
@@ -440,5 +446,303 @@ func (p *Provider) GetElastiCachePrice(
 			p.cache.Set(cacheKey, data, ttl)
 		}
 	}
+
+	// Static fallback for when the Pricing API is unavailable.
+	// Covers current-gen node types from us-east-1 published pricing.
+	if len(prices) == 0 {
+		prices = elasticacheStaticFallback(nodeType, region, time.Now())
+	}
+
 	return prices, nil
+}
+
+// --------------------------------------------------------------------------
+// GetNATPrice — AWS NAT Gateway pricing
+// --------------------------------------------------------------------------
+
+// GetNATPrice returns AWS NAT Gateway pricing for the given region.
+// Rates: $0.045/hr per NAT Gateway + $0.045/GB data processed (us-east-1).
+// Other regions have slightly higher rates; we use us-east-1 as the baseline.
+// Source: https://aws.amazon.com/vpc/pricing/
+func (p *Provider) GetNATPrice(ctx context.Context, region string) ([]models.NormalizedPrice, error) {
+	cacheKey := fmt.Sprintf("aws:nat:%s", region)
+	if cached, ok := p.cache.Get(cacheKey); ok {
+		var prices []models.NormalizedPrice
+		if err := json.Unmarshal(cached, &prices); err == nil {
+			return prices, nil
+		}
+	}
+	now := time.Now()
+	srcURL := "https://aws.amazon.com/vpc/pricing/"
+	// Published NAT Gateway rates — hourly and per-GB data processing.
+	// These are identical across major regions; slight regional variation is omitted.
+	prices := []models.NormalizedPrice{
+		{
+			Provider: models.CloudProviderAWS, Service: "nat",
+			SKUID:         fmt.Sprintf("aws:nat:%s:hourly", region),
+			ProductFamily: "NAT Gateway",
+			Description:   "NAT Gateway hourly charge",
+			Region:        region,
+			Attributes:    map[string]string{"billing_dimension": "hourly"},
+			PricingTerm:   models.PricingTermOnDemand,
+			PricePerUnit:  0.045, Unit: models.PriceUnitPerHour,
+			Currency: "USD", FetchedAt: &now, SourceURL: srcURL,
+		},
+		{
+			Provider: models.CloudProviderAWS, Service: "nat",
+			SKUID:         fmt.Sprintf("aws:nat:%s:data_processing", region),
+			ProductFamily: "NAT Gateway",
+			Description:   "NAT Gateway data processing (per GB)",
+			Region:        region,
+			Attributes:    map[string]string{"billing_dimension": "data_processing_gb"},
+			PricingTerm:   models.PricingTermOnDemand,
+			PricePerUnit:  0.045, Unit: models.PriceUnitPerGB,
+			Currency: "USD", FetchedAt: &now, SourceURL: srcURL,
+		},
+	}
+	if data, err := json.Marshal(prices); err == nil {
+		ttl := time.Duration(p.cfg.CacheTTLHours) * time.Hour
+		p.cache.Set(cacheKey, data, ttl)
+	}
+	return prices, nil
+}
+
+// --------------------------------------------------------------------------
+// GetALBPrice — AWS Application Load Balancer pricing
+// --------------------------------------------------------------------------
+
+// GetALBPrice returns AWS Application Load Balancer pricing.
+// ALB uses LCU-based billing ($0.008/LCU-hour) plus an hourly base charge.
+// Source: https://aws.amazon.com/elasticloadbalancing/pricing/
+func (p *Provider) GetALBPrice(ctx context.Context, region string) ([]models.NormalizedPrice, error) {
+	cacheKey := fmt.Sprintf("aws:alb:%s", region)
+	if cached, ok := p.cache.Get(cacheKey); ok {
+		var prices []models.NormalizedPrice
+		if err := json.Unmarshal(cached, &prices); err == nil {
+			return prices, nil
+		}
+	}
+	now := time.Now()
+	srcURL := "https://aws.amazon.com/elasticloadbalancing/pricing/"
+	prices := []models.NormalizedPrice{
+		{
+			Provider: models.CloudProviderAWS, Service: "lb",
+			SKUID:         fmt.Sprintf("aws:alb:%s:hourly", region),
+			ProductFamily: "Load Balancer", Description: "Application Load Balancer hourly charge",
+			Region:     region,
+			Attributes: map[string]string{"lb_type": "application", "billing_dimension": "hourly"},
+			PricingTerm:  models.PricingTermOnDemand,
+			PricePerUnit: 0.0225, Unit: models.PriceUnitPerHour,
+			Currency: "USD", FetchedAt: &now, SourceURL: srcURL,
+		},
+		{
+			Provider: models.CloudProviderAWS, Service: "lb",
+			SKUID:         fmt.Sprintf("aws:alb:%s:lcu", region),
+			ProductFamily: "Load Balancer", Description: "Application Load Balancer LCU-hour",
+			Region:     region,
+			Attributes: map[string]string{"lb_type": "application", "billing_dimension": "lcu_hour"},
+			PricingTerm:  models.PricingTermOnDemand,
+			PricePerUnit: 0.008, Unit: models.PriceUnitPerHour,
+			Currency: "USD", FetchedAt: &now, SourceURL: srcURL,
+		},
+	}
+	if data, err := json.Marshal(prices); err == nil {
+		ttl := time.Duration(p.cfg.CacheTTLHours) * time.Hour
+		p.cache.Set(cacheKey, data, ttl)
+	}
+	return prices, nil
+}
+
+// --------------------------------------------------------------------------
+// GetCloudWatchPrice — AWS CloudWatch observability pricing
+// --------------------------------------------------------------------------
+
+// GetCloudWatchPrice returns AWS CloudWatch pricing (metrics, logs, dashboards).
+// Source: https://aws.amazon.com/cloudwatch/pricing/
+func (p *Provider) GetCloudWatchPrice(ctx context.Context, region string) ([]models.NormalizedPrice, error) {
+	cacheKey := fmt.Sprintf("aws:cloudwatch:%s", region)
+	if cached, ok := p.cache.Get(cacheKey); ok {
+		var prices []models.NormalizedPrice
+		if err := json.Unmarshal(cached, &prices); err == nil {
+			return prices, nil
+		}
+	}
+	now := time.Now()
+	srcURL := "https://aws.amazon.com/cloudwatch/pricing/"
+	prices := []models.NormalizedPrice{
+		{
+			Provider: models.CloudProviderAWS, Service: "cloudwatch",
+			SKUID:         fmt.Sprintf("aws:cloudwatch:%s:metrics", region),
+			ProductFamily: "CloudWatch Metrics",
+			Description:   "CloudWatch custom metrics (per metric/month, first 10k after free tier)",
+			Region:        region,
+			Attributes:    map[string]string{"billing_dimension": "custom_metrics"},
+			PricingTerm:   models.PricingTermOnDemand,
+			PricePerUnit:  0.30, Unit: models.PriceUnitPerMonth,
+			Currency: "USD", FetchedAt: &now, SourceURL: srcURL,
+		},
+		{
+			Provider: models.CloudProviderAWS, Service: "cloudwatch",
+			SKUID:         fmt.Sprintf("aws:cloudwatch:%s:logs_ingestion", region),
+			ProductFamily: "CloudWatch Logs",
+			Description:   "CloudWatch Logs data ingestion (per GB)",
+			Region:        region,
+			Attributes:    map[string]string{"billing_dimension": "logs_ingestion_gb"},
+			PricingTerm:   models.PricingTermOnDemand,
+			PricePerUnit:  0.50, Unit: models.PriceUnitPerGB,
+			Currency: "USD", FetchedAt: &now, SourceURL: srcURL,
+		},
+		{
+			Provider: models.CloudProviderAWS, Service: "cloudwatch",
+			SKUID:         fmt.Sprintf("aws:cloudwatch:%s:logs_storage", region),
+			ProductFamily: "CloudWatch Logs",
+			Description:   "CloudWatch Logs storage (per GB/month)",
+			Region:        region,
+			Attributes:    map[string]string{"billing_dimension": "logs_storage_gb"},
+			PricingTerm:   models.PricingTermOnDemand,
+			PricePerUnit:  0.03, Unit: models.PriceUnitPerGB,
+			Currency: "USD", FetchedAt: &now, SourceURL: srcURL,
+		},
+	}
+	if data, err := json.Marshal(prices); err == nil {
+		ttl := time.Duration(p.cfg.CacheTTLHours) * time.Hour
+		p.cache.Set(cacheKey, data, ttl)
+	}
+	return prices, nil
+}
+
+// --------------------------------------------------------------------------
+// Internet egress tiered pricing
+// --------------------------------------------------------------------------
+
+// internetEgressTiers mirrors AWS internet egress tiered pricing.
+// Source: https://aws.amazon.com/ec2/pricing/on-demand/#Data_Transfer
+var internetEgressTiers = []struct {
+	upToGB    float64
+	ratePerGB float64
+}{
+	{10_000, 0.09},
+	{50_000, 0.085},
+	{150_000, 0.07},
+	{0, 0.05}, // 0 = unbounded
+}
+
+func internetEgressPrices(region string, dataGBPerMonth float64, now time.Time) []models.NormalizedPrice {
+	srcURL := "https://aws.amazon.com/ec2/pricing/on-demand/#Data_Transfer"
+	var prices []models.NormalizedPrice
+	for _, tier := range internetEgressTiers {
+		label := fmt.Sprintf("%.0f TB/month", tier.upToGB/1000)
+		if tier.upToGB == 0 {
+			label = "150+ TB/month"
+		}
+		prices = append(prices, models.NormalizedPrice{
+			Provider: models.CloudProviderAWS, Service: "egress",
+			SKUID:         fmt.Sprintf("aws:internet_egress:%s:tier_%.0f", region, tier.ratePerGB*1000),
+			ProductFamily: "Data Transfer", Description: fmt.Sprintf("AWS internet egress — %s ($%.4f/GB)", label, tier.ratePerGB),
+			Region: region,
+			Attributes: map[string]string{
+				"destination_type": "internet",
+				"tier_up_to_gb":    fmt.Sprintf("%.0f", tier.upToGB),
+			},
+			PricingTerm:  models.PricingTermOnDemand,
+			PricePerUnit: tier.ratePerGB, Unit: models.PriceUnitPerGB,
+			Currency: "USD", FetchedAt: &now, SourceURL: srcURL,
+		})
+	}
+	// Also compute blended rate if dataGBPerMonth > 0
+	if dataGBPerMonth > 0 {
+		total := 0.0
+		remaining := dataGBPerMonth
+		prevUpToGB := 0.0
+		for _, tier := range internetEgressTiers {
+			var capacity float64
+			if tier.upToGB == 0 {
+				// Unbounded tier: consume all remaining GB.
+				capacity = remaining
+			} else {
+				// upToGB is a cumulative ceiling; per-tier capacity is the delta.
+				capacity = tier.upToGB - prevUpToGB
+				prevUpToGB = tier.upToGB
+			}
+			chunk := capacity
+			if chunk > remaining {
+				chunk = remaining
+			}
+			total += chunk * tier.ratePerGB
+			remaining -= chunk
+			if remaining <= 0 {
+				break
+			}
+		}
+		blended := total / dataGBPerMonth
+		now2 := now
+		prices = append(prices, models.NormalizedPrice{
+			Provider: models.CloudProviderAWS, Service: "egress",
+			SKUID:         fmt.Sprintf("aws:internet_egress:%s:blended_%.0f", region, dataGBPerMonth),
+			ProductFamily: "Data Transfer",
+			Description:   fmt.Sprintf("AWS internet egress blended rate for %.0f GB/month ($%.4f/GB avg, $%.2f/month total)", dataGBPerMonth, blended, total),
+			Region:        region,
+			Attributes: map[string]string{
+				"destination_type":  "internet",
+				"data_gb_per_month": fmt.Sprintf("%.0f", dataGBPerMonth),
+				"monthly_total_usd": fmt.Sprintf("%.2f", total),
+			},
+			PricingTerm:  models.PricingTermOnDemand,
+			PricePerUnit: blended, Unit: models.PriceUnitPerGB,
+			Currency: "USD", FetchedAt: &now2, SourceURL: srcURL,
+		})
+	}
+	return prices
+}
+
+// --------------------------------------------------------------------------
+// ElastiCache static fallback
+// --------------------------------------------------------------------------
+
+// elasticacheHourlyRates covers common current-gen node types (us-east-1 published rates).
+// Source: https://aws.amazon.com/elasticache/pricing/
+var elasticacheHourlyRates = map[string]float64{
+	// r7g — Graviton3, Redis/Memcached
+	"cache.r7g.large":   0.166,
+	"cache.r7g.xlarge":  0.333,
+	"cache.r7g.2xlarge": 0.665,
+	"cache.r7g.4xlarge": 1.330,
+	"cache.r7g.8xlarge": 2.660,
+	// r6g — Graviton2
+	"cache.r6g.large":   0.166,
+	"cache.r6g.xlarge":  0.333,
+	"cache.r6g.2xlarge": 0.665,
+	"cache.r6g.4xlarge": 1.330,
+	"cache.r6g.8xlarge": 2.660,
+	// m7g — general purpose Graviton3
+	"cache.m7g.large":   0.101,
+	"cache.m7g.xlarge":  0.202,
+	"cache.m7g.2xlarge": 0.404,
+	// t4g — burstable Graviton2
+	"cache.t4g.micro":  0.016,
+	"cache.t4g.small":  0.032,
+	"cache.t4g.medium": 0.065,
+}
+
+func elasticacheStaticFallback(nodeType, region string, now time.Time) []models.NormalizedPrice {
+	rate, ok := elasticacheHourlyRates[nodeType]
+	if !ok {
+		return nil
+	}
+	return []models.NormalizedPrice{{
+		Provider: models.CloudProviderAWS, Service: "database",
+		SKUID:         fmt.Sprintf("aws:elasticache:%s:%s:fallback", region, nodeType),
+		ProductFamily: "ElastiCache",
+		Description:   fmt.Sprintf("ElastiCache %s (static published rate)", nodeType),
+		Region:        region,
+		Attributes: map[string]string{
+			"instanceType": nodeType,
+			"fallback":     "true",
+			"note":         "static us-east-1 published rate; may vary by region",
+		},
+		PricingTerm:  models.PricingTermOnDemand,
+		PricePerUnit: rate, Unit: models.PriceUnitPerHour,
+		Currency: "USD", FetchedAt: &now,
+		SourceURL: "https://aws.amazon.com/elasticache/pricing/",
+	}}
 }

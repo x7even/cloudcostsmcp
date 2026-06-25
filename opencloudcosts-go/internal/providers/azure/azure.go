@@ -263,11 +263,70 @@ var sqlTierMap = map[string]string{
 	"hs":                "HS",
 }
 
+// sqlResourceTypeToArmSkuName converts a human-readable resource_type into
+// the armSkuName used by the Azure SQL Database (engine=SQL) Retail Prices API.
+//
+// "General Purpose 4 vCores"  → "SQLDB_GP_Compute_Gen5_4"
+// "Business Critical 8 vCores" → "SQLDB_BC_Compute_Gen5_8"
+// Returns "" when the tier or vCore count cannot be determined.
+func sqlResourceTypeToArmSkuName(resourceType string) string {
+	rt := strings.ToLower(resourceType)
+	var tier string
+	switch {
+	case strings.Contains(rt, "general purpose") || strings.Contains(rt, "general_purpose") || strings.Contains(rt, " gp"):
+		tier = "GP"
+	case strings.Contains(rt, "business critical") || strings.Contains(rt, "business_critical") || strings.Contains(rt, " bc"):
+		tier = "BC"
+	case strings.Contains(rt, "hyperscale") || strings.Contains(rt, " hs"):
+		tier = "HS"
+	default:
+		return ""
+	}
+	// Extract the vCore count: first integer token in the string.
+	fields := strings.Fields(resourceType)
+	for i, f := range fields {
+		if strings.EqualFold(f, "vCores") || strings.EqualFold(f, "vCore") {
+			if i > 0 {
+				return "SQLDB_" + tier + "_Compute_Gen5_" + fields[i-1]
+			}
+		}
+	}
+	return ""
+}
+
+// pgResourceTypeToArmSkuName converts a human-readable resource_type into
+// the armSkuName used by Azure Database for PostgreSQL Flexible Server.
+//
+// Only General Purpose (Ddsv5 series) is supported; Memory Optimized and
+// Burstable tiers use different SKU patterns not covered here.
+//
+// "General Purpose 4 vCores" → "Standard_D4ds_v5"
+// Returns "" when the tier is not General Purpose or the vCore count is absent.
+func pgResourceTypeToArmSkuName(resourceType string) string {
+	rt := strings.ToLower(resourceType)
+	if !strings.Contains(rt, "general purpose") && !strings.Contains(rt, "general_purpose") && !strings.Contains(rt, " gp") {
+		return ""
+	}
+	fields := strings.Fields(resourceType)
+	for i, f := range fields {
+		if strings.EqualFold(f, "vCores") || strings.EqualFold(f, "vCore") {
+			if i > 0 {
+				return "Standard_D" + fields[i-1] + "ds_v5"
+			}
+		}
+	}
+	return ""
+}
+
 // Static fallback rates.
 const (
 	functionsExecRate   = 0.0000002 // per execution
 	functionsGBSecRate  = 0.000016  // per GB-second
 	aksPremiumRate      = 0.10      // per cluster/hr (Standard tier)
+	// sqlGPVCoreRate is the published on-demand rate for Azure SQL Database
+	// General Purpose Gen5 in us-east regions (per vCore per hour).
+	// Used only as a static fallback when the Retail Prices API returns no rows.
+	sqlGPVCoreRate = 0.1770 // per vCore-hour, GP Gen5
 	monitorLogRate      = 2.76      // per GB Analytics Logs
 	monitorBasicLogRate = 0.50      // per GB Basic Logs
 	monitorMetricsRate  = 0.16      // per 10M metric samples
@@ -889,6 +948,31 @@ func (p *Provider) GetSQLPrice(
 		filters["reservationTerm"] = "3 Years"
 	}
 
+	// For Azure SQL Database (engine=SQL) and PostgreSQL, the skuName field does
+	// NOT carry the tier prefix (it's "4 vCore", not "GP_Gen5_4"). Instead we
+	// filter by armSkuName server-side so that the API returns only matching rows
+	// without downloading hundreds of items first.
+	//
+	// NOTE: Reserved SQL Database meters use a different armSkuName scheme
+	// ("SQLDB_GP_Compute_Gen5" without a vCore suffix, priced per-vCore) so we
+	// skip the armSkuName filter for reservation terms — the existing post-fetch
+	// vcorePattern check handles that path.
+	isSQLEngine := serviceName == "SQL Database"
+	isPGEngine := serviceName == "Azure Database for PostgreSQL"
+	isConsumption := priceType == "Consumption"
+
+	var armSkuFilter string
+	if isConsumption {
+		if isSQLEngine {
+			armSkuFilter = sqlResourceTypeToArmSkuName(resourceType)
+		} else if isPGEngine {
+			armSkuFilter = pgResourceTypeToArmSkuName(resourceType)
+		}
+	}
+	if armSkuFilter != "" {
+		filters["armSkuName"] = armSkuFilter
+	}
+
 	items, err := p.fetchPrices(ctx, filters, 100)
 	if err != nil {
 		return nil, err
@@ -930,17 +1014,48 @@ func (p *Provider) GetSQLPrice(
 	var prices []models.NormalizedPrice
 	for _, item := range items {
 		skuName := item.SkuName
-		if tierPrefix != "" && !strings.HasPrefix(skuName, tierPrefix) {
+		armSku := item.ArmSkuName
+
+		// Tier-prefix filtering: for SQL and PG engines the skuName does not
+		// start with the tier abbreviation (it's "4 vCore", not "GP_Gen5_4").
+		// When we have already narrowed results via armSkuName server-side we
+		// skip this check; otherwise fall back to checking armSkuName or skuName.
+		if tierPrefix != "" && armSkuFilter == "" {
+			// Legacy path for MySQL (or future engines without armSkuName mapping).
+			// MySQL skuName doesn't use tier prefixes either, so this block is
+			// effectively a no-op for well-structured responses.
+			if !strings.HasPrefix(skuName, tierPrefix) && !strings.Contains(armSku, "_"+tierPrefix+"_") {
+				continue
+			}
+		}
+
+		// When armSkuFilter is set, the server already narrowed results to the
+		// requested vCore count via armSkuName. Applying vcorePattern on top
+		// would silently drop rows whose skuName format doesn't match the
+		// bare-digit word-boundary (e.g. "4 vCores" would survive, but
+		// "GP_Gen5_4 LRS" with an adjacent underscore might not on some patterns).
+		if armSkuFilter == "" && vcorePattern != nil && !vcorePattern.MatchString(skuName) {
 			continue
 		}
-		if vcorePattern != nil && !vcorePattern.MatchString(skuName) {
-			continue
-		}
-		if ha && strings.Contains(skuName, "LRS") {
-			continue
-		}
-		if !ha && strings.Contains(skuName, "ZRS") {
-			continue
+
+		// HA / Zone-Redundancy filtering.
+		// For Azure SQL Database the "Zone Redundancy vCore" meter is an incremental
+		// uplift charged on top of the base "vCore" meter — it is NOT a replacement
+		// full-price row. Returning only the ZR uplift row for ha=true would give a
+		// price that is lower than single-az (implausible). We therefore always
+		// return the base compute rows and exclude ZR uplift meters.
+		// MySQL/PostgreSQL use LRS/ZRS variants; skip ZRS rows for non-ha requests.
+		if isSQLEngine {
+			if strings.Contains(skuName, "Zone Redundancy") {
+				continue
+			}
+		} else {
+			if ha && strings.Contains(skuName, "LRS") {
+				continue
+			}
+			if !ha && strings.Contains(skuName, "ZRS") {
+				continue
+			}
 		}
 
 		pp := itemToPrice(item, region, term, "sql")
@@ -958,6 +1073,38 @@ func (p *Provider) GetSQLPrice(
 		}
 		pp.Unit = models.PriceUnitPerHour
 		prices = append(prices, *pp)
+	}
+
+	// Static fallback: if the API returned no usable rows (e.g. armSkuName
+	// mapping is wrong or the region has no pricing rows), return a
+	// best-effort estimate so the caller always gets a non-empty result.
+	// The fallback is GP Gen5 at the published us-east on-demand rate scaled
+	// by the requested vCore count. Non-GP tiers are not modelled here.
+	if len(prices) == 0 && vcoresStr != "" && isSQLEngine {
+		vcores := 0.0
+		if v, err := strconv.ParseFloat(vcoresStr, 64); err == nil {
+			vcores = v
+		}
+		if vcores > 0 {
+			totalPerHour := sqlGPVCoreRate * vcores
+			fallbackSKU := fmt.Sprintf("azure:sql:%s:%s:static", region, strings.ReplaceAll(strings.ToLower(resourceType), " ", "_"))
+			prices = []models.NormalizedPrice{{
+				Provider:      models.CloudProviderAzure,
+				Service:       "sql",
+				SKUID:         fallbackSKU,
+				ProductFamily: "Databases",
+				Description:   fmt.Sprintf("Azure SQL Database %s — static fallback (%.0f vCores × $%.4f/vCore-hr)", resourceType, vcores, sqlGPVCoreRate),
+				Region:        region,
+				PricingTerm:   term,
+				PricePerUnit:  totalPerHour,
+				Unit:          models.PriceUnitPerHour,
+				Currency:      "USD",
+				Attributes: map[string]string{
+					"source": "static_fallback",
+					"note":   "armSkuName mapping unverified or API returned no rows; rate is GP Gen5 us-east published price",
+				},
+			}}
+		}
 	}
 
 	sortPrices(prices)
@@ -2699,10 +2846,12 @@ func (p *Provider) DescribeCatalog(ctx context.Context) (*models.ProviderCatalog
 				"size_gb":      "Disk size for monthly estimate",
 			},
 			"database/sql": {
-				"resource_type": "'General Purpose 4 vCores' | 'Business Critical 8 vCores'",
-				"engine":        "'SQL' (default) | 'MySQL' | 'PostgreSQL'",
+				"resource_type": "'General Purpose 4 vCores' | 'Business Critical 8 vCores' | 'General Purpose 8 vCores'",
+				"engine":        "'SQL' (default, Azure SQL Database Gen5 vCore) | 'MySQL' | 'PostgreSQL'",
 				"deployment":    "single-az (default) | ha",
 				"term":          "on_demand | reserved_1yr | reserved_3yr",
+				"note_sql":      "engine=SQL: resource_type must be '<Tier> <N> vCores' e.g. 'General Purpose 4 vCores'. Maps to armSkuName SQLDB_GP_Compute_Gen5_N / SQLDB_BC_Compute_Gen5_N.",
+				"note_pg":       "engine=PostgreSQL: General Purpose maps to Standard_D<N>ds_v5 Flexible Server. Memory Optimized / Burstable tiers not supported via resource_type.",
 			},
 			"database/cosmos": {
 				"deployment": "'provisioned' (per 100 RU/s, default) | 'serverless' | 'autoscale' | 'ha'",

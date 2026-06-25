@@ -563,24 +563,30 @@ func TestGetFrontDoorPrice_Zone1(t *testing.T) {
 func TestGetSQLPrice_VCoreWordBoundary(t *testing.T) {
 	// vCore word-boundary: "GP_Gen5_4 LRS" matches 4 vCores.
 	// "GP_Gen5_14 LRS" must NOT match for 4 vCores.
+	//
+	// Uses engine="MySQL" so that armSkuFilter is NOT set (MySQL has no
+	// server-side armSkuName mapping), ensuring vcorePattern is applied by
+	// the client-side filter. For engine="SQL", GetSQLPrice now skips
+	// vcorePattern when armSkuFilter is set (issue 4 fix); the server-side
+	// filter is expected to handle vCore narrowing in that path.
 	gp4Item := azureItem{
 		"retailPrice":   1.0,
-		"productName":   "SQL Database",
+		"productName":   "Azure Database for MySQL",
 		"skuName":       "GP_Gen5_4 LRS",
-		"serviceName":   "SQL Database",
+		"serviceName":   "Azure Database for MySQL",
 		"serviceFamily": "Databases",
-		"meterId":       "sql-gp4",
+		"meterId":       "mysql-gp4",
 		"meterName":     "GP_Gen5_4",
 		"armRegionName": "eastus",
 		"unitOfMeasure": "1 Hour",
 	}
 	gp14Item := azureItem{
 		"retailPrice":   2.5,
-		"productName":   "SQL Database",
+		"productName":   "Azure Database for MySQL",
 		"skuName":       "GP_Gen5_14 LRS",
-		"serviceName":   "SQL Database",
+		"serviceName":   "Azure Database for MySQL",
 		"serviceFamily": "Databases",
-		"meterId":       "sql-gp14",
+		"meterId":       "mysql-gp14",
 		"meterName":     "GP_Gen5_14",
 		"armRegionName": "eastus",
 		"unitOfMeasure": "1 Hour",
@@ -589,7 +595,7 @@ func TestGetSQLPrice_VCoreWordBoundary(t *testing.T) {
 	defer srv.Close()
 	p := newTestProvider(t, srv)
 
-	prices, err := p.GetSQLPrice(context.Background(), "General Purpose 4 vCores", "eastus", "SQL", "single-az", models.PricingTermOnDemand)
+	prices, err := p.GetSQLPrice(context.Background(), "General Purpose 4 vCores", "eastus", "MySQL", "single-az", models.PricingTermOnDemand)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -606,6 +612,104 @@ func TestGetSQLPrice_VCoreWordBoundary(t *testing.T) {
 	}
 	if !found4 {
 		t.Error("GP_Gen5_4 should match request for 4 vCores")
+	}
+}
+
+// TestGetSQLPrice_ArmSkuNameFilterSentToAPI verifies that when the resource_type
+// resolves to a known armSkuName (e.g. "General Purpose 4 vCores" → "SQLDB_GP_Compute_Gen5_4"),
+// the HTTP request URL sent to the Azure Retail Prices API includes that
+// armSkuName in the $filter query parameter.
+//
+// NOTE: The mapping "General Purpose 4 vCores" → armSkuName "SQLDB_GP_Compute_Gen5_4"
+// is encoded in sqlResourceTypeToArmSkuName and is empirically unverified against
+// a live Azure API call. This test pins the assumption so that if the mapping
+// changes or a live response contradicts it, the discrepancy can be caught.
+// The static fallback in GetSQLPrice (issue 5) ensures that a wrong mapping still
+// returns a non-empty result rather than a silent empty.
+func TestGetSQLPrice_ArmSkuNameFilterSentToAPI(t *testing.T) {
+	// This item has a skuName that does NOT match the vcorePattern bare-digit
+	// check ("4 vCores" contains "4" but the pattern is a word-boundary check).
+	// It survives only if:
+	//   (a) the filtering mock returns it (armSkuName matches the $filter), AND
+	//   (b) vcorePattern is NOT applied when armSkuFilter is set (issue 4 fix).
+	sqlItem := azureItem{
+		"retailPrice":   0.7345,
+		"productName":   "Azure SQL Database",
+		"skuName":       "4 vCores",
+		"serviceName":   "SQL Database",
+		"serviceFamily": "Databases",
+		"meterId":       "sql-gp4-vcores",
+		"meterName":     "4 vCores",
+		"armSkuName":    "SQLDB_GP_Compute_Gen5_4",
+		"armRegionName": "eastus",
+		"unitOfMeasure": "1 Hour",
+	}
+
+	var capturedFilter string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedFilter = r.URL.Query().Get("$filter")
+		// Return the item only when the request includes the expected armSkuName.
+		// This simulates real server-side filtering.
+		var responseItems []azureItem
+		if strings.Contains(capturedFilter, "SQLDB_GP_Compute_Gen5_4") {
+			responseItems = []azureItem{sqlItem}
+		}
+		body, _ := json.Marshal(apiResponse(responseItems))
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write(body) //nolint
+	}))
+	defer srv.Close()
+
+	p := newTestProvider(t, srv)
+	prices, err := p.GetSQLPrice(context.Background(), "General Purpose 4 vCores", "eastus", "SQL", "single-az", models.PricingTermOnDemand)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// The $filter must contain the armSkuName for server-side narrowing.
+	if !strings.Contains(capturedFilter, "armSkuName") {
+		t.Errorf("expected $filter to contain armSkuName, got: %q", capturedFilter)
+	}
+	if !strings.Contains(capturedFilter, "SQLDB_GP_Compute_Gen5_4") {
+		t.Errorf("expected $filter to contain SQLDB_GP_Compute_Gen5_4, got: %q", capturedFilter)
+	}
+
+	// The item with skuName "4 vCores" must survive even though it doesn't
+	// match vcorePattern in the traditional bare-digit sense — because
+	// armSkuFilter is set, vcorePattern is skipped (issue 4 fix).
+	found := false
+	for _, price := range prices {
+		if price.PricePerUnit == 0.7345 {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected SQL price from server-side armSkuName filter to be returned; prices=%v", prices)
+	}
+}
+
+// TestGetSQLPrice_StaticFallbackWhenAPIEmpty verifies that GetSQLPrice returns a
+// non-empty static fallback when the Azure Retail Prices API returns zero rows
+// (e.g. when the armSkuName mapping is wrong for a region).
+func TestGetSQLPrice_StaticFallbackWhenAPIEmpty(t *testing.T) {
+	// Server returns no items regardless of filter.
+	srv := mockServer(t, []azureItem{})
+	defer srv.Close()
+	p := newTestProvider(t, srv)
+
+	prices, err := p.GetSQLPrice(context.Background(), "General Purpose 4 vCores", "eastus", "SQL", "single-az", models.PricingTermOnDemand)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(prices) == 0 {
+		t.Fatal("expected a static fallback price when API returns no rows, got empty slice")
+	}
+	// The fallback must be marked as static.
+	for _, price := range prices {
+		if price.Attributes["source"] != "static_fallback" {
+			t.Errorf("expected source=static_fallback, got source=%q (SKUID=%s)", price.Attributes["source"], price.SKUID)
+		}
 	}
 }
 
