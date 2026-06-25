@@ -1151,6 +1151,44 @@ func TestGetDatabasePrice_ElastiCacheRouting(t *testing.T) {
 	}
 }
 
+// TestGetPrice_ElastiCache_ServiceRouting verifies that GetPrice correctly routes
+// database requests to ElastiCache when service="elasticache" is set but engine
+// is omitted (defaults to "MySQL" from DatabasePricingSpec). This is the exact
+// pattern the model uses: service="elasticache", no explicit engine field.
+func TestGetPrice_ElastiCache_ServiceRouting(t *testing.T) {
+	p := newTestProvider(t)
+	ctx := context.Background()
+
+	// Pre-populate the ElastiCache cache key with a valid price.
+	np := skuToNormalizedPrice(elasticacheSampleJSON, "us-east-1", models.PricingTermOnDemand, "database")
+	prices := []models.NormalizedPrice{*np}
+	data, _ := json.Marshal(prices)
+	p.cache.Set("aws:elasticache:us-east-1:cache.r6g.large", data, 24*time.Hour)
+
+	// Simulate exactly what the model sends: service="elasticache", no engine.
+	spec := &models.DatabasePricingSpec{
+		BasePricingSpec: models.BasePricingSpec{
+			Provider: models.CloudProviderAWS,
+			Domain:   models.PricingDomainDatabase,
+			Region:   "us-east-1",
+			Service:  "elasticache",
+			Term:     models.PricingTermOnDemand,
+		},
+		ResourceType: "cache.r6g.large",
+		Engine:       "MySQL", // default — intentionally wrong, service should override
+	}
+	result, err := p.GetPrice(ctx, spec)
+	if err != nil {
+		t.Fatalf("GetPrice(service=elasticache, engine=MySQL): unexpected error: %v", err)
+	}
+	if result == nil || len(result.PublicPrices) == 0 {
+		t.Fatal("GetPrice(service=elasticache, engine=MySQL): expected ElastiCache price, got empty — routing bug: service field not overriding default engine")
+	}
+	if result.PublicPrices[0].PricePerUnit != 0.156 {
+		t.Errorf("price = %v, want 0.156", result.PublicPrices[0].PricePerUnit)
+	}
+}
+
 // --------------------------------------------------------------------------
 // GetPrice dispatcher tests for new domains
 // --------------------------------------------------------------------------
@@ -1939,5 +1977,68 @@ func TestAllProvidersImplementInterface(t *testing.T) {
 				t.Error("MajorRegions() must return at least one region")
 			}
 		})
+	}
+}
+
+// TestGetElastiCachePrice_StaticFallback_404 verifies that when the bulk
+// pricing endpoint returns 404 (service not in region file), the static
+// fallback table is used for known node types.
+func TestGetElastiCachePrice_StaticFallback_404(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r) // simulate ElastiCache bulk file not at region URL
+	}))
+	defer srv.Close()
+	overrideBulkBaseURL(t, srv.URL)
+
+	p := newBulkProvider(t)
+	ctx := context.Background()
+
+	for _, tc := range []struct {
+		nodeType    string
+		wantPrice   float64
+	}{
+		{"cache.r7g.large", 0.166},
+		{"cache.r6g.large", 0.166},
+		{"cache.t4g.micro", 0.016},
+	} {
+		t.Run(tc.nodeType, func(t *testing.T) {
+			result, err := p.GetElastiCachePrice(ctx, tc.nodeType, "us-east-1")
+			if err != nil {
+				t.Fatalf("GetElastiCachePrice(%q): %v", tc.nodeType, err)
+			}
+			if len(result) == 0 {
+				t.Fatalf("GetElastiCachePrice(%q): got empty prices, want fallback price", tc.nodeType)
+			}
+			if result[0].PricePerUnit != tc.wantPrice {
+				t.Errorf("price = %v, want %v", result[0].PricePerUnit, tc.wantPrice)
+			}
+			fallbackFlag := result[0].Attributes["fallback"]
+			if fallbackFlag != "true" {
+				t.Errorf("fallback attribute = %q, want %q", fallbackFlag, "true")
+			}
+		})
+	}
+}
+
+// TestGetElastiCachePrice_BulkLiveURL tests the static fallback when the live
+// ElastiCache bulk URL is hit. Run with -short to skip network tests.
+func TestGetElastiCachePrice_BulkLive_r7gLarge(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping network test in short mode")
+	}
+	// Use real bulkPricingBaseURL (no override) with bulkFallback=true.
+	p := newBulkProvider(t)
+	ctx := context.Background()
+
+	result, err := p.GetElastiCachePrice(ctx, "cache.r7g.large", "us-east-1")
+	if err != nil {
+		t.Fatalf("GetElastiCachePrice: %v", err)
+	}
+	t.Logf("returned %d prices", len(result))
+	for _, r := range result {
+		t.Logf("  price=%v unit=%v fallback=%v desc=%s", r.PricePerUnit, r.Unit, r.Attributes["fallback"], r.Description)
+	}
+	if len(result) == 0 {
+		t.Fatal("expected at least 1 price")
 	}
 }
