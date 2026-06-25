@@ -222,17 +222,12 @@ def main() -> None:
     with artifacts_path.open() as f:
         artifacts = json.load(f)
 
-    # Extract version from any artifact (they all share the same version).
+    # GoReleaser sets extra.Tag on every artifact — use the first non-empty value.
     version = None
     for art in artifacts:
-        if art.get("extra", {}).get("ID") == "opencloudcosts":
-            version = art.get("extra", {}).get("Tag") or art.get("name", "").split("_")[1]
-        if not version:
-            version = art.get("extra", {}).get("Tag")
-        if version:
-            # Strip leading 'v'.
-            if version.startswith("v"):
-                version = version[1:]
+        tag = art.get("extra", {}).get("Tag", "")
+        if tag:
+            version = tag.lstrip("v")
             break
 
     # Fallback: parse from first archive name like opencloudcosts_1.0.0_linux_amd64.tar.gz
