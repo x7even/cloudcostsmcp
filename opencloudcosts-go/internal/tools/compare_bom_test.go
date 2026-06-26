@@ -4,6 +4,7 @@ package tools_test
 import (
 	"context"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/models"
@@ -152,13 +153,13 @@ func TestCompareBOM_SummaryMentionsCheapest(t *testing.T) {
 // TestCompareBOM_BothTermsPresent verifies that when terms=["on_demand","reserved_1yr"]
 // is requested, both term keys appear in each provider's output.
 func TestCompareBOM_BothTermsPresent(t *testing.T) {
-	callCount := 0
+	var callCount atomic.Int64
 	pvdr := &mockProvider{
 		name:          "aws",
 		defaultRegion: "us-east-1",
 		supportsFunc:  func(_ models.PricingDomain, _ string) bool { return true },
 		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
-			callCount++
+			callCount.Add(1)
 			var pricePerHour float64
 			if spec.GetTerm() == models.PricingTermOnDemand {
 				pricePerHour = 0.192
