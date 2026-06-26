@@ -149,15 +149,6 @@ func callComparePrices(t *testing.T, h *tools.Handler, in tools.ComparePricesInp
 	return decodeResult(t, result)
 }
 
-func callSearchPricing(t *testing.T, h *tools.Handler, in tools.SearchPricingInput) map[string]any {
-	t.Helper()
-	result, _, err := h.HandleSearchPricing(context.Background(), nil, in)
-	if err != nil {
-		t.Fatalf("HandleSearchPricing returned err: %v", err)
-	}
-	return decodeResult(t, result)
-}
-
 func callDescribeCatalog(t *testing.T, h *tools.Handler, in tools.DescribeCatalogInput) map[string]any {
 	t.Helper()
 	result, _, err := h.HandleDescribeCatalog(context.Background(), nil, in)
@@ -830,155 +821,6 @@ func TestComparePrices_ResponseFields(t *testing.T) {
 		if _, ok := resp[key]; !ok {
 			t.Errorf("response missing key %q", key)
 		}
-	}
-}
-
-// --------------------------------------------------------------------------
-// Tests: search_pricing
-// --------------------------------------------------------------------------
-
-func TestSearchPricing_ProviderNotConfigured(t *testing.T) {
-	h := tools.New(nil)
-	resp := callSearchPricing(t, h, tools.SearchPricingInput{
-		Provider: "aws",
-		Query:    "m5",
-	})
-	if resp["error"] == nil {
-		t.Errorf("expected error, got: %v", resp)
-	}
-}
-
-func TestSearchPricing_ReturnsResults(t *testing.T) {
-	pvdr := &mockProvider{
-		name:          "aws",
-		defaultRegion: "us-east-1",
-		searchFunc: func(_ context.Context, query, region string, max int) ([]models.NormalizedPrice, error) {
-			return []models.NormalizedPrice{makePrice("us-east-1", 0.192)}, nil
-		},
-	}
-	h := tools.New(map[string]tools.Provider{"aws": pvdr})
-	resp := callSearchPricing(t, h, tools.SearchPricingInput{
-		Provider: "aws",
-		Query:    "m5",
-	})
-
-	if resp["error"] != nil {
-		t.Fatalf("unexpected error: %v", resp)
-	}
-	if resp["count"] != float64(1) {
-		t.Errorf("count: got %v, want 1", resp["count"])
-	}
-	if resp["region"] != "all" {
-		t.Errorf("region: got %v, want \"all\"", resp["region"])
-	}
-	if resp["tip"] == nil {
-		t.Error("tip field missing")
-	}
-	results, ok := resp["results"].([]any)
-	if !ok || len(results) != 1 {
-		t.Errorf("results: got %v", resp["results"])
-	}
-}
-
-// TestSearchPricing_NoResultsHint verifies that empty search results return a
-// structured no_results response with a tip mentioning list_services.
-func TestSearchPricing_NoResultsHint(t *testing.T) {
-	pvdr := &mockProvider{
-		name:          "aws",
-		defaultRegion: "us-east-1",
-		searchFunc: func(_ context.Context, query, region string, max int) ([]models.NormalizedPrice, error) {
-			return nil, nil // empty
-		},
-	}
-	h := tools.New(map[string]tools.Provider{"aws": pvdr})
-	resp := callSearchPricing(t, h, tools.SearchPricingInput{
-		Provider: "aws",
-		Query:    "nonexistent-instance-xyz",
-	})
-
-	if resp["result"] != "no_results" {
-		t.Errorf("result: got %v, want no_results", resp["result"])
-	}
-	tip, _ := resp["tip"].(string)
-	if !contains(tip, "describe_catalog") {
-		t.Errorf("tip should mention describe_catalog, got: %q", tip)
-	}
-	if resp["query"] != "nonexistent-instance-xyz" {
-		t.Errorf("query: got %v, want nonexistent-instance-xyz", resp["query"])
-	}
-	// With no region specified, region should be "all".
-	if resp["region"] != "all" {
-		t.Errorf("region: got %v, want all", resp["region"])
-	}
-}
-
-// TestSearchPricing_NoResultsWithDomain verifies that when a domain is specified
-// and search returns empty results, the tip mentions the domain name.
-func TestSearchPricing_NoResultsWithDomain(t *testing.T) {
-	pvdr := &mockProvider{
-		name:          "aws",
-		defaultRegion: "us-east-1",
-		searchFunc: func(_ context.Context, _, _ string, _ int) ([]models.NormalizedPrice, error) {
-			return nil, nil
-		},
-	}
-	h := tools.New(map[string]tools.Provider{"aws": pvdr})
-	resp := callSearchPricing(t, h, tools.SearchPricingInput{
-		Provider: "aws",
-		Query:    "metric",
-		Domain:   "cloudwatch",
-		Region:   "us-east-1",
-	})
-
-	if resp["result"] != "no_results" {
-		t.Errorf("result: got %v, want no_results", resp["result"])
-	}
-	// region was specified, so it should be echoed back.
-	if resp["region"] != "us-east-1" {
-		t.Errorf("region: got %v, want us-east-1", resp["region"])
-	}
-	tip, _ := resp["tip"].(string)
-	if !contains(tip, "describe_catalog") {
-		t.Errorf("tip should mention describe_catalog, got: %q", tip)
-	}
-}
-
-func TestSearchPricing_RegionFilter(t *testing.T) {
-	var capturedRegion string
-	pvdr := &mockProvider{
-		name:          "aws",
-		defaultRegion: "us-east-1",
-		searchFunc: func(_ context.Context, _, region string, _ int) ([]models.NormalizedPrice, error) {
-			capturedRegion = region
-			return []models.NormalizedPrice{makePrice(region, 0.1)}, nil
-		},
-	}
-	h := tools.New(map[string]tools.Provider{"aws": pvdr})
-	callSearchPricing(t, h, tools.SearchPricingInput{
-		Provider: "aws",
-		Query:    "m5",
-		Region:   "eu-west-1",
-	})
-	if capturedRegion != "eu-west-1" {
-		t.Errorf("region passed to provider: got %q, want eu-west-1", capturedRegion)
-	}
-}
-
-func TestSearchPricing_UpstreamFailure(t *testing.T) {
-	pvdr := &mockProvider{
-		name:          "aws",
-		defaultRegion: "us-east-1",
-		searchFunc: func(_ context.Context, _, _ string, _ int) ([]models.NormalizedPrice, error) {
-			return nil, errors.New("network error")
-		},
-	}
-	h := tools.New(map[string]tools.Provider{"aws": pvdr})
-	resp := callSearchPricing(t, h, tools.SearchPricingInput{
-		Provider: "aws",
-		Query:    "m5",
-	})
-	if resp["error"] != "upstream_failure" {
-		t.Errorf("error: got %v, want upstream_failure", resp["error"])
 	}
 }
 
@@ -1771,34 +1613,6 @@ func TestGetPrice_EmptyPublicPrices_NoResultsHint(t *testing.T) {
 	}
 	if resp["provider"] != "aws" {
 		t.Errorf("provider: got %v, want aws", resp["provider"])
-	}
-}
-
-// TestSearchPricing_NonEmptyUnchanged verifies that non-empty search results
-// return the normal {count, results, tip} structure without a no_results sentinel.
-func TestSearchPricing_NonEmptyUnchanged(t *testing.T) {
-	pvdr := &mockProvider{
-		name:          "aws",
-		defaultRegion: "us-east-1",
-		searchFunc: func(_ context.Context, _, _ string, _ int) ([]models.NormalizedPrice, error) {
-			return []models.NormalizedPrice{makePrice("us-east-1", 0.192)}, nil
-		},
-	}
-	h := tools.New(map[string]tools.Provider{"aws": pvdr})
-	resp := callSearchPricing(t, h, tools.SearchPricingInput{
-		Provider: "aws",
-		Query:    "m5",
-	})
-
-	if resp["result"] == "no_results" {
-		t.Errorf("non-empty results should not produce no_results sentinel")
-	}
-	if resp["count"] != float64(1) {
-		t.Errorf("count: got %v, want 1", resp["count"])
-	}
-	results, ok := resp["results"].([]any)
-	if !ok || len(results) != 1 {
-		t.Errorf("results: expected 1 item, got %v", resp["results"])
 	}
 }
 

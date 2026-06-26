@@ -340,14 +340,8 @@ const (
 	}`
 
 	schemaSearchPricing = `{
-		"properties": {
-			"provider": {"title": "Provider", "type": "string"},
-			"query": {"title": "Query", "type": "string"},
-			"domain": {"default": "", "title": "Domain", "type": "string"},
-			"region": {"default": "", "title": "Region", "type": "string"},
-			"max_results": {"default": 20, "title": "Max Results", "type": "integer"}
-		},
-		"required": ["provider", "query"],
+		"additionalProperties": true,
+		"properties": {},
 		"title": "search_pricingArguments",
 		"type": "object"
 	}`
@@ -552,7 +546,7 @@ const (
 
 	descComparePrices = "\n        Compare pricing for any service across multiple regions.\n\n        Fetches concurrently. Returns results sorted cheapest first, with % delta between\n        cheapest and most expensive. Optionally shows delta vs a baseline region.\n\n        Args:\n            spec: PricingSpec dict (same as get_price). The region field is overridden\n                  per comparison — you can pass any region in the spec.\n            regions: List of region codes to compare, e.g. [\"us-east-1\", \"eu-west-1\", \"ap-northeast-1\"]\n            baseline_region: Optional region for delta comparison, e.g. \"us-east-1\".\n        "
 
-	descSearchPricing = "\n        Free-text search across the pricing catalog.\n\n        Useful for exploring what SKUs are available for a service before calling get_price,\n        or for finding pricing for services not yet covered by a specific domain.\n\n        Args:\n            provider: Cloud provider — \"aws\", \"gcp\", or \"azure\"\n            query: Search string, e.g. \"NAT gateway\", \"CloudWatch metrics\", \"Lambda duration\"\n            domain: Optional domain filter — \"compute\", \"storage\", \"database\", etc.\n            region: Optional region filter\n            max_results: Maximum results to return (default 20)\n        "
+	descSearchPricing = "Deprecated helper that redirects to the correct tools. Use describe_catalog to browse available services by domain/provider, or get_price with a known spec."
 
 	descGetDiscountSummary = "\n        Return a summary of all active cloud discounts for the authenticated account.\n\n        For AWS: active Savings Plans (type, commitment $/hr, utilization %) and\n        active Reserved Instances (instance type, count, payment type, days remaining),\n        plus Cost Explorer utilization for the previous month.\n\n        Requires credentials and OCC_AWS_ENABLE_COST_EXPLORER=true for AWS.\n\n        Args:\n            provider: Cloud provider — \"aws\" (GCP CUD support coming later)\n        "
 
