@@ -62,29 +62,50 @@ def register_availability_tools(mcp: Any) -> None:
         min_vcpu: int | None = None,
         min_memory_gb: float | None = None,
         gpu: bool = False,
-        max_results: int = 25,
+        max_results: int = 50,
     ) -> dict[str, Any]:
         """
-        List available compute instance types matching the given filters.
+        List available compute instance types in a region, with optional filters.
 
-        Returns up to 25 results by default. Use min_vcpu, min_memory_gb, or
-        family filters to narrow results and see more specific matches.
+        Useful for discovering what instances are available before fetching pricing,
+        or for finding instances that meet specific vCPU/memory/GPU requirements.
 
         Args:
             provider: Cloud provider — "aws", "gcp", or "azure"
             region: Region code, e.g. "us-east-1" (AWS), "us-central1" (GCP), "eastus" (Azure)
-            family: Instance family prefix filter, e.g. "m5" (AWS), "n2" (GCP)
-            min_vcpu: Minimum vCPU count filter
-            min_memory_gb: Minimum memory in GB filter
-            gpu: If True, only return GPU-enabled instance types
-            max_results: Maximum number of results to return (default 25)
+            family: Optional instance family prefix, e.g. "m5", "c6g" (AWS), "n2", "c2" (GCP),
+                    or "Standard_D", "Standard_E" (Azure)
+            min_vcpu: Filter to instances with at least this many vCPUs.
+            min_memory_gb: Filter to instances with at least this much memory (GB).
+            gpu: If true, only return GPU instances
+            max_results: Maximum number of results (default 50)
         """
         pvdr = ctx.request_context.lifespan_context["providers"].get(provider)
         if pvdr is None:
             return {"error": f"Provider '{provider}' not configured."}
 
+        # Azure Retail Prices API does not expose vCPU/memory metadata.
+        # Filtering by min_vcpu or min_memory_gb would silently return
+        # zero-spec instances, which misleads the LLM. Return a clear error.
+        if provider == "azure" and (min_vcpu is not None or min_memory_gb is not None):
+            return {
+                "result": "specs_unavailable",
+                "provider": "azure",
+                "message": (
+                    "Azure vCPU/memory specs are not available via the Retail Prices API. "
+                    "Use the 'family' filter with ARM SKU name prefixes instead."
+                ),
+                "suggestion": (
+                    "Try family='Standard_D4s' (4 vCPU general purpose), "
+                    "'Standard_D8s' (8 vCPU), "
+                    "'Standard_E4s' (4 vCPU memory-optimised), "
+                    "'Standard_F4s' (4 vCPU compute-optimised)"
+                ),
+                "docs": "https://learn.microsoft.com/en-us/azure/virtual-machines/sizes",
+            }
+
         try:
-            types = await pvdr.list_instance_types(
+            instances = await pvdr.list_instance_types(
                 region=region,
                 family=family or None,
                 min_vcpus=min_vcpu,
@@ -95,29 +116,135 @@ def register_availability_tools(mcp: Any) -> None:
             logger.error("list_instance_types error: %s", e)
             return {"error": str(e)}
 
-        def _compact(t: Any) -> dict[str, Any]:
-            entry: dict[str, Any] = {
-                "instance_type": t.instance_type,
-                "vcpu": t.vcpu,
-                "memory_gb": t.memory_gb,
-            }
-            if t.gpu_count:
-                entry["gpu_count"] = t.gpu_count
-            if t.gpu_type:
-                entry["gpu_type"] = t.gpu_type
-            return entry
+        instances.sort(key=lambda i: (i.vcpu, i.memory_gb))
 
-        total = len(types)
-        capped = types[:max_results]
-        result: dict[str, Any] = {
+        # Post-call safety-net filtering: re-apply spec filters against returned
+        # instances in case the provider silently ignores them (e.g. Azure).
+        if min_vcpu is not None:
+            instances = [i for i in instances if i.vcpu >= min_vcpu]
+        if min_memory_gb is not None:
+            instances = [i for i in instances if i.memory_gb >= min_memory_gb]
+
+        total_found = len(instances)
+
+        # Spec-filtered queries: auto-expand the cap so a broad filter like
+        # "min_vcpu=4" doesn't silently drop hundreds of valid candidates.
+        # The worst outcome is a missed cheaper option due to truncation.
+        effective_max = max_results
+        if (min_vcpu is not None or min_memory_gb is not None) and effective_max < 200:
+            effective_max = 200
+
+        truncated = total_found > effective_max
+        instances = instances[:effective_max]
+
+        # Suggest a get_prices_batch call so the LLM can immediately price the results.
+        # Cap the suggested batch at 10 types to keep the follow-up call fast.
+        _PRICE_BATCH_CAP = 10
+        batch_types = [i.instance_type for i in instances[:_PRICE_BATCH_CAP]]
+        _prices_batch_hint = (
+            f'get_prices_batch(provider="{provider}", instance_types={batch_types}, '
+            f'region="{region}") — price these instances sorted cheapest first'
+        )
+        next_steps: list[str] = []
+        if truncated:
+            spec_filters_applied = min_vcpu is not None or min_memory_gb is not None
+            if spec_filters_applied:
+                # Pick a concrete example instance type based on provider and min_vcpu
+                if provider == "aws":
+                    if min_vcpu is not None and min_vcpu <= 4:
+                        _example_type = "m5.xlarge"
+                        _example_desc = "4vCPU/16GB"
+                    elif min_vcpu is not None and min_vcpu <= 8:
+                        _example_type = "m5.2xlarge"
+                        _example_desc = "8vCPU/32GB"
+                    else:
+                        _example_type = "r6i.xlarge"
+                        _example_desc = "4vCPU/32GB"
+                elif provider == "gcp":
+                    if min_vcpu is not None and min_vcpu <= 4:
+                        _example_type = "n2-standard-4"
+                        _example_desc = "4vCPU/16GB"
+                    else:
+                        _example_type = "n2-standard-8"
+                        _example_desc = "8vCPU/32GB"
+                else:
+                    if min_vcpu is not None and min_vcpu <= 4:
+                        _example_type = "Standard_D4s_v3"
+                        _example_desc = "4vCPU/16GB"
+                    else:
+                        _example_type = "Standard_D8s_v3"
+                        _example_desc = "8vCPU/32GB"
+                next_steps.append(
+                    f"Spec filters applied — {total_found} total matches, showing {effective_max}. "
+                    f"There are {total_found - effective_max} more instances not shown. "
+                    f"To see all: re-call with max_results={total_found}. "
+                    f"To narrow: add family filter (e.g. family='m5') or tighten min_vcpu/min_memory_gb. "
+                    f"To price this sample immediately: call get_prices_batch with the instance_types above. "
+                    f"Or go direct: get_compute_price(provider='{provider}', "
+                    f"instance_type='{_example_type}', region='{region}') for a known {_example_desc} type."
+                )
+            else:
+                # No spec filters — guide the LLM to narrow by family first
+                if provider == "aws":
+                    _example_family = family if family else "m5"
+                    _family_hint = (
+                        f'family="{_example_family}" (AWS general-purpose) or '
+                        f'"c6g" (ARM compute-optimised) or "r6g" (memory-optimised)'
+                    )
+                elif provider == "gcp":
+                    _example_family = family if family else "n2-standard"
+                    _family_hint = (
+                        f'family="{_example_family}" (GCP general-purpose) or '
+                        f'"c2-standard" (compute-optimised) or "m2-ultramem" (memory-optimised)'
+                    )
+                else:
+                    _example_family = family if family else "Standard_D"
+                    _family_hint = f'family="{_example_family}"'
+                next_steps.append(
+                    f"Result truncated: returned {effective_max} of {total_found} matches. "
+                    f"Narrow by family — e.g. {_family_hint} — or add "
+                    f"min_vcpu/min_memory_gb spec filters. "
+                    f"To retrieve all {total_found} results: re-call with max_results={total_found}."
+                )
+                next_steps.append(_prices_batch_hint)
+        else:
+            next_steps.append(_prices_batch_hint)
+
+        response: dict[str, Any] = {
             "provider": provider,
             "region": region,
-            "count": len(capped),
-            "instance_types": [_compact(t) for t in capped],
+            "region_name": region_display_name(provider, region),
+            "filters": {
+                "family": family or None,
+                "min_vcpu": min_vcpu,
+                "min_memory_gb": min_memory_gb,
+                "gpu": gpu,
+            },
+            "count": len(instances),
+            "total_found": total_found,
+            "truncated": truncated,
+            "instance_types": [
+                {
+                    "instance_type": i.instance_type,
+                    "vcpu": i.vcpu,
+                    "memory_gb": i.memory_gb,
+                    "gpu_count": i.gpu_count if i.gpu_count else None,
+                    "gpu_type": i.gpu_type,
+                    "network": i.network_performance,
+                    "storage": i.storage,
+                }
+                for i in instances
+            ],
+            "next_steps": next_steps,
         }
-        if total > max_results:
-            result["note"] = f"Showing {len(capped)} of {total} results — use filters to narrow"
-        return result
+        if provider == "azure":
+            response["specs_note"] = (
+                "Azure does not expose vCPU/memory specs via the Retail Prices API. "
+                "Filter by family name prefix instead "
+                "(e.g. family='Standard_D4s' for 4-vCPU D-series). "
+                "See https://learn.microsoft.com/en-us/azure/virtual-machines/sizes for specs."
+            )
+        return response
 
     @mcp.tool()
     async def describe_catalog(

@@ -925,7 +925,7 @@ func (p *Provider) ListInstanceTypes(
 
 		out, err := p.ec2Client.DescribeInstanceTypes(ctx, input)
 		if err != nil {
-			break
+			return nil, fmt.Errorf("EC2 DescribeInstanceTypes: %w", err)
 		}
 
 		for _, it := range out.InstanceTypes {
