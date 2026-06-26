@@ -603,7 +603,7 @@ func (p *Provider) DescribeCatalog(ctx context.Context) (*models.ProviderCatalog
 		Services: map[string][]string{
 			"compute":             {"ec2", "fargate"},
 			"storage":             {"ebs", "s3"},
-			"database":            {"rds", "elasticache"},
+			"database":            {"rds", "elasticache", "aurora_postgresql"},
 			"ai":                  {"bedrock", "sagemaker"},
 			"serverless":          {"lambda"},
 			"analytics":           {"redshift", "athena"},
@@ -639,9 +639,10 @@ func (p *Provider) DescribeCatalog(ctx context.Context) (*models.ProviderCatalog
 		},
 		FilterHints: map[string]map[string]any{
 			"compute": {
-				"resource_type": "EC2 instance type, e.g. 'm5.xlarge'",
-				"os":            "'Linux' or 'Windows'",
-				"term":          "pricing term",
+				"resource_type":    "EC2 instance type, e.g. 'm5.xlarge'",
+				"os":               "'Linux' or 'Windows'",
+				"term":             "pricing term; for 'compute_savings_plan' or 'ec2_instance_savings_plan' also pass commitment_years",
+				"commitment_years": "1 (default) or 3 — applies only to compute_savings_plan and ec2_instance_savings_plan terms",
 			},
 			"compute/savings_plan": {
 				"resource_type":    "EC2 instance type, e.g. 'm5.xlarge'",
@@ -670,6 +671,13 @@ func (p *Provider) DescribeCatalog(ctx context.Context) (*models.ProviderCatalog
 				"resource_type": "cache.r6g.large",
 				"service":       "elasticache",
 			},
+			"database/aurora_postgresql": {
+				"service":       "'rds' (Aurora uses the RDS service path)",
+				"engine":        "'aurora-postgresql' or 'aurora-mysql'",
+				"resource_type": "DB instance type e.g. 'db.r6g.large', 'db.r6g.2xlarge'",
+				"deployment":    "'single-az' (Aurora manages its own HA across 3 AZs; do not use 'multi-az')",
+				"note":          "Aurora storage, I/O requests, and backup pricing are not in this catalog. Aurora Standard storage: $0.10/GB-month; I/O-Optimized: $0.225/GB-month; I/O requests (Standard only): $0.20/million; backup beyond 1-day free: $0.021/GB-month.",
+			},
 			"ai/bedrock": {
 				"model": "e.g. 'claude-3-5-sonnet', 'nova-pro', 'llama-3-1-70b'",
 				"mode":  "'on_demand' or 'batch'",
@@ -686,7 +694,11 @@ func (p *Provider) DescribeCatalog(ctx context.Context) (*models.ProviderCatalog
 			"analytics/redshift":    {"service": "redshift"},
 			"analytics/athena":      {"service": "athena"},
 			"network/lb":            {"service": "lb", "note": "also accepts 'cloud_lb'"},
-			"network/cdn":           {"service": "cdn"},
+			"network/cdn": {
+				"service":           "cdn",
+				"data_gb_per_month": "monthly data transfer volume in GB (used for blended-rate calculation)",
+				"region":            "origin region e.g. 'us-east-1'",
+			},
 			"network/nat":           {"service": "nat", "note": "also accepts 'cloud_nat'"},
 			"network/data_transfer": {"service": "data_transfer"},
 			"network/egress": {
@@ -766,6 +778,16 @@ func (p *Provider) DescribeCatalog(ctx context.Context) (*models.ProviderCatalog
 				"deployment":    "single-az",
 				"region":        "us-east-1",
 			},
+			"database/aurora_postgresql": {
+				"provider":      "aws",
+				"domain":        "database",
+				"service":       "rds",
+				"engine":        "aurora-postgresql",
+				"resource_type": "db.r6g.large",
+				"deployment":    "single-az",
+				"region":        "us-east-1",
+				"term":          "on_demand",
+			},
 			"ai/bedrock": {
 				"provider":      "aws",
 				"domain":        "ai",
@@ -817,6 +839,13 @@ func (p *Provider) DescribeCatalog(ctx context.Context) (*models.ProviderCatalog
 				"destination_type":   "cross_region",
 				"destination_region": "eu-west-1",
 				"data_gb_per_month":  1024.0,
+			},
+			"network/cdn": {
+				"provider":          "aws",
+				"domain":            "network",
+				"service":           "cdn",
+				"data_gb_per_month": 1000.0,
+				"region":            "us-east-1",
 			},
 		},
 		DecisionMatrix: map[string]string{
@@ -923,25 +952,17 @@ func (p *Provider) BOMAdvisories(ctx context.Context, services []string, sampleR
 
 	if hasDatabase {
 		advisories = append(advisories, map[string]string{
-			"item": "RDS automated backups",
-			"why":  "Free for storage equal to DB size; extra storage charged beyond that",
-			"how_to_price": fmt.Sprintf(
-				`search_pricing(provider="aws", query="RDS Storage Snapshot", region=%q)`,
-				sampleRegion,
-			),
-			"price": notFetched,
+			"item":  "RDS automated backups",
+			"why":   "Free for storage equal to DB size; extra storage charged beyond that",
+			"price": "~$0.095/GB-month in us-east-1 — standard AWS published rate; no catalog lookup available for this item",
 		})
 	}
 
 	if hasStorage {
 		advisories = append(advisories, map[string]string{
-			"item": "EBS snapshots",
-			"why":  "Point-in-time backups stored in S3 — charged per GB-month",
-			"how_to_price": fmt.Sprintf(
-				`search_pricing(provider="aws", query="EBS Storage Snapshot", region=%q)`,
-				sampleRegion,
-			),
-			"price": notFetched,
+			"item":  "EBS snapshots",
+			"why":   "Point-in-time backups stored in S3 — charged per GB-month",
+			"price": "~$0.05/GB-month in us-east-1 — standard AWS published rate; no catalog lookup available for this item",
 		})
 	}
 

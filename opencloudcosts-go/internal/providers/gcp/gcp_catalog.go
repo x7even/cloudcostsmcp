@@ -82,7 +82,7 @@ func gcpDescribeCatalog() *models.ProviderCatalog {
 				"size_gb":      "Disk size in GiB for monthly cost estimate",
 			},
 			"database/cloud_sql": {
-				"resource_type": "Cloud SQL instance type e.g. 'db-n1-standard-4', 'db-custom-2-3840'",
+				"resource_type": "Cloud SQL instance type e.g. 'db-n1-standard-4', 'db-n1-standard-8', 'db-n1-standard-16', 'db-custom-8-32768'. Use the db-n1-standard-N family for standard workloads; there is no db-n2 variant for Cloud SQL.",
 				"engine":        "MySQL | PostgreSQL | SQL Server",
 				"deployment":    "single-az (zonal) | ha (regional/HA)",
 			},

@@ -45,7 +45,9 @@ var serviceToExpectedDomain = []struct {
 	{"eks", "container"},
 	{"aks", "container"},
 	{"data_transfer", "inter_region_egress"},
-	{"egress", "inter_region_egress"},
+	// "egress" is intentionally absent: it is valid in both domain=network (internet egress)
+	// and domain=inter_region_egress (cross-region flat rates). All callers supply an explicit
+	// domain, so FillDomain returns before consulting serviceToDomain. See spec_infer.go.
 }
 
 func TestFillDomainFromService(t *testing.T) {

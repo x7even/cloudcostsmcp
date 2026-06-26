@@ -46,8 +46,15 @@ var serviceToDomain = map[string]string{
 	"eks": "container",
 	"aks": "container",
 	// egress / data transfer
+	// "egress" is intentionally absent: it is a valid service in BOTH domain=network
+	// (internet egress with tiered pricing via NetworkPricingSpec + destination_type=internet)
+	// AND domain=inter_region_egress (flat per-region rates via EgressPricingSpec).
+	// Including it here would override an explicitly supplied domain=network during FillDomain,
+	// routing the get_price call to EgressPricingSpec instead of NetworkPricingSpec and
+	// bypassing the internetEgressPrices() tiered-rate branch. All prompts that use
+	// service=egress supply an explicit domain, so FillDomain returns early before this map
+	// is consulted anyway.
 	"data_transfer": "inter_region_egress",
-	"egress":        "inter_region_egress",
 }
 
 // validTerms is shown in error hints when the model sends an invalid term.

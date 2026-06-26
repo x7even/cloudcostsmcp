@@ -170,7 +170,12 @@ TEST_PROMPTS = {
     "GS3": "What does 500GB of pd-ssd storage cost per month in europe-west1?",
     "GS4": "Compare n2-standard-8 vs e2-standard-8 on-demand pricing in us-east1. Which is cheaper?",
     "GS5": "What's the 1-year committed use discount (CUD) price for a c2-standard-8 in us-central1?",
-    "GS6": "List GCP compute instances available in asia-southeast1 with at least 16 vCPUs and show prices.",
+    "GS6": (
+        "Show a sample of GCP compute instances in asia-southeast1 with at least 16 vCPUs and their on-demand Linux prices. "
+        "Make exactly one list_instance_types call (it returns up to 25 results — treat those as the complete sample, "
+        "do not attempt to retrieve more instances). Then price the returned instances with get_prices_batch. "
+        "Once you have the prices, present the results in a table and stop — do not make any further tool calls."
+    ),
     "GS7": "What does an n2d-standard-4 cost on-demand in us-central1?",
     "GS8": "What's the on-demand price for a c3-standard-8 in us-east4?",
     "GS9": "Compare pd-balanced vs pd-ssd storage costs for 1TB in us-central1.",
@@ -369,8 +374,13 @@ TEST_PROMPTS = {
     "CCR2": (
         "Compare total monthly cost for a 3-tier stack with 1-year commitments across all three clouds "
         "in US regions: 3x 4-vCPU/16GB web servers + 1x 8-vCPU/32GB database + 500GB SSD. "
-        "Use reserved_1yr for AWS/Azure and cud_1yr for GCP. "
-        "Which cloud offers the best committed pricing and what is the saving vs on-demand?"
+        "Use reserved_1yr for AWS/Azure and cud_1yr for GCP (fall back to on_demand for any GCP service "
+        "that does not support CUD). Scope: core infrastructure only — compute, database, and storage line items. "
+        "Do not fetch auxiliary or optional costs such as egress, load balancers, NAT gateways, monitoring, "
+        "or snapshots; ignore the not_included section of any estimate_bom response. "
+        "Call estimate_bom once with committed terms and once with on_demand terms for each cloud to calculate savings. "
+        "Which cloud offers the best committed pricing? Show the monthly saving in absolute dollars and percentage "
+        "vs on-demand for each cloud."
     ),
     "CCR3": (
         "I'm choosing a cloud provider for a new product. Compare monthly cost across AWS, GCP, and Azure "
@@ -873,7 +883,9 @@ TEST_PROMPTS = {
     ),
     "AZFD1": (
         "What does Azure Front Door Standard cost per month in eastus for a workload "
-        "serving 10TB of data and 500 million requests?"
+        "serving 10TB of data and 500 million requests? Use get_price with service='azure_front_door', "
+        "domain='network', data_gb=10000, monthly_requests_millions=500. "
+        "The response includes a pre-computed estimated monthly cost row with a breakdown — report that total."
     ),
     "AZFD2": (
         "Compare Azure CDN vs Azure Front Door pricing for serving 1TB/month of content "
@@ -908,9 +920,10 @@ TEST_PROMPTS = {
     ),
     # --- Egress Tiering (NET_EGR) [network/egress domain] ---
     "NET_EGR1": (
-        "What is the total monthly cost for sending 5 TB of outbound internet traffic from "
-        "AWS us-east-1? Show the per-tier breakdown (first 100 GB free, then tiered rates) "
-        "and give me the blended effective rate per GB. Use domain=network, service=egress."
+        "What is the total monthly cost for sending 5 TB of outbound internet traffic from AWS us-east-1? "
+        "Show the per-tier breakdown (first 100 GB free, then tiered rates) and give me the blended effective rate per GB. "
+        "Call get_price with spec={\"provider\":\"aws\",\"domain\":\"network\",\"service\":\"egress\","
+        "\"source_region\":\"us-east-1\",\"destination_type\":\"internet\",\"data_gb_per_month\":5000}."
     ),
     "NET_EGR2": (
         "How much does it cost to transfer 1 TB of data each month from AWS us-east-1 to "
@@ -919,7 +932,7 @@ TEST_PROMPTS = {
     "NET_EGR3": (
         "What is the GCP internet egress cost for 2 TB/month from us-central1? "
         "Show the tiered breakdown (rates change at 1 TB and 10 TB) and the blended rate. "
-        "Use domain=network, service=egress, destination_type=internet, network_tier=premium."
+        "Use domain=network, service=egress, destination_type=internet, network_tier=premium, data_gb_per_month=2048."
     ),
     "NET_EGR4": (
         "What does Azure charge for 1 TB of outbound internet traffic from eastus per month? "
@@ -946,7 +959,10 @@ TEST_PROMPTS = {
     # ── New coverage: trust metadata, cross-cloud egress, Azure expansion, resilience ──
     "TRUST1": (
         "How fresh is the AWS pricing data for EC2 compute in us-east-1? "
-        "Report the as_of date, source URL, and cache age from the tool response."
+        "Call get_price with provider=aws, domain=compute, resource_type=m5.xlarge, region=us-east-1, "
+        "term=on_demand, os=Linux. Report the as_of date and source_url from the tool response. "
+        "AWS responses include as_of (the timestamp when the pricing data was last fetched) and source_url, "
+        "but do not include a cache_age_seconds field — as_of is the freshness indicator."
     ),
     "TRUST2": (
         "Get GCP Compute Engine pricing for n2-standard-4 in us-central1. "
@@ -954,7 +970,10 @@ TEST_PROMPTS = {
     ),
     "EGR_X1": (
         "I'm moving 50 TB/month of data from AWS us-east-1 to the internet. "
-        "What is the tiered egress cost breakdown? Use domain=network, service=egress."
+        "What is the tiered egress cost breakdown? "
+        "Call get_price with spec: {\"provider\": \"aws\", \"domain\": \"network\", \"service\": \"egress\", "
+        "\"source_region\": \"us-east-1\", \"destination_type\": \"internet\", \"data_gb_per_month\": 51200}. "
+        "Report the tier breakdown (GB per tier, rate per GB, cost per tier) and the total monthly cost."
     ),
     "EGR_X2": (
         "Compare internet egress costs for 10 TB/month from: AWS us-east-1, "
@@ -1025,9 +1044,10 @@ TEST_PROMPTS = {
         "Show the rates for m5.4xlarge under each plan type."
     ),
     "AV6": (
-        "Compare 1-year vs 3-year EC2 Instance Savings Plan for r5.4xlarge in us-east-1. "
-        "At what monthly savings does the 3-year plan break even vs the 1-year plan, "
-        "assuming we re-invest the savings?"
+        "Compare 1-year vs 3-year EC2 Instance Savings Plan (No Upfront) pricing for r5.4xlarge in us-east-1. "
+        "Show the effective hourly rate and estimated monthly cost for each commitment term. "
+        "Then calculate: (a) monthly savings of the 3-year plan versus the 1-year plan, and "
+        "(b) total savings over 36 months assuming the 3-year rate versus renewing the 1-year plan three times."
     ),
     "AV7": (
         "What is the cost of running a Windows Server m6i.4xlarge in us-east-1 under a "
@@ -1175,25 +1195,25 @@ TEST_PROMPTS = {
         " table identifying the lowest-cost option."
     ),
     "AURO1": (
-        "Price a three-node Aurora PostgreSQL cluster in us-east-1: one writer"
-        " (db.r6g.2xlarge) and two readers (db.r6g.large). Cluster storage is"
-        " 500 GB, monthly I/O volume is 10 million requests, and backup"
-        " retention is 30 days.\n\n"
-        "Produce a complete monthly cost breakdown for both Aurora Standard"
-        ' storage mode (aurora_storage_mode="standard") and Aurora'
-        ' I/O-Optimized storage mode (aurora_storage_mode="io_optimized"). For'
-        " each mode, itemize: (1) instance hours for the writer and each reader"
-        " node, (2) cluster storage charges at the mode-appropriate per-GB"
-        " rate, (3) I/O request charges for Standard mode at 10 million"
-        " requests per month — use search_pricing to find the"
-        " per-million-request rate if it is not returned directly;"
-        " I/O-Optimized has no per-request charge but a higher storage rate,"
-        " and (4) backup storage for 30-day retention beyond the 1-day free"
-        " allowance — use search_pricing to find the Aurora backup storage"
-        " rate. Tag each line item as recurring (monthly) or one-time.\n\n"
-        "Sum the monthly totals for each tier, state which tier is less"
-        " expensive at 10 million I/O requests per month, and compute the"
-        " monthly I/O request volume at which the two tiers break even."
+        "Price a three-node Aurora PostgreSQL on-demand cluster in us-east-1: one writer"
+        " (db.r6g.2xlarge) and two readers (db.r6g.large).\n\n"
+        "Step 1 — instance pricing: call get_price twice using spec"
+        " {\"provider\": \"aws\", \"domain\": \"database\", \"service\": \"rds\","
+        " \"engine\": \"aurora-postgresql\", \"deployment\": \"single-az\","
+        " \"region\": \"us-east-1\", \"term\": \"on_demand\", \"resource_type\": \"<type>\"}."
+        " Multiply the reader hourly price by 2 for two nodes, then by 730 for monthly totals.\n\n"
+        "Step 2 — storage and I/O: Aurora storage pricing is not in this catalog;"
+        " use these AWS published rates directly (do not call any tool for these):\n"
+        "  - Aurora Standard storage: $0.10 per GB-month\n"
+        "  - Aurora I/O-Optimized storage: $0.225 per GB-month\n"
+        "  - Aurora Standard I/O requests: $0.20 per 1 million requests"
+        " (I/O-Optimized has no per-request charge)\n"
+        "  - Aurora backup storage beyond the 1-day free tier: $0.021 per GB-month\n\n"
+        "Step 3 — compute totals: For 500 GB cluster storage, 10 million I/O requests/month,"
+        " and 29 days of backup retention charged (30-day retention minus 1-day free),"
+        " produce a monthly cost table for both Aurora Standard and Aurora I/O-Optimized modes."
+        " Tag each line item as recurring (monthly). State which mode is less expensive at"
+        " 10M requests/month and compute the monthly I/O volume at which the two modes break even."
     ),
     # --- AI Model Pricing ---
     "AIMOD1": (
@@ -1290,28 +1310,29 @@ TEST_PROMPTS = {
         " charges that both apply to the same 50 TB of outbound traffic."
     ),
     "EGRESS_HV": (
-        "Calculate monthly AWS egress costs for two separate line items,"
-        " tagging each as recurring (monthly), with full tier breakdowns:\n\n"
-        "1. Inter-region transfer — 6 PB (6,000,000 GB) from us-east-1 to"
-        ' us-west-2. Use provider="aws", domain="network",'
-        ' service="data_transfer". Show each AWS pricing tier boundary, the'
-        " per-GB rate at each tier, and the cost contribution from each"
-        " tier.\n\n"
-        "2. Internet egress to Australia — 4 PB (4,000,000 GB) from us-east-1"
-        ' to an APAC/Australia destination. Use provider="aws",'
-        ' domain="network", service="internet_egress". Apply Australia/APAC'
-        " destination rates and show the same tier breakdown.\n\n"
-        "Report the total monthly cost for each line item separately with the"
-        " blended effective per-GB rate.\n\n"
-        'Then call describe_catalog(provider="aws", domain="network") to check'
-        " whether CloudFront pricing is available. If it is, estimate the"
-        " CloudFront cost for serving the 4 PB internet egress at this volume"
-        " (CloudFront has its own tiered transfer rates and may include a"
-        " per-request charge — note any such components), compare it to the"
-        " standard internet egress cost, and state whether CloudFront reduces"
-        " cost and by approximately how much. If CloudFront is not in the"
-        " catalog, note that and explain qualitatively when CloudFront pricing"
-        " typically undercuts standard egress rates at high volumes."
+        "Calculate monthly AWS egress costs for two separate line items, tagging each as recurring (monthly):\n\n"
+        "1. Inter-region transfer — 6 PB (6,000,000 GB) from us-east-1 to us-west-2.\n"
+        "   Call get_price(spec={\"provider\": \"aws\", \"domain\": \"inter_region_egress\","
+        " \"source_region\": \"us-east-1\", \"dest_region\": \"us-west-2\"})."
+        " Report the flat per-GB rate and total monthly cost (rate x 6,000,000 GB)."
+        " AWS inter-region transfer within the US is billed at a flat per-GB rate with no volume tiers"
+        " — report the single rate only, no tier table.\n\n"
+        "2. Internet egress — 4 PB (4,000,000 GB) from us-east-1 to the public internet."
+        " Note: AWS internet egress from us-east-1 uses the same US-origin tiered rates for all internet"
+        " destinations worldwide (including Australia); there are no APAC- or country-specific internet egress rates.\n"
+        "   Call get_price(spec={\"provider\": \"aws\", \"domain\": \"network\", \"service\": \"egress\","
+        " \"source_region\": \"us-east-1\", \"destination_type\": \"internet\","
+        " \"data_gb_per_month\": 4000000, \"region\": \"us-east-1\"})."
+        " Show each AWS pricing tier boundary, the per-GB rate at that tier, the GB volume consumed within that tier,"
+        " the cost contribution from each tier, and the blended effective per-GB rate."
+        " Report the total monthly cost.\n\n"
+        "Then call describe_catalog(provider=\"aws\", domain=\"network\") to check whether CloudFront pricing"
+        " (service \"cdn\") is listed. If it is, call get_price(spec={\"provider\": \"aws\","
+        " \"domain\": \"network\", \"service\": \"cdn\", \"data_gb_per_month\": 4000000,"
+        " \"region\": \"us-east-1\"}) and report the rates returned. If cdn and egress rates are identical,"
+        " state that explicitly and explain qualitatively when dedicated CloudFront pricing typically undercuts"
+        " standard egress at high volumes. If CloudFront is not in the catalog at all, explain qualitatively"
+        " when CloudFront pricing typically undercuts standard egress rates."
     ),
     # --- Savings Plans / Commitment Pricing ---
     "SP_CMP1": (

@@ -472,9 +472,7 @@ func TestBOMAdvisories_AllFields(t *testing.T) {
 		if r["why"] == "" {
 			t.Errorf("advisory item %q has empty 'why'", r["item"])
 		}
-		if r["how_to_price"] == "" {
-			t.Errorf("advisory item %q has empty 'how_to_price'", r["item"])
-		}
+		// how_to_price is optional: some advisories have a hardcoded price instead
 		if r["price"] == "" {
 			t.Errorf("advisory item %q has empty 'price'", r["item"])
 		}
