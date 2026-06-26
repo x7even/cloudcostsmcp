@@ -1175,11 +1175,12 @@ func (h *Handler) HandleDescribeCatalog(
 
 		// GCP serverless (Cloud Run, Cloud Functions) is only available via the
 		// Python provider — emit a clear message rather than an empty service list.
-		if in.Provider == "gcp" && in.Domain == string(models.PricingDomainServerless) {
+		switch {
+		case in.Provider == "gcp" && in.Domain == string(models.PricingDomainServerless):
 			out["error"] = "not_supported_in_go_provider"
 			out["tip"] = "GCP serverless (Cloud Run, Cloud Functions) is not implemented in the " +
 				"Go provider. Use the Python provider for Cloud Run and Cloud Functions pricing."
-		} else if in.Service != "" {
+		case in.Service != "":
 			// Service was specified but not found — check if it lives in a different domain.
 			svcList := strings.Join(availSvcs, "', '")
 			if svcList == "" {
@@ -1208,7 +1209,7 @@ func (h *Handler) HandleDescribeCatalog(
 					svcList,
 				)
 			}
-		} else {
+		default:
 			out["tip"] = fmt.Sprintf(
 				"Specify service= to get targeted guidance. Available services for %s: %v",
 				in.Domain, availSvcs,
