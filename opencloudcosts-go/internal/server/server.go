@@ -1,5 +1,5 @@
 // Package server wires the modelcontextprotocol/go-sdk MCP server, registers
-// all 15 tools, and exposes RunStdio / RunHTTP transports.
+// all 16 tools, and exposes RunStdio / RunHTTP transports.
 //
 // Tool InputSchemas are taken verbatim from schemas/tools-snapshot.json (the
 // Phase 0 Python snapshot) rather than being auto-generated from Go struct
@@ -514,6 +514,54 @@ const (
 		"title": "estimate_unit_economicsArguments",
 		"type": "object"
 	}`
+
+	schemaCompareBOM = `{
+		"properties": {
+			"providers": {
+				"items": {"type": "string", "enum": ["aws", "gcp", "azure"]},
+				"description": "Which providers to compare. Defaults to all three.",
+				"default": ["aws", "gcp", "azure"],
+				"title": "Providers",
+				"type": "array"
+			},
+			"region_preference": {
+				"description": "Preferred region tier: 'us' (US regions), 'eu' (Europe), 'apac' (Asia-Pacific).",
+				"enum": ["us", "eu", "apac"],
+				"default": "us",
+				"title": "Region Preference",
+				"type": "string"
+			},
+			"workload": {
+				"description": "Cloud-agnostic workload description. Each key is a logical service name.",
+				"additionalProperties": {
+					"type": "object",
+					"properties": {
+						"type": {"type": "string", "description": "Resource type: 'compute', 'database', 'storage', 'cache'"},
+						"vcpus": {"type": "number", "description": "Number of virtual CPUs"},
+						"memory_gb": {"type": "number", "description": "Memory in GB"},
+						"quantity": {"type": "number", "description": "Number of instances", "default": 1},
+						"engine": {"type": "string", "description": "For databases: mysql, postgres, etc."},
+						"storage_gb": {"type": "number", "description": "Storage size in GB (for storage/database)"},
+						"storage_type": {"type": "string", "description": "ssd (default), hdd"},
+						"os": {"type": "string", "default": "linux"}
+					},
+					"required": ["type"]
+				},
+				"title": "Workload",
+				"type": "object"
+			},
+			"terms": {
+				"items": {"type": "string"},
+				"description": "Pricing terms to include. Common values: on_demand, reserved_1yr, cud_1yr. Default: ['on_demand', 'reserved_1yr'].",
+				"default": ["on_demand", "reserved_1yr"],
+				"title": "Terms",
+				"type": "array"
+			}
+		},
+		"required": ["workload"],
+		"title": "compare_bomArguments",
+		"type": "object"
+	}`
 )
 
 // BuildMCPServerForTest exposes the internal MCP server construction for
@@ -569,9 +617,30 @@ const (
 	descEstimateBOM = "\n        Use this tool for total infrastructure cost, TCO, monthly spend for a multi-resource\n        stack, or cost comparison between architectures.\n\n        Handles compute + storage + database + AI together in a single call — do NOT call\n        get_price individually for multi-resource questions; use this tool instead.\n\n        Returns per-item and total monthly/annual costs with real public pricing data,\n        plus a not_included list of hidden costs (egress, load balancers, NAT Gateway,\n        monitoring, backups). IMPORTANT: if not_included is present in the response, you\n        MUST call get_price for each listed item — using the exact command in each item's\n        how_to_price field — before writing your final answer. Do NOT estimate or guess\n        any cost from the not_included list.\n\n        Each item should be a PricingSpec dict PLUS a quantity field:\n          - provider: \"aws\" | \"gcp\" | \"azure\"\n          - domain: \"compute\" | \"storage\" | \"database\" | \"ai\" | ...\n          - region: region code\n          - quantity: number of units (default 1)\n          - hours_per_month: hours/month for compute (default 730 = always-on)\n          - description: optional label for this line item\n          Plus domain-specific fields (see get_price or describe_catalog for details).\n\n        Examples:\n          Compute + database + storage on AWS:\n          [\n            {\"provider\": \"aws\", \"domain\": \"compute\", \"resource_type\": \"m5.xlarge\",   \"region\": \"us-east-1\", \"quantity\": 3},\n            {\"provider\": \"aws\", \"domain\": \"database\", \"service\": \"rds\", \"resource_type\": \"db.r6g.large\", \"engine\": \"MySQL\", \"deployment\": \"single-az\", \"region\": \"us-east-1\"},\n            {\"provider\": \"aws\", \"domain\": \"storage\",  \"storage_type\": \"gp3\", \"size_gb\": 500, \"region\": \"us-east-1\"}\n          ]\n\n          Mixed cloud:\n          [\n            {\"provider\": \"gcp\",   \"domain\": \"compute\", \"resource_type\": \"n1-standard-4\", \"region\": \"us-central1\", \"quantity\": 2},\n            {\"provider\": \"azure\", \"domain\": \"compute\", \"resource_type\": \"Standard_D4s_v3\", \"region\": \"eastus\", \"quantity\": 1}\n          ]\n        "
 
 	descEstimateUnitEconomics = "\n        Estimate per-unit economics (cost per user, per request, per transaction) given\n        a Bill of Materials and expected monthly usage volume.\n\n        Args:\n            items: Same format as estimate_bom — list of cloud resource PricingSpec dicts\n                   plus quantity field. See estimate_bom for full item format.\n            units_per_month: Monthly volume being measured (e.g. 10000 users)\n            unit_label: What the unit represents — \"user\", \"request\", \"transaction\", etc.\n        "
+
+	descCompareBOM = "Price a multi-service workload across multiple cloud providers simultaneously " +
+		"and return a side-by-side cost comparison. Use this when the user wants to compare " +
+		"costs across AWS, GCP, and/or Azure for the same infrastructure.\n\n" +
+		"Returns per-provider totals keyed by pricing term, committed vs on-demand savings, " +
+		"and any supplementary costs not included in the estimate.\n\n" +
+		"The workload is described in cloud-agnostic terms (vcpus, memory_gb, storage_gb) — " +
+		"the tool selects the closest equivalent instance type per provider automatically.\n\n" +
+		"Args:\n" +
+		"    providers: Which providers to compare — [\"aws\", \"gcp\", \"azure\"] (default: all three).\n" +
+		"    region_preference: Region tier — \"us\" (default), \"eu\", \"apac\".\n" +
+		"    workload: Map of logical name → resource spec. Each spec needs 'type' " +
+		"(compute/storage/database/cache) plus vcpus, memory_gb, quantity, etc.\n" +
+		"    terms: Pricing terms — default [\"on_demand\", \"reserved_1yr\"]. " +
+		"Term translation is automatic: reserved_1yr maps to cud_1yr for GCP.\n\n" +
+		"Example:\n" +
+		"    workload: {\n" +
+		"      \"web_servers\": {\"type\": \"compute\", \"vcpus\": 4, \"memory_gb\": 16, \"quantity\": 3},\n" +
+		"      \"database\":    {\"type\": \"database\", \"vcpus\": 8, \"memory_gb\": 32},\n" +
+		"      \"storage\":     {\"type\": \"storage\", \"storage_gb\": 500, \"storage_type\": \"ssd\"}\n" +
+		"    }"
 )
 
-// ---- registerTools registers all 15 MCP tools on the server ----
+// ---- registerTools registers all 16 MCP tools on the server ----
 //
 // Each handler is a typed ToolHandlerFor[In, any] closure that:
 //   1. Calls s.callTool() to apply timeout, logging, and panic recovery.
@@ -671,6 +740,16 @@ func (s *AppServer) registerTools(srv *mcp.Server) {
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in tools.EstimateUnitEconomicsInput) (*mcp.CallToolResult, any, error) {
 		return s.callTool(ctx, "estimate_unit_economics", func(ctx context.Context) (*mcp.CallToolResult, any, error) {
 			return h.HandleEstimateUnitEconomics(ctx, req, in)
+		})
+	})
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "compare_bom",
+		Description: descCompareBOM,
+		InputSchema: rawSchema(schemaCompareBOM),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in tools.CompareBOMInput) (*mcp.CallToolResult, any, error) {
+		return s.callTool(ctx, "compare_bom", func(ctx context.Context) (*mcp.CallToolResult, any, error) {
+			return h.HandleCompareBOM(ctx, req, in)
 		})
 	})
 

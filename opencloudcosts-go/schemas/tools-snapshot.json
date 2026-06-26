@@ -504,6 +504,111 @@
         "title": "estimate_unit_economicsDictOutput",
         "type": "object"
       }
+    },
+    {
+      "name": "compare_bom",
+      "description": "Price a multi-service workload across multiple cloud providers simultaneously and return a side-by-side cost comparison. Use this when the user wants to compare costs across AWS, GCP, and/or Azure for the same infrastructure.\n\nReturns per-provider totals keyed by pricing term, committed vs on-demand savings, and any supplementary costs not included in the estimate.\n\nThe workload is described in cloud-agnostic terms (vcpus, memory_gb, storage_gb) \u2014 the tool selects the closest equivalent instance type per provider automatically.\n\nArgs:\n    providers: Which providers to compare \u2014 [\"aws\", \"gcp\", \"azure\"] (default: all three).\n    region_preference: Region tier \u2014 \"us\" (default), \"eu\", \"apac\".\n    workload: Map of logical name \u2192 resource spec. Each spec needs 'type' (compute/storage/database/cache) plus vcpus, memory_gb, quantity, etc.\n    terms: Pricing terms \u2014 default [\"on_demand\", \"reserved_1yr\"]. Term translation is automatic: reserved_1yr maps to cud_1yr for GCP.\n\nExample:\n    workload: {\n      \"web_servers\": {\"type\": \"compute\", \"vcpus\": 4, \"memory_gb\": 16, \"quantity\": 3},\n      \"database\":    {\"type\": \"database\", \"vcpus\": 8, \"memory_gb\": 32},\n      \"storage\":     {\"type\": \"storage\", \"storage_gb\": 500, \"storage_type\": \"ssd\"}\n    }",
+      "inputSchema": {
+        "properties": {
+          "providers": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "aws",
+                "gcp",
+                "azure"
+              ]
+            },
+            "description": "Which providers to compare. Defaults to all three.",
+            "default": [
+              "aws",
+              "gcp",
+              "azure"
+            ],
+            "title": "Providers",
+            "type": "array"
+          },
+          "region_preference": {
+            "description": "Preferred region tier: 'us' (US regions), 'eu' (Europe), 'apac' (Asia-Pacific).",
+            "enum": [
+              "us",
+              "eu",
+              "apac"
+            ],
+            "default": "us",
+            "title": "Region Preference",
+            "type": "string"
+          },
+          "workload": {
+            "description": "Cloud-agnostic workload description. Each key is a logical service name.",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "description": "Resource type: 'compute', 'database', 'storage', 'cache'"
+                },
+                "vcpus": {
+                  "type": "number",
+                  "description": "Number of virtual CPUs"
+                },
+                "memory_gb": {
+                  "type": "number",
+                  "description": "Memory in GB"
+                },
+                "quantity": {
+                  "type": "number",
+                  "description": "Number of instances",
+                  "default": 1
+                },
+                "engine": {
+                  "type": "string",
+                  "description": "For databases: mysql, postgres, etc."
+                },
+                "storage_gb": {
+                  "type": "number",
+                  "description": "Storage size in GB (for storage/database)"
+                },
+                "storage_type": {
+                  "type": "string",
+                  "description": "ssd (default), hdd"
+                },
+                "os": {
+                  "type": "string",
+                  "default": "linux"
+                }
+              },
+              "required": [
+                "type"
+              ]
+            },
+            "title": "Workload",
+            "type": "object"
+          },
+          "terms": {
+            "items": {
+              "type": "string"
+            },
+            "description": "Pricing terms to include. Common values: on_demand, reserved_1yr, cud_1yr. Default: ['on_demand', 'reserved_1yr'].",
+            "default": [
+              "on_demand",
+              "reserved_1yr"
+            ],
+            "title": "Terms",
+            "type": "array"
+          }
+        },
+        "required": [
+          "workload"
+        ],
+        "title": "compare_bomArguments",
+        "type": "object"
+      },
+      "outputSchema": {
+        "additionalProperties": true,
+        "title": "compare_bomDictOutput",
+        "type": "object"
+      }
     }
   ]
 }

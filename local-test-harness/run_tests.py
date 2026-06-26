@@ -372,9 +372,9 @@ TEST_PROMPTS = {
         "500GB SSD block storage. Use real instance types. Which cloud is cheapest overall?"
     ),
     "CCR2": (
-        "Compare total monthly cost for a 3-tier stack with 1-year commitments across all three clouds "
-        "in US regions: 3x 4-vCPU/16GB web servers + 1x 8-vCPU/32GB database + 500GB SSD. "
-        "Use reserved_1yr for AWS/Azure and cud_1yr for GCP. "
+        "Compare total monthly cost for a 3-tier stack across all three clouds in US regions: "
+        "3x 4-vCPU/16GB web servers + 1x 8-vCPU/32GB database + 500GB SSD. "
+        "Show both on-demand and 1-year committed pricing. "
         "Which cloud offers the best committed pricing and what is the saving vs on-demand?"
     ),
     "CCR3": (
