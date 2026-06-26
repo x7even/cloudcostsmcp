@@ -623,8 +623,11 @@ func TestEstimateBOM_Advisories(t *testing.T) {
 		t.Fatalf("expected non-empty not_included slice, got: %v", notIncluded)
 	}
 	notIncludedAction, _ := resp["not_included_action"].(string)
-	if !strings.Contains(notIncludedAction, "REQUIRED") {
-		t.Errorf("expected not_included_action to contain 'REQUIRED', got %q", notIncludedAction)
+	if !strings.Contains(notIncludedAction, "SUPPLEMENTARY") {
+		t.Errorf("expected not_included_action to contain 'SUPPLEMENTARY', got %q", notIncludedAction)
+	}
+	if strings.Contains(notIncludedAction, "REQUIRED") {
+		t.Errorf("not_included_action must not contain 'REQUIRED', got %q", notIncludedAction)
 	}
 }
 
@@ -862,5 +865,76 @@ func TestBOMMonthlyCostMath(t *testing.T) {
 				t.Errorf("expected monthly_cost=%.4f, got %.4f", tc.wantMonthly, amount)
 			}
 		})
+	}
+}
+
+// --------------------------------------------------------------------------
+// estimate_bom — not_included_action wording regression
+// --------------------------------------------------------------------------
+
+// TestEstimateBOM_NotIncludedAction_NoREQUIRED asserts that the not_included_action
+// field uses SUPPLEMENTARY framing rather than an unconditional REQUIRED mandate.
+// This prevents regression to the old wording that caused context explosion on
+// committed-pricing comparison tests (CCR2 pattern).
+func TestEstimateBOM_NotIncludedAction_NoREQUIRED(t *testing.T) {
+	advisory := map[string]string{
+		"item":         "Data transfer (egress)",
+		"estimate":     "variable",
+		"how_to_price": `get_price({"provider":"aws","domain":"network","service":"data_transfer","region":"us-east-1"})`,
+	}
+	pvdr := &mockProvider{
+		name:          "aws",
+		defaultRegion: "us-east-1",
+		supportsFunc:  func(_ models.PricingDomain, _ string) bool { return true },
+		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
+			price := makeComputePrice("aws", spec.GetRegion(), "m5.large", 0.096)
+			return &models.PricingResult{PublicPrices: []models.NormalizedPrice{price}}, nil
+		},
+	}
+	pvdrWithAdvisory := &mockProviderWithAdvisories{
+		mockProvider: pvdr,
+		advisories:   []map[string]string{advisory},
+	}
+	h := tools.New(map[string]tools.Provider{"aws": pvdrWithAdvisory})
+
+	items := []map[string]any{
+		{
+			"provider":      "aws",
+			"domain":        "compute",
+			"resource_type": "m5.large",
+			"region":        "us-east-1",
+		},
+	}
+	resp := callEstimateBOM(t, h, items)
+
+	if _, ok := resp["error"]; ok {
+		t.Fatalf("expected success, got: %v", resp)
+	}
+
+	// (a) not_included_action must NOT contain "REQUIRED:" — the unconditional mandate.
+	action, _ := resp["not_included_action"].(string)
+	if action == "" {
+		t.Fatal("not_included_action is empty; expected it to be set when advisories are present")
+	}
+	if strings.Contains(action, "REQUIRED:") {
+		t.Errorf("not_included_action must not contain 'REQUIRED:' (unconditional mandate causes context explosion); got %q", action)
+	}
+
+	// (b) not_included_action must contain "SUPPLEMENTARY" and "only if" (contextual framing).
+	if !strings.Contains(action, "SUPPLEMENTARY") {
+		t.Errorf("not_included_action must contain 'SUPPLEMENTARY', got %q", action)
+	}
+	if !strings.Contains(action, "only if") {
+		t.Errorf("not_included_action must contain 'only if' (opt-out framing), got %q", action)
+	}
+
+	// (c) not_included items are still present — we changed the action, not removed items.
+	notIncluded, ok := resp["not_included"]
+	if !ok || notIncluded == nil {
+		t.Fatal("not_included must still be set when advisories are present")
+	}
+	rows, ok := notIncluded.([]any)
+	if !ok || len(rows) == 0 {
+		t.Errorf("not_included must be a non-empty slice, got: %v", notIncluded)
 	}
 }

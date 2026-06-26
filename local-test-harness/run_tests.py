@@ -374,13 +374,8 @@ TEST_PROMPTS = {
     "CCR2": (
         "Compare total monthly cost for a 3-tier stack with 1-year commitments across all three clouds "
         "in US regions: 3x 4-vCPU/16GB web servers + 1x 8-vCPU/32GB database + 500GB SSD. "
-        "Use reserved_1yr for AWS/Azure and cud_1yr for GCP (fall back to on_demand for any GCP service "
-        "that does not support CUD). Scope: core infrastructure only — compute, database, and storage line items. "
-        "Do not fetch auxiliary or optional costs such as egress, load balancers, NAT gateways, monitoring, "
-        "or snapshots; ignore the not_included section of any estimate_bom response. "
-        "Call estimate_bom once with committed terms and once with on_demand terms for each cloud to calculate savings. "
-        "Which cloud offers the best committed pricing? Show the monthly saving in absolute dollars and percentage "
-        "vs on-demand for each cloud."
+        "Use reserved_1yr for AWS/Azure and cud_1yr for GCP. "
+        "Which cloud offers the best committed pricing and what is the saving vs on-demand?"
     ),
     "CCR3": (
         "I'm choosing a cloud provider for a new product. Compare monthly cost across AWS, GCP, and Azure "

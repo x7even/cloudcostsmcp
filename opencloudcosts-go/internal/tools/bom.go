@@ -364,9 +364,11 @@ func (h *Handler) HandleEstimateBOM(
 
 	if len(notIncluded) > 0 {
 		resp["not_included"] = notIncluded
-		resp["not_included_action"] = "REQUIRED: for each item in not_included, call get_price using the " +
-			"exact command in that item's how_to_price field before writing your " +
-			"final answer. Do NOT estimate or guess these costs."
+		resp["not_included_action"] = "SUPPLEMENTARY: these items are excluded from the baseline estimate above. " +
+			"Include them only if the user explicitly asked for comprehensive or total-cost-of-ownership pricing. " +
+			"For core infrastructure questions, you may note 'additional costs may apply' and list the items " +
+			"without making further tool calls. When the user did ask, price each item using the get_price " +
+			"command in its how_to_price field where one is provided, rather than estimating."
 	}
 
 	if len(errs) > 0 {
