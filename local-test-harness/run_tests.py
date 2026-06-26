@@ -1141,7 +1141,7 @@ def _preprocess_json(s: str) -> str:
     # Model emits the function name as a bare first string instead of "name": "..."
     s = re.sub(r'^\{\s*"([^"]+)",\s*"', r'{"name": "\1", "', s.strip())
     # {"name=describe_catalog, "arguments": ...} → {"name": "describe_catalog", "arguments": ...}
-    # Model uses = and omits closing quote/delimiter before continuing JSON (AZCOS4 pattern).
+    # Model uses = and omits closing quote/delimiter before continuing JSON (AZFD1/NSV5 pattern).
     s = re.sub(r'"name=([^">,\s]+),', r'"name": "\1",', s)
     return s
 
@@ -1378,6 +1378,7 @@ _XML_HALLUCINATION_PREFIXES = (
     "<function_calls",
     '{"name":',
     '{"function_calls',
+    '{"name=',
 )
 
 
@@ -1710,6 +1711,7 @@ async def run_single(
                         if content.strip():
                             # If the model still produced XML with tool_choice=none, try
                             # executing those calls once more before accepting the content.
+                            recovered = []
                             if any(m in content for m in _xml_markers):
                                 recovered = _extract_xml_tool_calls(content)
                                 if recovered and mcp_session_ok:
@@ -1752,8 +1754,13 @@ async def run_single(
                                         content = fc.get("message", {}).get("content") or content
                                     except Exception:
                                         pass  # use whatever content we have
-                            messages.append(final_msg)
-                            trace["messages"].append(final_msg)
+                                    # Record the final text response in the trace (tool-call msg already appended above)
+                                    trace["messages"].append({"role": "assistant", "content": content})
+                            # Only append final_msg when recovery did NOT fire; the recovery path
+                            # already appended it at lines above to avoid a duplicate.
+                            if not recovered or not mcp_session_ok:
+                                messages.append(final_msg)
+                                trace["messages"].append(final_msg)
                             trace["final_answer"] = content
                             trace["rounds"] = round_num + 1
                             _check_xml_hallucination(trace)
