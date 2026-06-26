@@ -403,12 +403,12 @@ const (
 			"region": {"title": "Region", "type": "string"},
 			"family": {"default": "", "title": "Family", "type": "string"},
 			"min_vcpu": {
-				"anyOf": [{"type": "integer"}, {"type": "null"}],
+				"anyOf": [{"type": "integer"}, {"type": "string"}, {"type": "null"}],
 				"default": null,
 				"title": "Min Vcpu"
 			},
 			"min_memory_gb": {
-				"anyOf": [{"type": "number"}, {"type": "null"}],
+				"anyOf": [{"type": "number"}, {"type": "string"}, {"type": "null"}],
 				"default": null,
 				"title": "Min Memory Gb"
 			},
