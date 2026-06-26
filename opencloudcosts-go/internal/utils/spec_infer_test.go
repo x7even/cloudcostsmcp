@@ -273,6 +273,21 @@ func TestSpecErrorResponseBadTermListsValidTerms(t *testing.T) {
 	}
 }
 
+// TestValidTermsContainsFlexCUD verifies that flex_cud is listed in validTerms
+// (Finding 6: spec_infer.go validTerms was missing flex_cud while lookup.go had it).
+func TestValidTermsContainsFlexCUD(t *testing.T) {
+	exc := errors.New("value error: .term input should be one of on_demand ...")
+	result := SpecErrorResponse(exc, map[string]interface{}{"domain": "compute"})
+	fix, ok := result["fix"]
+	if !ok {
+		t.Fatal("fix key missing")
+	}
+	fixStr := fmt.Sprintf("%v", fix)
+	if !strings.Contains(fixStr, "flex_cud") {
+		t.Errorf("validTerms must include flex_cud; got: %q", fixStr)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // SpecErrorResponse — missing provider hint
 // ---------------------------------------------------------------------------

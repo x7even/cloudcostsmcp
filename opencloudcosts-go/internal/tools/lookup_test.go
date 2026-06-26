@@ -1843,6 +1843,179 @@ func TestNew_MultipleProviders(t *testing.T) {
 }
 
 // --------------------------------------------------------------------------
+// Tests: describe_catalog — catalog fix regressions (Findings 1–6)
+// --------------------------------------------------------------------------
+
+// TestDescribeCatalog_AWS_LambdaServiceInfersDomain verifies Finding 1:
+// describe_catalog(provider='aws', service='lambda') with no domain must
+// infer domain='serverless' and return serverless/lambda guidance (not the
+// full support matrix).
+func TestDescribeCatalog_AWS_LambdaServiceInfersDomain(t *testing.T) {
+	realAWS := realAWSProvider(t)
+	pvdr := &mockProvider{
+		name:          "aws",
+		defaultRegion: "us-east-1",
+		describeCatFunc: func(ctx context.Context) (*models.ProviderCatalog, error) {
+			return realAWS.DescribeCatalog(ctx)
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"aws": pvdr})
+	resp := callDescribeCatalog(t, h, tools.DescribeCatalogInput{
+		Provider: "aws",
+		Service:  "lambda",
+		// Domain intentionally omitted.
+	})
+	// Must not return the full support_matrix path.
+	if _, hasSM := resp["support_matrix"]; hasSM {
+		t.Fatal("service='lambda' with no domain should NOT return support_matrix")
+	}
+	// Must emit a redirect_notice.
+	notice, ok := resp["redirect_notice"].(string)
+	if !ok || notice == "" {
+		t.Errorf("expected redirect_notice, got: %v", resp["redirect_notice"])
+	}
+	// Must return domain='serverless'.
+	if resp["domain"] != "serverless" {
+		t.Errorf("expected domain=serverless, got: %v", resp["domain"])
+	}
+	// Must return example_invocation or filter_hints (serverless/lambda guidance).
+	if resp["example_invocation"] == nil && resp["filter_hints"] == nil {
+		t.Errorf("expected serverless/lambda guidance, got: %v", resp)
+	}
+}
+
+// TestDescribeCatalog_AWS_ComputePlusLambdaCrossDomain verifies Finding 2:
+// describe_catalog(provider='aws', domain='compute', service='lambda') must
+// redirect to serverless domain and NOT return EC2/compute guidance.
+func TestDescribeCatalog_AWS_ComputePlusLambdaCrossDomain(t *testing.T) {
+	realAWS := realAWSProvider(t)
+	pvdr := &mockProvider{
+		name:          "aws",
+		defaultRegion: "us-east-1",
+		describeCatFunc: func(ctx context.Context) (*models.ProviderCatalog, error) {
+			return realAWS.DescribeCatalog(ctx)
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"aws": pvdr})
+	resp := callDescribeCatalog(t, h, tools.DescribeCatalogInput{
+		Provider: "aws",
+		Domain:   "compute",
+		Service:  "lambda",
+	})
+	// Must emit a redirect_notice.
+	notice, ok := resp["redirect_notice"].(string)
+	if !ok || notice == "" {
+		t.Errorf("expected redirect_notice for cross-domain redirect, got: %v", resp["redirect_notice"])
+	}
+	// Must redirect to serverless, not compute.
+	if resp["domain"] != "serverless" {
+		t.Errorf("expected domain=serverless after redirect, got: %v", resp["domain"])
+	}
+	// Must NOT return an example_invocation that mentions m5.xlarge (EC2 example).
+	if ex, ok := resp["example_invocation"].(map[string]any); ok {
+		if rt, _ := ex["resource_type"].(string); rt == "m5.xlarge" {
+			t.Errorf("cross-domain redirect returned EC2 example (m5.xlarge) — should be serverless")
+		}
+	}
+}
+
+// TestDescribeCatalog_AWS_LambdaFilterHintsHasUsageFields verifies Finding 3/5:
+// describe_catalog for serverless/lambda must include gb_seconds and
+// requests_millions in filter_hints.
+func TestDescribeCatalog_AWS_LambdaFilterHintsHasUsageFields(t *testing.T) {
+	realAWS := realAWSProvider(t)
+	pvdr := &mockProvider{
+		name:          "aws",
+		defaultRegion: "us-east-1",
+		describeCatFunc: func(ctx context.Context) (*models.ProviderCatalog, error) {
+			return realAWS.DescribeCatalog(ctx)
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"aws": pvdr})
+	resp := callDescribeCatalog(t, h, tools.DescribeCatalogInput{
+		Provider: "aws",
+		Domain:   "serverless",
+		Service:  "lambda",
+	})
+	if resp["error"] != nil {
+		t.Fatalf("unexpected error: %v", resp)
+	}
+	hints, ok := resp["filter_hints"].(map[string]any)
+	if !ok {
+		t.Fatalf("filter_hints missing or wrong type: %T", resp["filter_hints"])
+	}
+	for _, field := range []string{"gb_seconds", "requests_millions"} {
+		if _, has := hints[field]; !has {
+			t.Errorf("filter_hints missing %q; hints: %v", field, hints)
+		}
+	}
+}
+
+// TestDescribeCatalog_AWS_LambdaExampleHasUsageFields verifies Finding 5:
+// the serverless/lambda example_invocation must include gb_seconds and
+// requests_millions.
+func TestDescribeCatalog_AWS_LambdaExampleHasUsageFields(t *testing.T) {
+	realAWS := realAWSProvider(t)
+	pvdr := &mockProvider{
+		name:          "aws",
+		defaultRegion: "us-east-1",
+		describeCatFunc: func(ctx context.Context) (*models.ProviderCatalog, error) {
+			return realAWS.DescribeCatalog(ctx)
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"aws": pvdr})
+	resp := callDescribeCatalog(t, h, tools.DescribeCatalogInput{
+		Provider: "aws",
+		Domain:   "serverless",
+		Service:  "lambda",
+	})
+	if resp["error"] != nil {
+		t.Fatalf("unexpected error: %v", resp)
+	}
+	ex, ok := resp["example_invocation"].(map[string]any)
+	if !ok {
+		t.Fatalf("example_invocation missing or wrong type: %T", resp["example_invocation"])
+	}
+	for _, field := range []string{"gb_seconds", "requests_millions"} {
+		if _, has := ex[field]; !has {
+			t.Errorf("example_invocation missing %q; ex: %v", field, ex)
+		}
+	}
+}
+
+// TestDescribeCatalog_GCP_CloudRunNotSupported verifies Finding 3:
+// describe_catalog for GCP + service='cloud_run' should emit a
+// 'not_supported_in_go_provider' message rather than empty guidance.
+func TestDescribeCatalog_GCP_CloudRunNotSupported(t *testing.T) {
+	realGCP := realGCPProvider(t)
+	pvdr := &mockProvider{
+		name:          "gcp",
+		defaultRegion: "us-central1",
+		describeCatFunc: func(ctx context.Context) (*models.ProviderCatalog, error) {
+			return realGCP.DescribeCatalog(ctx)
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"gcp": pvdr})
+	resp := callDescribeCatalog(t, h, tools.DescribeCatalogInput{
+		Provider: "gcp",
+		Service:  "cloud_run",
+	})
+	// Must redirect to serverless.
+	if resp["domain"] != "serverless" {
+		t.Errorf("expected domain=serverless after cloud_run redirect, got: %v", resp["domain"])
+	}
+	// Must emit the not_supported_in_go_provider error.
+	if resp["error"] != "not_supported_in_go_provider" {
+		t.Errorf("expected error=not_supported_in_go_provider, got: %v", resp["error"])
+	}
+	// Must include a helpful tip mentioning Python provider.
+	tip, _ := resp["tip"].(string)
+	if !contains(tip, "Python") {
+		t.Errorf("tip should mention Python provider, got: %q", tip)
+	}
+}
+
+// --------------------------------------------------------------------------
 // Helper
 // --------------------------------------------------------------------------
 
