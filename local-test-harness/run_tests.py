@@ -97,10 +97,10 @@ SYSTEM_PROMPT = (
     "If a provider returns no data, write 'Unable to retrieve [provider] pricing' — never fill it in from memory.\n"
     "4. If estimate_bom returns a 'not_included' list, call get_price for each listed item individually. "
     "Do not estimate or guess any cost that was not returned by a tool.\n\n"
-    "TOOL CALLING: The function-calling interface handles all tool invocations automatically. "
-    "NEVER emit tool calls as raw text, XML, or JSON strings in your response text. "
-    "NEVER write <tool_call>, <function_calls>, or any similar markup in your response. "
-    "Only invoke tools through the structured function-calling interface — never in message content."
+    "TOOL CALL FORMAT — always use this exact format when calling a tool:\n"
+    "<tool_call>\n"
+    '{"name": "TOOL_NAME", "arguments": {"param": "value"}}\n'
+    "</tool_call>"
 )
 
 # ---------------------------------------------------------------------------
