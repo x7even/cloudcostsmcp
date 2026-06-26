@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 
 	"golang.org/x/sync/errgroup"
@@ -21,6 +22,23 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/models"
 )
+
+// FlexInt is an int that can be unmarshalled from either a JSON number or a
+// quoted numeric string (e.g. both 4 and "4" are accepted). This is needed
+// because some MCP clients serialize integer tool arguments as JSON strings.
+type FlexInt int
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (f *FlexInt) UnmarshalJSON(b []byte) error {
+	// Strip surrounding quotes if present (string form).
+	s := strings.Trim(string(b), `"`)
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return fmt.Errorf("FlexInt: expected integer or numeric string, got %s", b)
+	}
+	*f = FlexInt(n)
+	return nil
+}
 
 // maxConcurrentRegions is the semaphore size for fan-out region fetches.
 const maxConcurrentRegions = 32
@@ -37,13 +55,13 @@ type ListRegionsInput struct {
 
 // ListInstanceTypesInput is the typed input for the list_instance_types tool.
 type ListInstanceTypesInput struct {
-	Provider    string   `json:"provider"`
-	Region      string   `json:"region"`
-	Family      string   `json:"family"`
-	MinVCPU     *int     `json:"min_vcpu"`
-	MinMemoryGB *float64 `json:"min_memory_gb"`
-	GPU         bool     `json:"gpu"`
-	MaxResults  int      `json:"max_results"`
+	Provider    string    `json:"provider"`
+	Region      string    `json:"region"`
+	Family      string    `json:"family"`
+	MinVCPU     *FlexInt  `json:"min_vcpu"`
+	MinMemoryGB *float64  `json:"min_memory_gb"`
+	GPU         bool      `json:"gpu"`
+	MaxResults  int       `json:"max_results"`
 }
 
 // FindCheapestRegionInput is the typed input for the find_cheapest_region tool.
@@ -128,7 +146,7 @@ func (h *Handler) HandleListInstanceTypes(
 
 	var minVCPUs int
 	if in.MinVCPU != nil {
-		minVCPUs = *in.MinVCPU
+		minVCPUs = int(*in.MinVCPU)
 	}
 
 	var minMemGB float64
