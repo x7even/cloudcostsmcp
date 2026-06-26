@@ -1705,6 +1705,50 @@ async def run_single(
                         final_msg = lc["message"]
                         content = final_msg.get("content") or ""
                         if content.strip():
+                            # If the model still produced XML with tool_choice=none, try
+                            # executing those calls once more before accepting the content.
+                            if any(m in content for m in _xml_markers):
+                                recovered = _extract_xml_tool_calls(content)
+                                if recovered and mcp_session_ok:
+                                    print(f"  ⚠ Loop-break response is XML — recovering {len(recovered)} tool call(s)")
+                                    stripped = re.sub(
+                                        r"<tool_calls?>.*?</tool_calls?>|<tool_call>.*?</tool_call>",
+                                        "", content, flags=re.DOTALL,
+                                    ).strip()
+                                    final_msg = {**final_msg, "content": stripped or None, "tool_calls": recovered}
+                                    messages.append(final_msg)
+                                    trace["messages"].append(final_msg)
+                                    for rtc in recovered:
+                                        rfn = rtc["function"]
+                                        try:
+                                            rargs = json.loads(rfn.get("arguments") or "{}")
+                                        except json.JSONDecodeError:
+                                            rargs = {}
+                                        try:
+                                            r_result = await asyncio.wait_for(
+                                                mcp_session.call_tool(rfn["name"], rargs), timeout=45.0
+                                            )
+                                            rtext = "".join(c.text for c in r_result.content if hasattr(c, "text"))
+                                            try:
+                                                r_tool_result = json.loads(rtext)
+                                            except json.JSONDecodeError:
+                                                r_tool_result = {"text": rtext}
+                                        except Exception as re_:
+                                            r_tool_result = {"error": str(re_)}
+                                        trace["tool_calls"].append({"round": round_num, "tool": rfn["name"], "args": rargs, "result": r_tool_result})
+                                        messages.append({"role": "tool", "tool_call_id": rtc["id"], "content": json.dumps(r_tool_result)})
+                                    # One final forced-text call
+                                    try:
+                                        fr = await client.post(
+                                            f"{LLM_BASE_URL}/v1/chat/completions",
+                                            json={**payload, "messages": _sanitise_tool_call_args(messages), "tool_choice": "none"},
+                                            headers={"Authorization": f"Bearer {LLM_API_KEY}"} if LLM_API_KEY else {},
+                                        )
+                                        fr.raise_for_status()
+                                        fc = fr.json().get("choices", [{}])[0]
+                                        content = fc.get("message", {}).get("content") or content
+                                    except Exception:
+                                        pass  # use whatever content we have
                             messages.append(final_msg)
                             trace["messages"].append(final_msg)
                             trace["final_answer"] = content
