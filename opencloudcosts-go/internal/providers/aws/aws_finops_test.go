@@ -479,6 +479,26 @@ func TestBOMAdvisories_AllFields(t *testing.T) {
 	}
 }
 
+// TestBOMAdvisories_NoHowToPrice_HasStaticPrice guards the advisory cleanup in
+// aws_finops.go: any row that lacks how_to_price must carry a non-trivial static
+// price so the model can still include the cost without a tool call. Previously
+// some RDS/S3 advisories had both fields empty after search_pricing was removed.
+func TestBOMAdvisories_NoHowToPrice_HasStaticPrice(t *testing.T) {
+	p := newNilProvider()
+	rows, err := p.BOMAdvisories(context.Background(), []string{"compute", "database", "storage"}, "us-east-1")
+	if err != nil {
+		t.Fatalf("BOMAdvisories returned error: %v", err)
+	}
+	for _, r := range rows {
+		if r["how_to_price"] == "" {
+			if r["price"] == "" || r["price"] == "$0.00" {
+				t.Errorf("advisory %q lacks how_to_price and has no meaningful static price (%q); "+
+					"model has no path to include this cost", r["item"], r["price"])
+			}
+		}
+	}
+}
+
 // --------------------------------------------------------------------------
 // lookupCEService tests
 // --------------------------------------------------------------------------

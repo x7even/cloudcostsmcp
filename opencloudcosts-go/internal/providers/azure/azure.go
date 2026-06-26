@@ -2301,7 +2301,17 @@ func (p *Provider) GetFrontDoorPrice(
 			synthetic.FetchedAt = ref.FetchedAt
 			synthetic.SourceURL = ref.SourceURL
 			synthetic.CacheAgeSeconds = ref.CacheAgeSeconds
-			prices = append(prices, synthetic)
+			// Prepend synthetic total so it appears first in the JSON response.
+			// Without this, 20+ raw tiered rows from the API precede the total and
+			// get cut off by the harness 6000-char truncation before the model sees it.
+			slimmed := []models.NormalizedPrice{synthetic}
+			if dtPrice != nil {
+				slimmed = append(slimmed, *dtPrice)
+			}
+			if reqPrice != nil {
+				slimmed = append(slimmed, *reqPrice)
+			}
+			prices = slimmed
 		}
 	}
 	return prices, nil
