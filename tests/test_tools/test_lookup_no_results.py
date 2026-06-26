@@ -1,22 +1,55 @@
-"""Tests for no-results hints in get_service_price and search_pricing tools."""
+"""Tests for no-results handling in search_pricing tool."""
 
 from __future__ import annotations
 
 from decimal import Decimal
-from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from opencloudcosts.cache import CacheManager
-from opencloudcosts.config import Settings
 from opencloudcosts.models import (
     CloudProvider,
     NormalizedPrice,
     PriceUnit,
     PricingTerm,
 )
-from opencloudcosts.providers.aws import AWSProvider
+from opencloudcosts.tools.lookup import register_lookup_tools
+
+
+# ---------------------------------------------------------------------------
+# Helpers — mirror the pattern used in test_cache_tools.py
+# ---------------------------------------------------------------------------
+
+
+class _ToolCapture:
+    """Minimal mock MCP object that captures registered tool functions by name."""
+
+    def __init__(self) -> None:
+        self._tools: dict[str, Any] = {}
+
+    def tool(self):
+        def decorator(fn):
+            self._tools[fn.__name__] = fn
+            return fn
+
+        return decorator
+
+    def __getitem__(self, name: str):
+        return self._tools[name]
+
+
+def _make_ctx(providers: dict[str, Any]) -> MagicMock:
+    ctx = MagicMock()
+    ctx.request_context.lifespan_context = {"providers": providers}
+    return ctx
+
+
+def _make_provider(search_results=None) -> MagicMock:
+    """Return a mock provider whose search_pricing returns *search_results*."""
+    pvdr = MagicMock()
+    pvdr.search_pricing = AsyncMock(return_value=search_results if search_results is not None else [])
+    return pvdr
 
 
 def _make_price(region: str = "us-east-1") -> NormalizedPrice:
@@ -35,218 +68,88 @@ def _make_price(region: str = "us-east-1") -> NormalizedPrice:
 
 
 @pytest.fixture
-async def aws_provider(tmp_path: Path) -> AWSProvider:
-    settings = Settings(
-        cache_dir=tmp_path / "cache",
-        cache_ttl_hours=1,
-        aws_enable_cost_explorer=False,
-    )
-    cache = CacheManager(settings.cache_dir)
-    await cache.initialize()
-    provider = AWSProvider(settings, cache)
-    yield provider
-    await cache.close()
+def lookup_tools():
+    capture = _ToolCapture()
+    register_lookup_tools(capture)
+    return capture
 
 
-# ------------------------------------------------------------------
-# get_service_price — no-results path
-# ------------------------------------------------------------------
-
-
-async def test_get_service_price_no_results_has_tip(aws_provider: AWSProvider):
-    """When _get_products returns empty, get_service_price should return structured
-    no_results with a tip field."""
-    # Simulate the tool logic directly via the provider, as the tool calls
-    # pvdr._get_products and pvdr._item_to_price internally.
-    with patch.object(aws_provider, "_get_products", new=AsyncMock(return_value=[])):
-        # Reproduce the no-results logic from the tool
-        resolved_service = "AmazonCloudWatch"
-        service = "cloudwatch"
-        region = "us-east-1"
-        filters = {"group": "Typo"}
-        provider_name = "aws"
-
-        raw = await aws_provider._get_products(resolved_service, [], max_results=20)
-        prices = []
-        for item in raw:
-            p = aws_provider._item_to_price(item, region, PricingTerm.ON_DEMAND, service)
-            if p:
-                prices.append(p)
-
-        assert prices == []
-
-        # Build the no-results response as the tool would
-        result: dict = {
-            "result": "no_results",
-            "provider": provider_name,
-            "service": service,
-            "region": region,
-            "filters_applied": filters,
-            "message": (
-                f"No pricing found for service '{service}' in {region} with the provided filters."
-            ),
-            "tip": (
-                f"Try search_pricing(provider='{provider_name}', service='{service}', query='...') "
-                "to explore available products and valid filter attribute names. "
-                "Use list_services() to verify the service code exists."
-            ),
-        }
-        if resolved_service != service:
-            result["resolved_service_code"] = resolved_service
-
-        assert result["result"] == "no_results"
-        assert "tip" in result
-        assert "list_services" in result["tip"]
-        assert "search_pricing" in result["tip"]
-        assert result["filters_applied"] == filters
-        assert result["resolved_service_code"] == "AmazonCloudWatch"
-
-
-async def test_get_service_price_no_results_no_alias(aws_provider: AWSProvider):
-    """When service code is already a full code (no alias), resolved_service_code
-    should not be included in no-results response."""
-    with patch.object(aws_provider, "_get_products", new=AsyncMock(return_value=[])):
-        service = "AmazonCloudWatch"
-        resolved_service = service  # no alias used
-        region = "us-east-1"
-        provider_name = "aws"
-
-        _raw = await aws_provider._get_products(resolved_service, [], max_results=20)
-        prices = []
-
-        assert prices == []
-
-        result: dict = {
-            "result": "no_results",
-            "provider": provider_name,
-            "service": service,
-            "region": region,
-            "filters_applied": {},
-            "message": (
-                f"No pricing found for service '{service}' in {region} with the provided filters."
-            ),
-            "tip": (
-                f"Try search_pricing(provider='{provider_name}', service='{service}', query='...') "
-                "to explore available products and valid filter attribute names. "
-                "Use list_services() to verify the service code exists."
-            ),
-        }
-        # No resolved_service_code when alias wasn't used
-        if resolved_service != service:
-            result["resolved_service_code"] = resolved_service
-
-        assert result["result"] == "no_results"
-        assert "tip" in result
-        assert "resolved_service_code" not in result
-
-
-# ------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # search_pricing — no-results path
-# ------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 
 
-async def test_search_pricing_no_results_has_tip(aws_provider: AWSProvider):
-    """When search_pricing returns empty list, the tool should return structured
-    no_results with a tip mentioning list_services."""
-    with patch.object(aws_provider, "search_pricing", new=AsyncMock(return_value=[])):
-        query = "nonexistent-instance-xyz"
-        service = ""
-        region = ""
-        provider_name = "aws"
+async def test_search_pricing_no_results_structure(lookup_tools):
+    """When the provider returns an empty list, search_pricing must return a
+    structured no_results dict with required keys and a tip referencing describe_catalog."""
+    pvdr = _make_provider(search_results=[])
+    ctx = _make_ctx({"aws": pvdr})
 
-        prices = await aws_provider.search_pricing(query, None, 10)
-        results = [p.summary() for p in prices]
+    result = await lookup_tools["search_pricing"](
+        ctx, provider="aws", query="nonexistent-xyz"
+    )
 
-        assert results == []
-
-        # Build the no-results response as the tool would
-        tip = (
-            "Check the service code with list_services(). "
-            "Try a broader query (e.g. the product family name). "
-        )
-        if service:
-            tip += f"Verify that '{service}' is a valid service code or alias."
-
-        result: dict = {
-            "result": "no_results",
-            "provider": provider_name,
-            "service": service or "ec2",
-            "query": query,
-            "region": region or "any",
-            "message": (
-                f"No pricing found matching '{query}'"
-                + (f" in service '{service}'" if service else "")
-                + "."
-            ),
-            "tip": tip,
-        }
-
-        assert result["result"] == "no_results"
-        assert "tip" in result
-        assert "list_services" in result["tip"]
-        assert result["service"] == "ec2"
-        assert result["region"] == "any"
-        assert result["query"] == query
+    assert result["result"] == "no_results"
+    assert result["provider"] == "aws"
+    assert result["query"] == "nonexistent-xyz"
+    assert result["region"] == "any"
+    assert "message" in result
+    assert "nonexistent-xyz" in result["message"]
+    assert "tip" in result
+    assert "describe_catalog" in result["tip"]
 
 
-async def test_search_pricing_no_results_with_service_mentions_service(aws_provider: AWSProvider):
-    """When service is specified and search returns no results, tip should mention
-    the service code verification."""
-    with patch.object(aws_provider, "search_pricing", new=AsyncMock(return_value=[])):
-        query = "metric"
-        service = "cloudwatch"
-        region = "us-east-1"
-        provider_name = "aws"
+async def test_search_pricing_no_results_region_empty_string_becomes_any(lookup_tools):
+    """Empty region string is normalised to 'any' in no_results."""
+    pvdr = _make_provider(search_results=[])
+    ctx = _make_ctx({"aws": pvdr})
 
-        prices = await aws_provider.search_pricing(query, region, 10)
-        results = [p.summary() for p in prices]
+    result = await lookup_tools["search_pricing"](
+        ctx, provider="aws", query="foo", region=""
+    )
 
-        assert results == []
-
-        tip = (
-            "Check the service code with list_services(). "
-            "Try a broader query (e.g. the product family name). "
-        )
-        if service:
-            tip += f"Verify that '{service}' is a valid service code or alias."
-
-        result: dict = {
-            "result": "no_results",
-            "provider": provider_name,
-            "service": service or "ec2",
-            "query": query,
-            "region": region or "any",
-            "message": (
-                f"No pricing found matching '{query}'"
-                + (f" in service '{service}'" if service else "")
-                + "."
-            ),
-            "tip": tip,
-        }
-
-        assert result["result"] == "no_results"
-        assert "tip" in result
-        assert "list_services" in result["tip"]
-        assert service in result["tip"]
-        assert service in result["message"]
-        assert result["service"] == service
+    assert result["result"] == "no_results"
+    assert result["region"] == "any"
 
 
-async def test_search_pricing_non_empty_unchanged(aws_provider: AWSProvider):
-    """Non-empty results should return normal structure, not no_results."""
+async def test_search_pricing_no_results_tip_does_not_reference_list_services(lookup_tools):
+    """Tip must reference describe_catalog, not the nonexistent list_services tool."""
+    pvdr = _make_provider(search_results=[])
+    ctx = _make_ctx({"aws": pvdr})
+
+    result = await lookup_tools["search_pricing"](
+        ctx, provider="aws", query="ghost-service"
+    )
+
+    assert result["result"] == "no_results"
+    assert "describe_catalog" in result["tip"]
+    assert "list_services" not in result["tip"]
+
+
+async def test_search_pricing_non_empty_returns_normal_structure(lookup_tools):
+    """Non-empty results must NOT return result='no_results'; standard keys present."""
     price = _make_price()
-    with patch.object(aws_provider, "search_pricing", new=AsyncMock(return_value=[price])):
-        prices = await aws_provider.search_pricing("m5", None, 10)
-        results = [p.summary() for p in prices]
+    pvdr = _make_provider(search_results=[price])
+    ctx = _make_ctx({"aws": pvdr})
 
-        assert len(results) == 1
-        # Normal result path: has "count" and "results", no "result: no_results"
-        response: dict = {
-            "provider": "aws",
-            "query": "m5",
-            "region": "all",
-            "count": len(results),
-            "results": results,
-        }
-        assert "result" not in response or response.get("result") != "no_results"
-        assert response["count"] == 1
+    result = await lookup_tools["search_pricing"](
+        ctx, provider="aws", query="m5.xlarge"
+    )
+
+    assert result.get("result") != "no_results"
+    assert result["count"] == 1
+    assert len(result["results"]) == 1
+    assert "tip" in result
+    assert "describe_catalog" in result["tip"]
+
+
+async def test_search_pricing_provider_not_configured(lookup_tools):
+    """Unknown provider returns an error dict, not no_results."""
+    ctx = _make_ctx({})
+
+    result = await lookup_tools["search_pricing"](
+        ctx, provider="unknown", query="foo"
+    )
+
+    assert "error" in result
+    assert "result" not in result

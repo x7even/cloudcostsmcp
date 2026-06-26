@@ -361,12 +361,27 @@ def register_lookup_tools(mcp: Any) -> None:
                 "retryable": True,
             }
 
+        results = [p.summary() for p in prices]
+
+        if not results:
+            return {
+                "result": "no_results",
+                "provider": provider,
+                "query": query,
+                "region": region or "any",
+                "message": f"No pricing found matching '{query}'.",
+                "tip": (
+                    "Try a broader query. "
+                    "Call describe_catalog(provider) to see supported domains and services."
+                ),
+            }
+
         return {
             "provider": provider,
             "query": query,
             "region": region or "all",
-            "count": len(prices),
-            "results": [p.summary() for p in prices],
+            "count": len(results),
+            "results": results,
             "tip": (
                 "Use get_price(spec) with a typed spec for cost estimates. "
                 "Call describe_catalog(provider) to see supported domains and services."
