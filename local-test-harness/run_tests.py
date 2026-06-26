@@ -1201,6 +1201,10 @@ def _extract_xml_tool_calls(content: str) -> list[dict]:
         elif "name" in parsed:
             name = parsed["name"]
             args = parsed.get("arguments") or parsed.get("parameters") or {}
+        elif "function" in parsed and isinstance(parsed["function"], str):
+            # {"function": "TOOL_NAME", "arguments": {...}} — model used "function" as name key.
+            name = parsed["function"]
+            args = parsed.get("arguments") or parsed.get("parameters") or {}
         elif "arguments" in parsed and "provider" in (parsed.get("arguments") or {}):
             # Model omitted name but args look like a PricingSpec or catalog query.
             # Infer tool: if args have "spec" key → get_price, otherwise → describe_catalog.
@@ -1317,6 +1321,32 @@ def _extract_xml_tool_calls(content: str) -> list[dict]:
             }
         )
         idx += 1
+
+    # Format 5: Broken JSON opening followed by embedded valid JSON with "name" key.
+    # e.g. <tool_call>{"function>\n{"name": "get_price", "arguments": {...}}</tool_call>
+    # The outer {... is unparseable but contains a nested JSON object with the real call.
+    if not results:
+        for m in re.finditer(r"<tool_call>\s*\{[^{]*(\{[^{].*?)\s*(?:</tool_call>|$)", content, re.DOTALL):
+            inner = m.group(1).strip()
+            try:
+                parsed = json.loads(inner)
+            except json.JSONDecodeError:
+                try:
+                    parsed = json.loads(_repair_json(inner))
+                except json.JSONDecodeError:
+                    continue
+            if "name" in parsed:
+                name = parsed["name"]
+                args = parsed.get("arguments") or parsed.get("parameters") or {}
+                if name:
+                    results.append(
+                        {
+                            "id": f"xml-tool-{idx}",
+                            "type": "function",
+                            "function": {"name": name, "arguments": json.dumps(args)},
+                        }
+                    )
+                    idx += 1
 
     return results
 
