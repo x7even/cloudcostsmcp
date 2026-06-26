@@ -1201,6 +1201,10 @@ def _extract_xml_tool_calls(content: str) -> list[dict]:
         elif "name" in parsed:
             name = parsed["name"]
             args = parsed.get("arguments") or parsed.get("parameters") or {}
+        elif "function" in parsed and isinstance(parsed["function"], str):
+            # {"function": "TOOL_NAME", "arguments": {...}} — model used "function" as name key.
+            name = parsed["function"]
+            args = parsed.get("arguments") or parsed.get("parameters") or {}
         elif "arguments" in parsed and "provider" in (parsed.get("arguments") or {}):
             # Model omitted name but args look like a PricingSpec or catalog query.
             # Infer tool: if args have "spec" key → get_price, otherwise → describe_catalog.
@@ -1264,6 +1268,85 @@ def _extract_xml_tool_calls(content: str) -> list[dict]:
             }
         )
         idx += 1
+
+    # Format 4: Broken Qwen3 hybrid — JSON-like opening mixed with XML parameter syntax.
+    # Seen variants:
+    #   <tool_call>{"function=get_price><parameter=spec>{...}</tool_call>
+    #   <tool_call>{"name=describe_catalog><parameter=provider>val</parameter>...</tool_call>
+    #   <tool_call>{"function><parameter=name>func</parameter><parameter=arguments>{...}</tool_call>
+    for m in re.finditer(
+        r"<tool_call>\s*\{\"(?:function|name)=?([^>]*?)>\s*(.*?)\s*(?:</function>\s*)?</tool_call>",
+        content,
+        re.DOTALL,
+    ):
+        name = m.group(1).strip()
+        body = m.group(2).strip()
+        args: dict = {}
+
+        # Collect all <parameter=KEY>VALUE</parameter> blocks (closing tag optional).
+        params: dict = {}
+        for pm in re.finditer(
+            r"<parameter=([^>]+)>\s*(.*?)\s*(?:</parameter>|(?=<parameter=)|(?=</tool_call>)|$)",
+            body,
+            re.DOTALL,
+        ):
+            key = pm.group(1).strip()
+            val = pm.group(2).strip()
+            try:
+                params[key] = json.loads(val)
+            except json.JSONDecodeError:
+                params[key] = val
+
+        if not params:
+            continue
+
+        # Special case: function name embedded as <parameter=name>, args in <parameter=arguments>
+        if not name and "name" in params and "arguments" in params:
+            name = str(params["name"])
+            raw_args = params["arguments"]
+            args = raw_args if isinstance(raw_args, dict) else {}
+        elif not name:
+            continue
+        else:
+            args = params
+
+        if not name:
+            continue
+
+        results.append(
+            {
+                "id": f"xml-tool-{idx}",
+                "type": "function",
+                "function": {"name": name, "arguments": json.dumps(args)},
+            }
+        )
+        idx += 1
+
+    # Format 5: Broken JSON opening followed by embedded valid JSON with "name" key.
+    # e.g. <tool_call>{"function>\n{"name": "get_price", "arguments": {...}}</tool_call>
+    # The outer {... is unparseable but contains a nested JSON object with the real call.
+    if not results:
+        for m in re.finditer(r"<tool_call>\s*\{[^{]*(\{[^{].*?)\s*(?:</tool_call>|$)", content, re.DOTALL):
+            inner = m.group(1).strip()
+            try:
+                parsed = json.loads(inner)
+            except json.JSONDecodeError:
+                try:
+                    parsed = json.loads(_repair_json(inner))
+                except json.JSONDecodeError:
+                    continue
+            if "name" in parsed:
+                name = parsed["name"]
+                args = parsed.get("arguments") or parsed.get("parameters") or {}
+                if name:
+                    results.append(
+                        {
+                            "id": f"xml-tool-{idx}",
+                            "type": "function",
+                            "function": {"name": name, "arguments": json.dumps(args)},
+                        }
+                    )
+                    idx += 1
 
     return results
 
