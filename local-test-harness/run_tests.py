@@ -1068,6 +1068,336 @@ TEST_PROMPTS = {
         "4 vCPU 16 GB RAM on AWS vs GCP. Use AWS m5.xlarge with best discount vs GCP "
         "n2-standard-4 with best discount. Assume Linux, us-east-1 / us-central1."
     ),
+
+    # --- Cluster / Workload ---
+    "CL1": (
+        "Price a baseline EKS cluster in us-east-1. Tag each line item as"
+        " recurring (monthly) or one-time.\n\n"
+        "Worker nodes:\n"
+        "- 6× m6a.xlarge on-demand (general-purpose)\n"
+        "- 2× r6i.xlarge on-demand (memory-optimized)\n"
+        "- 2× m6a.xlarge spot (batch) — call get_spot_price_history and note"
+        " the region, AZ, and timestamp of the data returned\n\n"
+        "Storage: one 100 GB EBS gp3 root volume per node (10 volumes total) at"
+        " default IOPS (3,000) and throughput (125 MB/s)\n\n"
+        "Networking: 100 GB/month outbound internet egress as a baseline"
+        " data-transfer charge\n\n"
+        "EKS control plane: the public rate is $0.10/hr; use this value if it"
+        " is not present in your pricing catalog, and note whether you sourced"
+        " it from the catalog or used the hardcoded public rate\n\n"
+        "CloudWatch: attempt to price a basic monitoring baseline for 10 nodes;"
+        " if CloudWatch is not available in your pricing catalog, state this"
+        " explicitly and exclude it from the total\n\n"
+        "Show the control plane as a separate flat line item, distinct from all"
+        " compute charges. Produce a per-node cost breakdown, then roll up to a"
+        " single cluster monthly total."
+    ),
+    "CL2": (
+        "Produce a monthly bill-of-materials for a portal/dashboard deployment"
+        " in us-east-1. Tag each line item as recurring (monthly) or one-time,"
+        " and keep primary storage costs separate from backup costs.\n\n"
+        "Tiers:\n"
+        "- Web tier: 2 × m5.large EC2 (Linux, on-demand); Application Load"
+        " Balancer — include ALB hourly charge and 10 LCU-hours/day.\n"
+        "- Database tier: RDS db.m5.large, MySQL 8.0, Multi-AZ, 200 GB gp3"
+        " storage, 3000 provisioned IOPS.\n"
+        "- Object storage: S3 Standard — 500 GB stored, 1 M PUT requests/month,"
+        " 10 M GET requests/month.\n"
+        "- Backup: RDS automated snapshots at 200 GB (7-day retention); S3"
+        " lifecycle — 200 GB archived to S3 Glacier after 30 days, plus 10"
+        " GB/month bulk retrieval.\n\n"
+        'Call describe_catalog(provider="aws", domain="storage") before pricing'
+        " S3 and snapshot items to confirm catalog support. If S3 request"
+        " pricing or Glacier retrieval pricing is absent, note those line items"
+        " as unavailable rather than omitting them. Use estimate_bom to"
+        " aggregate all tiers into a single total."
+    ),
+    # --- Cluster / Workload ---
+    "XK1": (
+        "Price a 10-node Kubernetes cluster on AWS EKS and GCP GKE for a"
+        " like-for-like comparison. Use us-east-1 (AWS) and us-east1 (GCP),"
+        " on-demand pricing.\n\n"
+        "AWS EKS config:\n"
+        "- Control plane: 1 cluster (use describe_catalog to check if EKS"
+        " control-plane pricing is in the catalog; if absent, apply the"
+        " standard $0.10/hr rate manually)\n"
+        "- Worker nodes: 10 x m5.xlarge\n"
+        "- Storage: 10 x 100 GB gp3 EBS volumes (3000 IOPS, 125 MB/s"
+        " throughput)\n\n"
+        "GCP GKE config (Standard mode):\n"
+        "- Control plane: 1 cluster (use describe_catalog to check; if absent,"
+        " apply $0.10/hr manually)\n"
+        "- Worker nodes: 10 x n2-standard-4\n"
+        "- Storage: 10 x 100 GB pd-balanced persistent disks\n\n"
+        "State your SKU equivalence assumptions explicitly for both node types"
+        " and storage classes. Tag each line item as recurring (monthly) or"
+        " one-time. Present a side-by-side table showing per-provider monthly"
+        " totals, the absolute dollar delta, and the percentage difference."
+    ),
+    "XK2": (
+        "Compare monthly infrastructure costs for a Kubernetes cluster across"
+        " AWS EKS, GCP GKE Standard, and Azure AKS. Configuration: 3 worker"
+        " nodes equivalent to 4 vCPU / 16 GB RAM each, on-demand pricing, in US"
+        " East regions (us-east-1 / us-central1 / eastus). Price four"
+        " components per provider: (1) control plane fee — use the container"
+        " domain for each provider and note that AKS free tier has no"
+        " control-plane charge while GKE Standard charges per cluster; (2)"
+        " worker nodes using the closest native instance type — state your SKU"
+        " equivalence assumptions; (3) 100 GB managed block storage per node"
+        " (gp3 / pd-ssd / Premium SSD); (4) one standard load balancer (ALB /"
+        " GCP LB / Azure Application Gateway). Present results as a"
+        " three-column table with rows EKS | GKE | AKS. Tag each line item as"
+        " recurring (monthly) or one-time. Where a provider has no direct"
+        " equivalent (e.g. GKE Autopilot pod-level billing vs Standard node"
+        " billing, AKS free vs Standard tier control plane), note the"
+        " difference and explain the assumption used. Flag any component the"
+        " tool could not price."
+    ),
+    "PDISK": (
+        "Compare AWS and GCP block storage costs for three disk profiles. Use"
+        " us-east-1 for AWS and us-central1 for GCP. State your SKU equivalence"
+        " assumptions for each profile.\n\n"
+        "Profile A (size-bound, 10 TB, low performance): price AWS gp3 at 10 TB"
+        " / 3 000 IOPS / 125 MB/s and AWS sc1 at 10 TB; compare with GCP"
+        " pd-standard at 10 TB and pd-balanced at 10 TB.\n\n"
+        "Profile B (capacity + throughput, 2 TB, 500 MB/s): price AWS gp3 at 2"
+        " TB / 500 MB/s throughput / 3 000 IOPS; compare with GCP pd-ssd at 2"
+        " TB.\n\n"
+        "Profile C (IOPS-bound, 500 GB, 64 000 IOPS): price AWS io2 at 500 GB /"
+        " 64 000 IOPS; compare with GCP pd-extreme at 500 GB / 64 000 IOPS and"
+        " GCP hyperdisk-extreme at 500 GB / 64 000 IOPS.\n\n"
+        "For each volume, present the cost as separate line items for storage"
+        " capacity ($), provisioned IOPS ($), and provisioned throughput ($),"
+        " omitting axes that do not apply to that disk type. Tag every line"
+        " item as recurring (monthly). End with a per-profile cost summary"
+        " table identifying the lowest-cost option."
+    ),
+    "AURO1": (
+        "Price a three-node Aurora PostgreSQL cluster in us-east-1: one writer"
+        " (db.r6g.2xlarge) and two readers (db.r6g.large). Cluster storage is"
+        " 500 GB, monthly I/O volume is 10 million requests, and backup"
+        " retention is 30 days.\n\n"
+        "Produce a complete monthly cost breakdown for both Aurora Standard"
+        ' storage mode (aurora_storage_mode="standard") and Aurora'
+        ' I/O-Optimized storage mode (aurora_storage_mode="io_optimized"). For'
+        " each mode, itemize: (1) instance hours for the writer and each reader"
+        " node, (2) cluster storage charges at the mode-appropriate per-GB"
+        " rate, (3) I/O request charges for Standard mode at 10 million"
+        " requests per month — use search_pricing to find the"
+        " per-million-request rate if it is not returned directly;"
+        " I/O-Optimized has no per-request charge but a higher storage rate,"
+        " and (4) backup storage for 30-day retention beyond the 1-day free"
+        " allowance — use search_pricing to find the Aurora backup storage"
+        " rate. Tag each line item as recurring (monthly) or one-time.\n\n"
+        "Sum the monthly totals for each tier, state which tier is less"
+        " expensive at 10 million I/O requests per month, and compute the"
+        " monthly I/O request volume at which the two tiers break even."
+    ),
+    # --- AI Model Pricing ---
+    "AIMOD1": (
+        "Compare per-1M-token input and output pricing for Claude Opus 4.8"
+        " across AWS Bedrock (us-east-1), GCP Vertex AI, and Azure. For each"
+        " provider, check whether Claude Opus 4.8 or the nearest available"
+        " version is listed in the catalog — note any providers where it is"
+        " absent. For available providers and variants, retrieve: (1) standard"
+        " on-demand input and output prices per 1M tokens; (2) batch inference"
+        " pricing if offered; (3) prompt-caching rates (cache write and cache"
+        " read) if listed. Present results as a table: Provider | Variant |"
+        " Input $/1M tokens | Output $/1M tokens. State your SKU equivalence"
+        " assumptions across providers — including any version name differences"
+        " and whether batch and caching tiers represent comparable features on"
+        " each platform. Explicitly note pricing gaps where a provider or"
+        " variant returned no data."
+    ),
+    "AIMOD2": (
+        "Compare the cost of Claude Sonnet 4.6 managed on Vertex AI versus"
+        " Gemma 3 27B self-hosted on a GCP g2-standard-8 instance (L4 GPU) in"
+        " us-central1.\n\n"
+        "1. Call describe_catalog(provider='gcp', domain='ai',"
+        " service='vertex_ai') to confirm which model ID corresponds to Claude"
+        " Sonnet 4.6, then look up its input and output token prices per"
+        " million tokens on Vertex AI.\n\n"
+        "2. Look up the on-demand hourly price for a g2-standard-8 instance in"
+        " us-central1.\n\n"
+        "3. Explicitly state both cost models:\n"
+        "   - Managed (Vertex AI): monthly_cost = (input_tokens_M ×"
+        " input_price_per_M) + (output_tokens_M × output_price_per_M)\n"
+        "   - Self-hosted (g2-standard-8): monthly_cost = hourly_rate × 730 ×"
+        " utilization_fraction (no per-token variable component)\n\n"
+        "4. Assume a 3:1 input-to-output token ratio. Derive the formula for"
+        " total monthly tokens at which self-hosting at 100% utilization"
+        " becomes cheaper than managed pricing, and solve it. Then state the"
+        ' result as: "self-hosting breaks even at X million tokens/month (100%'
+        ' utilization)."\n\n'
+        "5. Tag each line item as recurring (monthly) or one-time. Note any"
+        " assumptions about what the self-hosted cost excludes (e.g., storage,"
+        " networking, model serving overhead)."
+    ),
+    # --- GPU / Accelerated Computing ---
+    "GPU1": (
+        "Look up on-demand hourly pricing for three H200 GPU compute nodes"
+        " across clouds. Use these exact SKUs and regions:\n\n"
+        "1. AWS p5e.48xlarge (8× H200) — us-east-1\n"
+        "2. GCP a3-ultragpu-8g (8× H200) — us-central1; if this SKU is absent"
+        " from the catalog, fall back to a3-highgpu-8g (8× H100) and explicitly"
+        " note the GPU type substitution (H100, not H200)\n"
+        "3. Azure ND H200 v5 (8× H200) — eastus\n\n"
+        "For each SKU: state your SKU equivalence assumptions. Report the"
+        " on-demand per-node hourly rate. Then normalize: divide the node rate"
+        " by its actual GPU count to produce a per-GPU-hour figure. If any SKU"
+        " carries a GPU count other than 8, flag it clearly. If any SKU is"
+        " entirely absent from the catalog, note it and skip rather than"
+        " estimate. Present results as a table with columns: Provider | SKU |"
+        " GPU model | GPU count | $/node/hr | $/GPU/hr. Tag every line item as"
+        " recurring (monthly)."
+    ),
+    "GPU2": (
+        "Look up on-demand, 1-year CUD, and 3-year CUD prices for the following"
+        " GCP GPU instance types in us-central1:\n\n"
+        "- a3-ultragpu-8g (H200, 8 GPUs per node) — attempt this first; if not"
+        " found in the catalog, note it as unavailable and continue\n"
+        "- a3-highgpu-8g (H100, 8 GPUs per node)\n"
+        "- a2-highgpu-1g (A100 40 GB, 1 GPU per node)\n"
+        "- a2-ultragpu-1g (A100 80 GB, 1 GPU per node)\n"
+        "- g2-standard-4 (L4, 1 GPU per node)\n\n"
+        "For each instance type and each pricing term, report:\n"
+        "1. Per-node-hour price (from the catalog)\n"
+        "2. Per-GPU-hour price (node price divided by the GPU count above)\n\n"
+        "Present results as a table with columns: Instance Type, GPU Model, GPU"
+        " Count, Term, Node $/hr, GPU $/hr. If a CUD tier is unavailable for a"
+        " given instance family, note it explicitly rather than omitting the"
+        " row."
+    ),
+    # --- AWS Network Stack ---
+    "NET_STACK1": (
+        "Calculate the total monthly cost for a 50 TB/month traffic flow"
+        " through an AWS network stack in us-east-1: (1) Application Load"
+        " Balancer running 730 hours/month at 100 LCUs, (2) NAT Gateway running"
+        " 730 hours/month and processing 50 TB of data, and (3) internet egress"
+        " of 50 TB to the public internet. Look up each component using"
+        " domain=network. Present a line-item breakdown: ALB hourly charge, ALB"
+        " LCU charge, NAT Gateway hourly charge, NAT Gateway per-GB data"
+        " processing fee — label this explicitly as a separate charge from"
+        " internet egress, as both apply to the same 50 TB but are two distinct"
+        " AWS fees — and internet egress with its tiered per-GB breakdown"
+        " shown. Tag each line item as recurring (monthly) or one-time. Sum to"
+        " a grand total."
+    ),
+    "EGRESS_HV": (
+        "Calculate monthly AWS egress costs for two separate line items,"
+        " tagging each as recurring (monthly), with full tier breakdowns:\n\n"
+        "1. Inter-region transfer — 6 PB (6,000,000 GB) from us-east-1 to"
+        ' us-west-2. Use provider="aws", domain="network",'
+        ' service="data_transfer". Show each AWS pricing tier boundary, the'
+        " per-GB rate at each tier, and the cost contribution from each"
+        " tier.\n\n"
+        "2. Internet egress to Australia — 4 PB (4,000,000 GB) from us-east-1"
+        ' to an APAC/Australia destination. Use provider="aws",'
+        ' domain="network", service="internet_egress". Apply Australia/APAC'
+        " destination rates and show the same tier breakdown.\n\n"
+        "Report the total monthly cost for each line item separately with the"
+        " blended effective per-GB rate.\n\n"
+        'Then call describe_catalog(provider="aws", domain="network") to check'
+        " whether CloudFront pricing is available. If it is, estimate the"
+        " CloudFront cost for serving the 4 PB internet egress at this volume"
+        " (CloudFront has its own tiered transfer rates and may include a"
+        " per-request charge — note any such components), compare it to the"
+        " standard internet egress cost, and state whether CloudFront reduces"
+        " cost and by approximately how much. If CloudFront is not in the"
+        " catalog, note that and explain qualitatively when CloudFront pricing"
+        " typically undercuts standard egress rates at high volumes."
+    ),
+    # --- Savings Plans / Commitment Pricing ---
+    "SP_CMP1": (
+        "Look up pricing for a Linux r8g.large in us-east-1 across four"
+        " commitment tiers: (1) on-demand, (2) 1-year Compute Savings Plan"
+        " all-upfront, (3) 3-year Compute Savings Plan all-upfront, (4) 3-year"
+        " EC2 Instance Savings Plan all-upfront. For each tier, use get_price"
+        " with the appropriate term value and calculate: effective hourly rate,"
+        " monthly cost (730 hours/month), total commitment cost over the full"
+        " term, and percentage savings versus on-demand. Present the results in"
+        " a table with those four columns. After the table, explicitly check"
+        " whether the 3-year EC2 Instance Savings Plan effective hourly rate is"
+        " lower than the 3-year Compute Savings Plan rate — if the Instance SP"
+        " does not undercut the Compute SP, flag that finding and note the"
+        " actual ordering."
+    ),
+    "SPOT1": (
+        "For a Linux c6a.xlarge in us-east-1, retrieve and compare the"
+        " following four pricing options:\n\n"
+        "1. On-demand hourly rate.\n"
+        "2. Current spot price via get_spot_price_history — note the region,"
+        " AZ, and timestamp returned by the tool.\n"
+        "3. Compute Savings Plan 1yr all-upfront effective hourly rate.\n"
+        "4. Compute Savings Plan 3yr all-upfront effective hourly rate.\n\n"
+        "Present results in a table with columns: option, hourly rate, monthly"
+        " cost (730 hrs), and savings vs on-demand (%). Tag all charges as"
+        " recurring (monthly).\n\n"
+        "After the table: (a) flag the spot volatility caveat — spot instances"
+        " can be interrupted with two-minutes notice and the price fluctuates"
+        " with capacity demand; (b) for each of the four options explain the"
+        " commitment vs interruptibility tradeoff, covering flexibility,"
+        " interruption risk, and the cost of locking in capacity."
+    ),
+    "EDP1": (
+        "Look up the on-demand price for a Linux c7i.2xlarge in us-east-1. Then"
+        " manually compute the EDP-discounted rate by applying a 15% enterprise"
+        " discount to that on-demand price (EDP is a negotiated discount absent"
+        " from public APIs, so calculate it as: on-demand × 0.85). Next,"
+        " retrieve the spot price for c7i.2xlarge in us-east-1 using"
+        " get_spot_price_history, and note the region, AZ, and timestamp of the"
+        " spot price returned. Present a three-row comparison: (1) on-demand"
+        " hourly rate, (2) EDP-discounted on-demand hourly rate (on-demand ×"
+        " 0.85), and (3) spot hourly rate. Tag all three as recurring (monthly,"
+        " assuming 730 hours/month). Explicitly note that EDP applies to"
+        " on-demand and savings plans but does NOT apply to spot pricing, so"
+        " the spot price is shown as-is without any EDP reduction."
+    ),
+    "SPOT_FAM1": (
+        "Fetch current spot prices in us-east-1 for three comparable 8 vCPU /"
+        " 32 GB RAM instance types: m7i.2xlarge (Intel), m7a.2xlarge (AMD), and"
+        " m7g.2xlarge (Graviton3). Call get_spot_price_history for each"
+        " instance type. For each, calculate and display: (1) spot price per"
+        " hour, (2) spot price per vCPU per hour (divide by 8), and (3) spot"
+        " price per GB RAM per hour (divide by 32). Present results in a"
+        " comparison table. Note the region, AZ, and timestamp of each spot"
+        " price returned. Finally, identify which architecture offers the"
+        " lowest $/vCPU and which offers the lowest $/GB RAM."
+    ),
+    # --- GCP Compute / Spec-Based Instance Lookup ---
+    "GCS1": (
+        "In GCP region us-central1, use list_instance_types to enumerate all"
+        " machine types with exactly 16 vCPUs and 64 GB RAM (1:4 ratio, i.e."
+        ' "standard" tier — not highmem or highcpu) across the n2, n2d, c3, c4,'
+        " and e2 families. For each matching instance type found, call"
+        " get_price three times to retrieve: on-demand hourly rate, 1-year CUD"
+        " hourly rate, and 3-year CUD hourly rate. Present results as a table"
+        " with columns: machine type, vCPUs, memory (GB), on-demand hourly,"
+        " on-demand monthly (×730 h), 1yr CUD hourly, 1yr CUD monthly, 3yr CUD"
+        " hourly, 3yr CUD monthly. If a family does not offer a 16vCPU/64 GB"
+        " configuration, note it explicitly. All monetary values in USD."
+    ),
+    "AURO2": (
+        "I have an Aurora PostgreSQL cluster in us-east-1: 1 writer"
+        " (db.r6g.2xlarge) and 1 reader (db.r6g.large), both on-demand, with"
+        " 200 GB storage. Start with describe_catalog(provider='aws',"
+        " domain='database', service='aurora') to confirm the pricing structure"
+        " for Aurora Standard and Aurora I/O-Optimized, including storage rates"
+        " per GB and the per-million I/O request rate for Standard. Then use"
+        " get_price to look up on-demand monthly compute costs for"
+        " db.r6g.2xlarge and db.r6g.large (engine='aurora-postgresql',"
+        " region='us-east-1'). Look up 200 GB storage cost under"
+        " aurora_storage_mode='standard' and"
+        " aurora_storage_mode='io_optimized'. Tag each line item as recurring"
+        " (monthly). Compute total monthly cost at three I/O request volumes —"
+        " 1 million, 10 million, and 100 million requests per month — for both"
+        " pricing modes side by side. For Standard, apply the per-million I/O"
+        " rate found in the catalog; for I/O-Optimized, apply zero I/O charge."
+        " Finally, calculate the exact crossover volume (in millions of I/O"
+        " requests per month) at which I/O-Optimized becomes cheaper than"
+        " Standard, and state whether any of the three test volumes crosses"
+        " that threshold."
+    ),
 }
 
 
@@ -2013,6 +2343,11 @@ if __name__ == "__main__":
         help="Override OCC_MCP_URL — HTTP MCP endpoint (e.g. http://your-mcp-host:8080/mcp). "
         "When set, workers connect via HTTP instead of spawning a local stdio process.",
     )
+    parser.add_argument(
+        "--results-dir",
+        default="",
+        help="Override the results directory. A timestamped subdirectory will be created inside it.",
+    )
     args = parser.parse_args()
 
     # CLI flags override env / .env
@@ -2024,6 +2359,8 @@ if __name__ == "__main__":
         LLM_API_KEY = args.api_key
     if args.mcp_url:
         MCP_URL = args.mcp_url
+    if args.results_dir:
+        RESULTS_DIR = Path(args.results_dir)
 
     if not LLM_BASE_URL:
         print("Error: OCC_LLM_BASE_URL is not set.")
