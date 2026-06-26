@@ -145,14 +145,18 @@ type bomLineItem struct {
 
 func (li bomLineItem) toMap() map[string]any {
 	return map[string]any{
-		"description":  li.description,
-		"provider":     li.provider,
-		"service":      li.service,
-		"region":       li.region,
-		"quantity":     li.quantity,
-		"unit_price":   priceDict(li.unitPrice.PricePerUnit, string(li.unitPrice.Unit)),
-		"monthly_cost": moneyDict(li.monthlyCost, ""),
-		"annual_cost":  moneyDict(li.annualCost, ""),
+		"description": li.description,
+		"provider":    li.provider,
+		"service":     li.service,
+		"region":      li.region,
+		"quantity":    li.quantity,
+		"unit_price": map[string]any{
+			"amount": li.unitPrice.PricePerUnit,
+			"unit":   string(li.unitPrice.Unit),
+		},
+		"monthly_cost": map[string]any{
+			"amount": li.monthlyCost,
+		},
 	}
 }
 
@@ -353,9 +357,8 @@ func (h *Handler) HandleEstimateBOM(
 	resp := map[string]any{
 		"line_items": lineItemMaps,
 		"totals": map[string]any{
-			"monthly":  moneyDict(totalMonthly, ""),
-			"annual":   moneyDict(totalAnnual, ""),
-			"currency": "USD",
+			"monthly": map[string]any{"amount": totalMonthly},
+			"annual":  map[string]any{"amount": totalAnnual},
 		},
 		"not_included":        nil,
 		"not_included_action": nil,
