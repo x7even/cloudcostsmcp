@@ -97,10 +97,10 @@ SYSTEM_PROMPT = (
     "If a provider returns no data, write 'Unable to retrieve [provider] pricing' — never fill it in from memory.\n"
     "4. If estimate_bom returns a 'not_included' list, call get_price for each listed item individually. "
     "Do not estimate or guess any cost that was not returned by a tool.\n\n"
-    "TOOL CALL FORMAT — always use this exact format when calling a tool:\n"
-    "<tool_call>\n"
-    '{"name": "TOOL_NAME", "arguments": {"param": "value"}}\n'
-    "</tool_call>"
+    "TOOL CALLING: The function-calling interface handles all tool invocations automatically. "
+    "NEVER emit tool calls as raw text, XML, or JSON strings in your response text. "
+    "NEVER write <tool_call>, <function_calls>, or any similar markup in your response. "
+    "Only invoke tools through the structured function-calling interface — never in message content."
 )
 
 # ---------------------------------------------------------------------------
@@ -1256,6 +1256,59 @@ def _extract_xml_tool_calls(content: str) -> list[dict]:
                 args[key] = json.loads(val)
             except json.JSONDecodeError:
                 args[key] = val
+        results.append(
+            {
+                "id": f"xml-tool-{idx}",
+                "type": "function",
+                "function": {"name": name, "arguments": json.dumps(args)},
+            }
+        )
+        idx += 1
+
+    # Format 4: Broken Qwen3 hybrid — JSON-like opening mixed with XML parameter syntax.
+    # Seen variants:
+    #   <tool_call>{"function=get_price><parameter=spec>{...}</tool_call>
+    #   <tool_call>{"name=describe_catalog><parameter=provider>val</parameter>...</tool_call>
+    #   <tool_call>{"function><parameter=name>func</parameter><parameter=arguments>{...}</tool_call>
+    for m in re.finditer(
+        r"<tool_call>\s*\{\"(?:function|name)=?([^>]*?)>\s*(.*?)\s*(?:</function>\s*)?</tool_call>",
+        content,
+        re.DOTALL,
+    ):
+        name = m.group(1).strip()
+        body = m.group(2).strip()
+        args: dict = {}
+
+        # Collect all <parameter=KEY>VALUE</parameter> blocks (closing tag optional).
+        params: dict = {}
+        for pm in re.finditer(
+            r"<parameter=([^>]+)>\s*(.*?)\s*(?:</parameter>|(?=<parameter=)|(?=</tool_call>)|$)",
+            body,
+            re.DOTALL,
+        ):
+            key = pm.group(1).strip()
+            val = pm.group(2).strip()
+            try:
+                params[key] = json.loads(val)
+            except json.JSONDecodeError:
+                params[key] = val
+
+        if not params:
+            continue
+
+        # Special case: function name embedded as <parameter=name>, args in <parameter=arguments>
+        if not name and "name" in params and "arguments" in params:
+            name = str(params["name"])
+            raw_args = params["arguments"]
+            args = raw_args if isinstance(raw_args, dict) else {}
+        elif not name:
+            continue
+        else:
+            args = params
+
+        if not name:
+            continue
+
         results.append(
             {
                 "id": f"xml-tool-{idx}",
