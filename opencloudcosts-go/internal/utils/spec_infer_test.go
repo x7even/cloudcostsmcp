@@ -28,7 +28,7 @@ var serviceToExpectedDomain = []struct {
 	{"nat", "network"},
 	{"lb", "network"},
 	{"cdn", "network"},
-	{"cloud_armor", "observability"},
+	{"cloud_armor", "network"},
 	{"cloudwatch", "observability"},
 	{"cloud_monitoring", "observability"},
 	{"bedrock", "ai"},

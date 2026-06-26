@@ -156,7 +156,7 @@ var serviceToDomain = map[string]models.PricingDomain{
 	"lb":        models.PricingDomainNetwork,
 	"cdn":       models.PricingDomainNetwork,
 	// observability
-	"cloud_armor":      models.PricingDomainObservability,
+	"cloud_armor":      models.PricingDomainNetwork,
 	"cloudwatch":       models.PricingDomainObservability,
 	"cloud_monitoring": models.PricingDomainObservability,
 	// ai

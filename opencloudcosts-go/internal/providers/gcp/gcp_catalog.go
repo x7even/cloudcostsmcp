@@ -260,6 +260,14 @@ func gcpDescribeCatalog() *models.ProviderCatalog {
 				"cache_fill_gb": 100.0,
 				"region":        "us-central1",
 			},
+			"network/cloud_armor": {
+				"provider":                  "gcp",
+				"domain":                    "network",
+				"service":                   "cloud_armor",
+				"region":                    "us-central1",
+				"policy_count":              1,
+				"monthly_requests_millions": 50.0,
+			},
 			"observability/cloud_monitoring": {
 				"provider":      "gcp",
 				"domain":        "observability",

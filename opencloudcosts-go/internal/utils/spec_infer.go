@@ -26,7 +26,7 @@ var serviceToDomain = map[string]string{
 	"lb":        "network",
 	"cdn":       "network",
 	// observability
-	"cloud_armor":      "observability",
+	"cloud_armor":      "network",
 	"cloudwatch":       "observability",
 	"cloud_monitoring": "observability",
 	// ai
