@@ -2903,6 +2903,14 @@ func (p *Provider) DescribeCatalog(ctx context.Context) (*models.ProviderCatalog
 				"os":            "Linux",
 				"term":          "on_demand",
 			},
+			"serverless/azure_functions": {
+				"provider":          "azure",
+				"domain":            "serverless",
+				"service":           "azure_functions",
+				"region":            "eastus",
+				"requests_millions": 20.0,
+				"gb_seconds":        5120.0,
+			},
 			"database/sql": {
 				"provider":      "azure",
 				"domain":        "database",

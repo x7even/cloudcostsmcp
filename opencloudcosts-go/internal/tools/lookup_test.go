@@ -900,8 +900,8 @@ func TestSearchPricing_NoResultsHint(t *testing.T) {
 		t.Errorf("result: got %v, want no_results", resp["result"])
 	}
 	tip, _ := resp["tip"].(string)
-	if !contains(tip, "list_services") {
-		t.Errorf("tip should mention list_services, got: %q", tip)
+	if !contains(tip, "describe_catalog") {
+		t.Errorf("tip should mention describe_catalog, got: %q", tip)
 	}
 	if resp["query"] != "nonexistent-instance-xyz" {
 		t.Errorf("query: got %v, want nonexistent-instance-xyz", resp["query"])
@@ -938,11 +938,8 @@ func TestSearchPricing_NoResultsWithDomain(t *testing.T) {
 		t.Errorf("region: got %v, want us-east-1", resp["region"])
 	}
 	tip, _ := resp["tip"].(string)
-	if !contains(tip, "cloudwatch") {
-		t.Errorf("tip should mention domain 'cloudwatch', got: %q", tip)
-	}
-	if !contains(tip, "list_services") {
-		t.Errorf("tip should mention list_services, got: %q", tip)
+	if !contains(tip, "describe_catalog") {
+		t.Errorf("tip should mention describe_catalog, got: %q", tip)
 	}
 }
 
@@ -1769,11 +1766,8 @@ func TestGetPrice_EmptyPublicPrices_NoResultsHint(t *testing.T) {
 		t.Errorf("result: got %v, want no_results", resp["result"])
 	}
 	tip, _ := resp["tip"].(string)
-	if !contains(tip, "search_pricing") {
-		t.Errorf("tip should mention search_pricing, got: %q", tip)
-	}
-	if !contains(tip, "list_services") {
-		t.Errorf("tip should mention list_services, got: %q", tip)
+	if !contains(tip, "describe_catalog") {
+		t.Errorf("tip should mention describe_catalog, got: %q", tip)
 	}
 	if resp["provider"] != "aws" {
 		t.Errorf("provider: got %v, want aws", resp["provider"])

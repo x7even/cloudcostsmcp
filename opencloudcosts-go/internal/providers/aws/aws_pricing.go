@@ -880,6 +880,18 @@ func (p *Provider) ListInstanceTypes(
 	minMemoryGB float64,
 	gpu bool,
 ) ([]models.InstanceTypeInfo, error) {
+	// In bulkFallback mode AWS credentials are absent; EC2 DescribeInstanceTypes
+	// would fail silently and return empty results. Return a helpful error so the
+	// model can use get_price with a known instance type instead.
+	if p.bulkFallback {
+		hint := "AWS credentials are not configured, so instance enumeration is unavailable. " +
+			"Use get_price with a known instance type instead — common families: " +
+			"m5/m6i/m7g (general), c5/c6i/c7g (compute), r5/r6i/r7g (memory), " +
+			"t3/t4g (burstable), g4dn/g5 (GPU). " +
+			"Example: get_price({provider:\"aws\", domain:\"compute\", region:\"" + region + "\", resource_type:\"m5.xlarge\"})"
+		return nil, fmt.Errorf("%s", hint)
+	}
+
 	cacheKey := fmt.Sprintf("aws:instance_types:%s:%s:%d:%v:%v", region, family, minVCPUs, minMemoryGB, gpu)
 	if cached, ok := p.cache.GetMetadata(cacheKey); ok {
 		var infos []models.InstanceTypeInfo
