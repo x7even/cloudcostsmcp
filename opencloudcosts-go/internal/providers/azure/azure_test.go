@@ -2010,6 +2010,31 @@ func TestGetFrontDoorPrice_CostEstimate(t *testing.T) {
 	}
 }
 
+func TestGetFrontDoorPrice_SlimmedResponseWhenEstimateComputed(t *testing.T) {
+	// When data_gb and monthly_requests_millions are both provided, the response
+	// must contain ≤ 3 items: {synthetic_total, dt_rate?, req_rate?}.
+	// Without this, 20+ raw API rows precede the synthetic total and get cut off
+	// by the harness 6000-char truncation limit before the model can read the total.
+	srv := mockServer(t, nil)
+	defer srv.Close()
+	p := newTestProvider(t, srv)
+
+	prices, err := p.GetFrontDoorPrice(context.Background(), "eastus", 1000.0, 10.0, "standard")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(prices) > 3 {
+		t.Errorf("slimmed response must have ≤ 3 items; got %d — synthetic total would be truncated", len(prices))
+	}
+	if len(prices) == 0 || prices[0].SKUID != "frontdoor-estimate" {
+		skuid := ""
+		if len(prices) > 0 {
+			skuid = prices[0].SKUID
+		}
+		t.Errorf("first item must be the synthetic estimate SKUID; got %q", skuid)
+	}
+}
+
 func TestGetFrontDoorPrice_RoutingAliases(t *testing.T) {
 	// Routing via GetPrice with service="frontdoor" and "front_door" must work.
 	srv := mockServer(t, nil)

@@ -63,6 +63,21 @@ func TestFillDomainFromService(t *testing.T) {
 	}
 }
 
+// TestFillDomain_EgressPreservesNetworkDomain guards against re-introducing
+// "egress"→inter_region_egress in serviceToDomain. Callers that supply
+// domain=network with service=egress must not have their domain silently
+// overridden to inter_region_egress. "egress" is valid in both domains and
+// all real callers supply an explicit domain, so FillDomain must return early.
+func TestFillDomain_EgressPreservesNetworkDomain(t *testing.T) {
+	spec := map[string]interface{}{"service": "egress", "domain": "network", "provider": "aws"}
+	result := FillDomain(spec)
+	if result["domain"] != "network" {
+		t.Errorf("service=egress with explicit domain=network: got %q want %q; "+
+			"\"egress\" must not appear in serviceToDomain (it is valid in both network and inter_region_egress)",
+			result["domain"], "network")
+	}
+}
+
 func TestFillDomainServiceCaseInsensitive(t *testing.T) {
 	spec := map[string]interface{}{"service": "RDS", "provider": "aws"}
 	result := FillDomain(spec)
