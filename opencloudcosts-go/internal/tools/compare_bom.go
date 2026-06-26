@@ -371,11 +371,6 @@ func pickStorageType(provider, storageType string) string {
 // specific provider, region, and term. Returns an error if the item type
 // is not supported for this provider.
 func workloadItemToSpec(item WorkloadItem, provider, region, term string) (map[string]any, string, error) {
-	qty := item.Quantity
-	if qty <= 0 {
-		qty = 1
-	}
-
 	switch strings.ToLower(item.Type) {
 	case "compute":
 		vcpus := item.VCPUs
@@ -496,7 +491,7 @@ func workloadItemToSpec(item WorkloadItem, provider, region, term string) (map[s
 		case "azure":
 			// Azure Cache for Redis is not in the current catalog — report as skipped.
 			return nil, "", fmt.Errorf(
-				"Azure cache (Redis) is not in the current catalog; use get_price with service='cosmos' for Azure data stores",
+				"azure cache (Redis) is not in the current catalog; use get_price with service='cosmos' for Azure data stores",
 			)
 		default:
 			return nil, "", fmt.Errorf("unknown provider %q for cache type", provider)
