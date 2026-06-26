@@ -1140,6 +1140,9 @@ def _preprocess_json(s: str) -> str:
     # {"function_name", "key": ...} → {"name": "function_name", "key": ...}
     # Model emits the function name as a bare first string instead of "name": "..."
     s = re.sub(r'^\{\s*"([^"]+)",\s*"', r'{"name": "\1", "', s.strip())
+    # {"name=describe_catalog, "arguments": ...} → {"name": "describe_catalog", "arguments": ...}
+    # Model uses = and omits closing quote/delimiter before continuing JSON (AZCOS4 pattern).
+    s = re.sub(r'"name=([^">,\s]+),', r'"name": "\1",', s)
     return s
 
 

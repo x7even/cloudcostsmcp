@@ -537,10 +537,10 @@ func (h *Handler) HandleGetPrice(
 				"No pricing found for service '%s' in %s with the provided filters.", svc, region,
 			),
 			"tip": fmt.Sprintf(
-				"Try search_pricing(provider='%s', service='%s', query='...') "+
-					"to explore available products and valid filter attribute names. "+
-					"Use list_services() to verify the service code exists.",
-				provName, svc,
+				"Try describe_catalog(provider='%s', domain='<domain>') to see supported domains, "+
+					"services, and an example_invocation to copy. "+
+					"Then retry get_price with the exact spec from example_invocation.",
+				provName,
 			),
 		}
 		return jsonText(out), nil, nil
@@ -918,10 +918,25 @@ func (h *Handler) HandleSearchPricing(
 		if domain == "" {
 			domain = "compute"
 		}
-		tip := "Check the service code with list_services(). " +
-			"Try a broader query (e.g. the product family name). "
-		if in.Domain != "" {
-			tip += fmt.Sprintf("Verify that '%s' is a valid domain or service alias.", in.Domain)
+		// Infer likely domain from query keywords via serviceToDomain.
+		queryLower := strings.ToLower(in.Query)
+		var inferredDomain string
+		for svc, d := range serviceToDomain {
+			if strings.Contains(queryLower, svc) {
+				inferredDomain = string(d)
+				break
+			}
+		}
+		tip := "AWS and GCP search covers compute instance types only; " +
+			"non-compute services (lambda, functions, s3, etc.) won't appear here. " +
+			"Use describe_catalog(provider='" + in.Provider + "') to browse all available domains and services, " +
+			"then call get_price(spec={...}) with the exact service spec."
+		if inferredDomain != "" && inferredDomain != domain {
+			tip += fmt.Sprintf(
+				" Query keyword suggests service is in domain '%s' — try: "+
+					"describe_catalog(provider='%s', domain='%s').",
+				inferredDomain, in.Provider, inferredDomain,
+			)
 		}
 		msg := fmt.Sprintf("No pricing found matching '%s'", in.Query)
 		if in.Domain != "" {
@@ -1119,22 +1134,34 @@ func (h *Handler) HandleDescribeCatalog(
 		availSvcs := catalog.Services[in.Domain]
 		out["available_services"] = availSvcs
 		if in.Service != "" {
-			// Service was specified but not found — guide toward the exact name.
+			// Service was specified but not found — check if it lives in a different domain.
 			svcList := strings.Join(availSvcs, "', '")
 			if svcList == "" {
 				svcList = "<service>"
 			}
-			out["tip"] = fmt.Sprintf(
-				"Service '%s' is not a catalog key for domain '%s'. "+
-					"Pick one of the exact names from available_services and call: "+
-					"describe_catalog(provider='%s', domain='%s', service='<exact_name>') "+
-					"then get_price(spec={provider:'%s', domain:'%s', service:'<exact_name>', ...}). "+
-					"Valid names: '%s'.",
-				in.Service, in.Domain,
-				in.Provider, in.Domain,
-				in.Provider, in.Domain,
-				svcList,
-			)
+			// Check serviceToDomain for cross-domain redirect.
+			if correctDomain, ok := serviceToDomain[strings.ToLower(in.Service)]; ok && string(correctDomain) != in.Domain {
+				out["tip"] = fmt.Sprintf(
+					"Service '%s' is not in domain '%s' — it belongs to domain '%s'. "+
+						"Call: describe_catalog(provider='%s', domain='%s', service='%s') "+
+						"then get_price(spec={provider:'%s', domain:'%s', service:'%s', ...}).",
+					in.Service, in.Domain, string(correctDomain),
+					in.Provider, string(correctDomain), in.Service,
+					in.Provider, string(correctDomain), in.Service,
+				)
+			} else {
+				out["tip"] = fmt.Sprintf(
+					"Service '%s' is not a catalog key for domain '%s'. "+
+						"Pick one of the exact names from available_services and call: "+
+						"describe_catalog(provider='%s', domain='%s', service='<exact_name>') "+
+						"then get_price(spec={provider:'%s', domain:'%s', service:'<exact_name>', ...}). "+
+						"Valid names: '%s'.",
+					in.Service, in.Domain,
+					in.Provider, in.Domain,
+					in.Provider, in.Domain,
+					svcList,
+				)
+			}
 		} else {
 			out["tip"] = fmt.Sprintf(
 				"Specify service= to get targeted guidance. Available services for %s: %v",
