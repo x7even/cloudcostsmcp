@@ -487,7 +487,7 @@ func (h *Handler) HandleGetPrice(
 	}
 
 	if !pvdr.Supports(spec.GetDomain(), spec.GetService()) {
-		return errResult(map[string]any{
+		notSuppResp := map[string]any{
 			"error":    "not_supported",
 			"provider": string(spec.GetProvider()),
 			"domain":   string(spec.GetDomain()),
@@ -495,7 +495,17 @@ func (h *Handler) HandleGetPrice(
 			"reason": fmt.Sprintf("%s does not support %s/%s.",
 				spec.GetProvider(), spec.GetDomain(), spec.GetService()),
 			"alternatives": []string{"Call describe_catalog() to see what this provider supports."},
-		}), nil, nil
+		}
+		// GCP serverless (Cloud Run, Cloud Functions) is not implemented in the
+		// Go provider — it is only available via the Python provider.
+		if spec.GetProvider() == "gcp" && spec.GetDomain() == models.PricingDomainServerless {
+			notSuppResp["reason"] = fmt.Sprintf(
+				"GCP serverless (%s) is not supported in the Go provider. "+
+					"Cloud Run and Cloud Functions pricing is only available via the Python provider.",
+				spec.GetService(),
+			)
+		}
+		return errResult(notSuppResp), nil, nil
 	}
 
 	result, err := pvdr.GetPrice(ctx, spec)
@@ -1001,6 +1011,32 @@ func (h *Handler) HandleDescribeCatalog(
 		return entry
 	}
 
+	// Service→domain normalization: if the caller supplied a service whose canonical
+	// domain differs from the supplied domain (or no domain was supplied), redirect
+	// to the correct domain so the rest of the function returns the right guidance.
+	// This handles two cases:
+	//   (1) describe_catalog(provider='aws', service='lambda') — no domain → infer serverless
+	//   (2) describe_catalog(provider='aws', domain='compute', service='lambda') — wrong domain
+	var redirectNotice string
+	if in.Service != "" {
+		svcKey := strings.ToLower(in.Service)
+		if mappedDomain, found := serviceToDomain[svcKey]; found {
+			mapped := string(mappedDomain)
+			if in.Domain == "" {
+				redirectNotice = fmt.Sprintf(
+					"domain inferred from service '%s' → '%s'", in.Service, mapped,
+				)
+				in.Domain = mapped
+			} else if in.Domain != mapped {
+				redirectNotice = fmt.Sprintf(
+					"service '%s' belongs to domain '%s', not '%s' — redirected",
+					in.Service, mapped, in.Domain,
+				)
+				in.Domain = mapped
+			}
+		}
+	}
+
 	if in.Domain == "" {
 		// No domain → full support matrix (no-args mode OR provider-only mode).
 		// Python: {"support_matrix": {pname: {domains,services,decision_matrix}}, "tip": "..."}
@@ -1076,6 +1112,9 @@ func (h *Handler) HandleDescribeCatalog(
 		"domain":   in.Domain,
 		"service":  serviceVal,
 	}
+	if redirectNotice != "" {
+		out["redirect_notice"] = redirectNotice
+	}
 
 	// Pull the relevant sections from the catalog.
 	terms, haTerms := catalog.SupportedTerms[key]
@@ -1133,7 +1172,14 @@ func (h *Handler) HandleDescribeCatalog(
 	if !haTerms && !haHints && !haEx {
 		availSvcs := catalog.Services[in.Domain]
 		out["available_services"] = availSvcs
-		if in.Service != "" {
+
+		// GCP serverless (Cloud Run, Cloud Functions) is only available via the
+		// Python provider — emit a clear message rather than an empty service list.
+		if in.Provider == "gcp" && in.Domain == string(models.PricingDomainServerless) {
+			out["error"] = "not_supported_in_go_provider"
+			out["tip"] = "GCP serverless (Cloud Run, Cloud Functions) is not implemented in the " +
+				"Go provider. Use the Python provider for Cloud Run and Cloud Functions pricing."
+		} else if in.Service != "" {
 			// Service was specified but not found — check if it lives in a different domain.
 			svcList := strings.Join(availSvcs, "', '")
 			if svcList == "" {

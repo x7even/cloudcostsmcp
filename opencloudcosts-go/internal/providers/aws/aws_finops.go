@@ -677,7 +677,12 @@ func (p *Provider) DescribeCatalog(ctx context.Context) (*models.ProviderCatalog
 			"ai/sagemaker": {
 				"machine_type": "ml instance type e.g. 'ml.g5.xlarge'",
 			},
-			"serverless/lambda":     {"service": "lambda"},
+			"serverless/lambda": {
+				"service":             "lambda",
+				"gb_seconds":          "compute time in GB-seconds per month (memory_gb × duration_seconds × invocations); omit for raw rate",
+				"requests_millions":   "number of invocations in millions per month; omit for raw rate",
+				"region":              "AWS region e.g. 'us-east-1'",
+			},
 			"analytics/redshift":    {"service": "redshift"},
 			"analytics/athena":      {"service": "athena"},
 			"network/lb":            {"service": "lb", "note": "also accepts 'cloud_lb'"},
@@ -771,10 +776,12 @@ func (p *Provider) DescribeCatalog(ctx context.Context) (*models.ProviderCatalog
 				"output_tokens": 1_000_000,
 			},
 			"serverless/lambda": {
-				"provider": "aws",
-				"domain":   "serverless",
-				"service":  "lambda",
-				"region":   "us-east-1",
+				"provider":            "aws",
+				"domain":              "serverless",
+				"service":             "lambda",
+				"region":              "us-east-1",
+				"gb_seconds":          100.0,
+				"requests_millions":   10.0,
 			},
 			"observability/cloudwatch": {
 				"provider": "aws",
