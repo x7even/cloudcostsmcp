@@ -1823,6 +1823,7 @@ async def run_single(
                 "max_tokens": 32768,
             }
 
+            resp = None  # reset so prior round's response never leaks into error handler
             try:
                 headers = {"Authorization": f"Bearer {LLM_API_KEY}"} if LLM_API_KEY else {}
                 resp = await client.post(
