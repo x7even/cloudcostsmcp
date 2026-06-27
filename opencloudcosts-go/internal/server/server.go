@@ -602,20 +602,22 @@ const (
 
 	descCacheStats = "Return statistics about the local pricing cache (entry counts, DB size)."
 
-	descEstimateBOM = "\n        Use this tool for total infrastructure cost, TCO, monthly spend for a multi-resource\n        stack, or cost comparison between architectures.\n\n        Handles compute + storage + database + AI together in a single call — do NOT call\n        get_price individually for multi-resource questions; use this tool instead.\n\n        Returns per-item and total monthly/annual costs with real public pricing data,\n        plus a not_included list of hidden costs (egress, load balancers, NAT Gateway,\n        monitoring, backups). IMPORTANT: if not_included is present in the response, you\n        MUST call get_price for each listed item — using the exact command in each item's\n        how_to_price field — before writing your final answer. Do NOT estimate or guess\n        any cost from the not_included list.\n\n        Each item should be a PricingSpec dict PLUS a quantity field:\n          - provider: \"aws\" | \"gcp\" | \"azure\"\n          - domain: \"compute\" | \"storage\" | \"database\" | \"ai\" | ...\n          - region: region code\n          - quantity: number of units (default 1)\n          - hours_per_month: hours/month for compute (default 730 = always-on)\n          - description: optional label for this line item\n          Plus domain-specific fields (see get_price or describe_catalog for details).\n\n        Examples:\n          Compute + database + storage on AWS:\n          [\n            {\"provider\": \"aws\", \"domain\": \"compute\", \"resource_type\": \"m5.xlarge\",   \"region\": \"us-east-1\", \"quantity\": 3},\n            {\"provider\": \"aws\", \"domain\": \"database\", \"service\": \"rds\", \"resource_type\": \"db.r6g.large\", \"engine\": \"MySQL\", \"deployment\": \"single-az\", \"region\": \"us-east-1\"},\n            {\"provider\": \"aws\", \"domain\": \"storage\",  \"storage_type\": \"gp3\", \"size_gb\": 500, \"region\": \"us-east-1\"}\n          ]\n\n          Mixed cloud:\n          [\n            {\"provider\": \"gcp\",   \"domain\": \"compute\", \"resource_type\": \"n1-standard-4\", \"region\": \"us-central1\", \"quantity\": 2},\n            {\"provider\": \"azure\", \"domain\": \"compute\", \"resource_type\": \"Standard_D4s_v3\", \"region\": \"eastus\", \"quantity\": 1}\n          ]\n        "
+	descEstimateBOM = "\n        Use this tool for total infrastructure cost, TCO, monthly spend for a multi-resource\n        stack, or cost comparison between architectures.\n\n        Handles compute + storage + database + AI together in a single call — do NOT call\n        get_price individually for multi-resource questions; use this tool instead.\n\n        Returns per-item and total monthly/annual costs with real public pricing data,\n        plus a not_included list of supplementary hidden costs (egress, load balancers,\n        NAT Gateway, monitoring, backups). The not_included items are SUPPLEMENTARY —\n        you do NOT need to call get_price for them unless the user explicitly asked for a\n        total-cost-of-ownership or comprehensive estimate. For core infrastructure\n        questions, simply note 'additional costs may apply' and list the items.\n\n        Each item should be a PricingSpec dict PLUS a quantity field:\n          - provider: \"aws\" | \"gcp\" | \"azure\"\n          - domain: \"compute\" | \"storage\" | \"database\" | \"ai\" | ...\n          - region: region code\n          - quantity: number of units (default 1)\n          - hours_per_month: hours/month for compute (default 730 = always-on)\n          - description: optional label for this line item\n          Plus domain-specific fields (see get_price or describe_catalog for details).\n\n        Examples:\n          Compute + database + storage on AWS:\n          [\n            {\"provider\": \"aws\", \"domain\": \"compute\", \"resource_type\": \"m5.xlarge\",   \"region\": \"us-east-1\", \"quantity\": 3},\n            {\"provider\": \"aws\", \"domain\": \"database\", \"service\": \"rds\", \"resource_type\": \"db.r6g.large\", \"engine\": \"MySQL\", \"deployment\": \"single-az\", \"region\": \"us-east-1\"},\n            {\"provider\": \"aws\", \"domain\": \"storage\",  \"storage_type\": \"gp3\", \"size_gb\": 500, \"region\": \"us-east-1\"}\n          ]\n\n          Mixed cloud:\n          [\n            {\"provider\": \"gcp\",   \"domain\": \"compute\", \"resource_type\": \"n1-standard-4\", \"region\": \"us-central1\", \"quantity\": 2},\n            {\"provider\": \"azure\", \"domain\": \"compute\", \"resource_type\": \"Standard_D4s_v3\", \"region\": \"eastus\", \"quantity\": 1}\n          ]\n        "
 
 	descEstimateUnitEconomics = "\n        Estimate per-unit economics (cost per user, per request, per transaction) given\n        a Bill of Materials and expected monthly usage volume.\n\n        Args:\n            items: Same format as estimate_bom — list of cloud resource PricingSpec dicts\n                   plus quantity field. See estimate_bom for full item format.\n            units_per_month: Monthly volume being measured (e.g. 10000 users)\n            unit_label: What the unit represents — \"user\", \"request\", \"transaction\", etc.\n        "
 
 	descCompareBOM = "Price a multi-service workload across multiple cloud providers simultaneously " +
 		"and return a side-by-side cost comparison. Use this when the user wants to compare " +
-		"costs across AWS, GCP, and/or Azure for the same infrastructure.\n\n" +
-		"NOTE: compare_bom uses abstract tiers for storage (\"ssd\" → gp3/pd-ssd/premium-ssd, " +
-		"\"hdd\" → sc1/pd-standard/standard-hdd, \"ssd-provisioned-iops\" → io2/pd-extreme). " +
-		"For comparisons that require specific disk types with exact per-IOPS or per-throughput " +
-		"billing (e.g. io2 with 64000 IOPS vs pd-extreme with 64000 IOPS), use estimate_bom " +
-		"instead, which accepts the full StoragePricingSpec including iops and throughput_mbps.\n\n" +
+		"costs across AWS, GCP, and/or Azure for the same infrastructure. This is a COMPLETE " +
+		"single-call solution — no follow-up tool calls are needed after compare_bom returns.\n\n" +
+		"Storage support: compare_bom accepts provider-specific storage types directly.\n" +
+		"  Abstract tiers: \"ssd\" → gp3/pd-ssd/premium-ssd, \"hdd\" → sc1/pd-standard/standard-hdd\n" +
+		"  Provider-specific: storage_type=\"gp3\", \"io2\", \"sc1\", \"pd-ssd\", \"pd-extreme\", etc.\n" +
+		"  IOPS/throughput: add iops and throughput_mbps fields to any storage spec.\n" +
+		"  Use this tool (not estimate_bom) when comparing multiple disk profiles across clouds.\n\n" +
 		"Returns per-provider totals keyed by pricing term, committed vs on-demand savings, " +
-		"and any supplementary costs not included in the estimate.\n\n" +
+		"and any supplementary costs. The not_included items are supplementary — " +
+		"do NOT call get_price for them; just note 'additional costs may apply'.\n\n" +
 		"The workload is described in cloud-agnostic terms (vcpus, memory_gb, storage_gb) — " +
 		"the tool selects the closest equivalent instance type per provider automatically.\n\n" +
 		"Args:\n" +
@@ -625,11 +627,19 @@ const (
 		"(compute/storage/database/cache) plus vcpus, memory_gb, quantity, etc.\n" +
 		"    terms: Pricing terms — default [\"on_demand\", \"reserved_1yr\"]. " +
 		"Term translation is automatic: reserved_1yr maps to cud_1yr for GCP.\n\n" +
-		"Example:\n" +
+		"Examples:\n" +
+		"  3-tier compute+storage stack:\n" +
 		"    workload: {\n" +
 		"      \"web_servers\": {\"type\": \"compute\", \"vcpus\": 4, \"memory_gb\": 16, \"quantity\": 3},\n" +
 		"      \"database\":    {\"type\": \"database\", \"vcpus\": 8, \"memory_gb\": 32},\n" +
 		"      \"storage\":     {\"type\": \"storage\", \"storage_gb\": 500, \"storage_type\": \"ssd\"}\n" +
+		"    }\n\n" +
+		"  Multi-disk-profile storage comparison (AWS gp3/io2 vs GCP pd-ssd/pd-extreme):\n" +
+		"    providers: [\"aws\", \"gcp\"],\n" +
+		"    workload: {\n" +
+		"      \"profile_a\": {\"type\": \"storage\", \"storage_gb\": 10000, \"storage_type\": \"gp3\", \"iops\": 3000, \"throughput_mbps\": 125},\n" +
+		"      \"profile_b\": {\"type\": \"storage\", \"storage_gb\": 2000,  \"storage_type\": \"gp3\", \"iops\": 3000, \"throughput_mbps\": 500},\n" +
+		"      \"profile_c\": {\"type\": \"storage\", \"storage_gb\": 500,   \"storage_type\": \"io2\", \"iops\": 64000}\n" +
 		"    }"
 )
 

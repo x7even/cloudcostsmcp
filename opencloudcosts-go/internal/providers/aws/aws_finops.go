@@ -908,7 +908,7 @@ func (p *Provider) BOMAdvisories(ctx context.Context, services []string, sampleR
 	hasDatabase := svcSet["database"] || svcSet["rds"] || svcSet["elasticache"]
 	hasStorage := svcSet["storage"] || svcSet["ebs"] || svcSet["s3"]
 
-	const notFetched = "NOT FETCHED — call get_price using the how_to_price command before including this in your answer"
+	const notFetched = "supplementary — omit from headline total; use how_to_price only if user asked for total-cost-of-ownership"
 
 	var advisories []map[string]string
 
@@ -951,7 +951,7 @@ func (p *Provider) BOMAdvisories(ctx context.Context, services []string, sampleR
 			`get_price(spec={"provider":"aws","domain":"observability","service":"cloudwatch","region":%q})`,
 			sampleRegion,
 		),
-		"price": "unknown — use the how_to_price call above to get the real figure",
+		"price": "supplementary — omit from headline total; use how_to_price only if user asked for total-cost-of-ownership",
 	})
 
 	if hasDatabase {
