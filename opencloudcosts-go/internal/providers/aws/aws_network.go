@@ -209,6 +209,35 @@ func (p *Provider) GetNetworkPrice(
 		prices = egressStaticFallback(src, dst, now)
 	}
 
+	// When the caller specified a volume, append a computed monthly total so the
+	// model can read the answer directly without multiplying per-unit rate × volume.
+	if es, ok := spec.(*models.EgressPricingSpec); ok && es.DataGB > 0 && len(prices) > 0 {
+		rate := prices[0].PricePerUnit
+		monthly := rate * es.DataGB
+		prices = append(prices, models.NormalizedPrice{
+			Provider:      models.CloudProviderAWS,
+			Service:       "inter_region_egress",
+			SKUID:         fmt.Sprintf("aws:data_transfer:%s:%s:monthly_total", src, dst),
+			ProductFamily: "Data Transfer",
+			Description: fmt.Sprintf(
+				"AWS inter-region %s → %s monthly total: %.0f GB × $%.6f/GB = $%.2f/month",
+				src, dst, es.DataGB, rate, monthly,
+			),
+			Region:       src,
+			PricingTerm:  models.PricingTermOnDemand,
+			PricePerUnit: monthly,
+			Unit:         models.PriceUnitPerMonth,
+			Currency:     "USD",
+			FetchedAt:    &now,
+			Attributes: map[string]string{
+				"fromRegionCode":    src,
+				"toRegionCode":      dst,
+				"data_gb_per_month": fmt.Sprintf("%.0f", es.DataGB),
+				"monthly_total_usd": fmt.Sprintf("%.2f", monthly),
+			},
+		})
+	}
+
 	if len(prices) > 0 {
 		if data, err2 := json.Marshal(prices); err2 == nil {
 			ttl := time.Duration(p.cfg.CacheTTLHours) * time.Hour

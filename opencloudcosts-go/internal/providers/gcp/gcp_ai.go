@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/models"
+	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/providers"
 )
 
 // GCP Cloud Billing Catalog service IDs for AI / analytics.
@@ -589,6 +590,12 @@ func (p *Provider) dispatchAIPrice(ctx context.Context, s *models.AiPricingSpec,
 		return buildResult(prices, breakdown), nil
 
 	default: // vertex, vertex_ai, training, prediction, ""
+		// When the caller specifies model= (e.g. "claude-opus-4-8") but no machine_type,
+		// they want model-inference pricing by model name — not supported for non-Gemini
+		// models in Vertex AI. Return ErrNotSupported so the caller stops retrying.
+		if s.Model != "" && s.MachineType == "" {
+			return nil, providers.ErrNotSupported
+		}
 		prices, breakdown, err := p.priceVertexAI(ctx, s)
 		if err != nil {
 			return nil, err

@@ -714,6 +714,7 @@ func (p *Provider) DescribeCatalog(ctx context.Context) (*models.ProviderCatalog
 			"inter_region_egress": {
 				"source_region": "origin region e.g. 'us-east-1'",
 				"dest_region":   "destination region e.g. 'eu-west-1' (required for inter-region transfer; for internet egress use domain=network service=egress destination_type=internet instead)",
+				"data_gb":       "optional — monthly volume in GB; when provided, response includes a pre-computed monthly_total line item (e.g. 6000000 for 6 PB)",
 			},
 		},
 		ExampleInvocations: map[string]map[string]any{
@@ -830,10 +831,11 @@ func (p *Provider) DescribeCatalog(ctx context.Context) (*models.ProviderCatalog
 				"region":   "us-east-1",
 			},
 			"inter_region_egress": {
-				"provider":      "aws",
-				"domain":        "inter_region_egress",
-				"source_region": "us-east-1",
-				"dest_region":   "eu-west-1",
+				"provider":          "aws",
+				"domain":            "inter_region_egress",
+				"source_region":     "us-east-1",
+				"dest_region":       "eu-west-1",
+				"data_gb":           1024.0,
 			},
 			"network/egress": {
 				"provider":          "aws",

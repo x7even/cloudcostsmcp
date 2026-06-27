@@ -920,6 +920,15 @@ func (h *Handler) HandleDescribeCatalog(
 		return entry
 	}
 
+	// Normalize well-known service name aliases before any lookup so the model
+	// doesn't need to know the exact canonical name on the first try.
+	serviceNameAliases := map[string]string{
+		"functions": "azure_functions",
+	}
+	if norm, ok := serviceNameAliases[strings.ToLower(in.Service)]; ok {
+		in.Service = norm
+	}
+
 	// Service→domain normalization: if the caller supplied a service whose canonical
 	// domain differs from the supplied domain (or no domain was supplied), redirect
 	// to the correct domain so the rest of the function returns the right guidance.
