@@ -1505,10 +1505,11 @@ def _preprocess_json(s: str) -> str:
 
 
 def _repair_json(s: str) -> str:
-    """Close any unclosed braces/brackets in truncated JSON."""
+    """Close any unclosed braces/brackets in truncated JSON, or trim extra closing ones."""
     depth_brace = depth_bracket = 0
     in_string = escaped = False
-    for c in s:
+    last_balanced_pos = len(s)
+    for i, c in enumerate(s):
         if escaped:
             escaped = False
             continue
@@ -1528,6 +1529,11 @@ def _repair_json(s: str) -> str:
             depth_bracket += 1
         elif c == "]":
             depth_bracket -= 1
+        if depth_brace >= 0 and depth_bracket >= 0:
+            last_balanced_pos = i + 1
+    if depth_brace < 0 or depth_bracket < 0:
+        # Extra closing token(s) — truncate to the last balanced position
+        return s[:last_balanced_pos]
     return s + "]" * max(0, depth_bracket) + "}" * max(0, depth_brace)
 
 
@@ -1800,7 +1806,7 @@ async def run_single(
         "error": None,
     }
 
-    async with httpx.AsyncClient(timeout=120.0) as client:
+    async with httpx.AsyncClient(timeout=240.0) as client:
         for round_num in range(MAX_TOOL_ROUNDS):
             trace["rounds"] = round_num + 1
 
