@@ -1967,7 +1967,7 @@ async def run_single(
                     try:
                         mcp_result = await asyncio.wait_for(
                             mcp_session.call_tool(tool_name, tool_args),
-                            timeout=45.0,
+                            timeout=90.0,
                         )
                         # MCP returns a list of content items; join text parts
                         text_parts = [c.text for c in mcp_result.content if hasattr(c, "text")]
@@ -1979,7 +1979,7 @@ async def run_single(
                         _call_cache[_cache_key] = tool_result
                     except TimeoutError:
                         tool_result = {
-                            "error": "MCP tool timed out after 45s — pricing unavailable"
+                            "error": "MCP tool timed out after 90s — pricing unavailable"
                         }
                         mcp_session_ok = False
                         print(
@@ -2095,7 +2095,7 @@ async def run_single(
                                             rargs = {}
                                         try:
                                             r_result = await asyncio.wait_for(
-                                                mcp_session.call_tool(rfn["name"], rargs), timeout=45.0
+                                                mcp_session.call_tool(rfn["name"], rargs), timeout=90.0
                                             )
                                             rtext = "".join(c.text for c in r_result.content if hasattr(c, "text"))
                                             try:
