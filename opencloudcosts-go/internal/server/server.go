@@ -606,34 +606,31 @@ const (
 
 	descEstimateUnitEconomics = "\n        Estimate per-unit economics (cost per user, per request, per transaction) given\n        a Bill of Materials and expected monthly usage volume.\n\n        Args:\n            items: Same format as estimate_bom — list of cloud resource PricingSpec dicts\n                   plus quantity field. See estimate_bom for full item format.\n            units_per_month: Monthly volume being measured (e.g. 10000 users)\n            unit_label: What the unit represents — \"user\", \"request\", \"transaction\", etc.\n        "
 
-	descCompareBOM = "Price a multi-service workload across multiple cloud providers simultaneously " +
-		"and return a side-by-side cost comparison. Use this when the user wants to compare " +
-		"costs across AWS, GCP, and/or Azure for the same infrastructure.\n\n" +
-		"Storage: accepts abstract tiers (\"ssd\" → gp3/pd-ssd/premium-ssd, " +
-		"\"hdd\" → sc1/pd-standard/standard-hdd) or provider-specific types " +
-		"(gp3, io2, pd-ssd, pd-extreme, etc.) with iops and throughput_mbps for IOPS pricing. " +
-		"Preferred tool for cross-cloud block storage comparisons.\n\n" +
-		"Returns per-provider totals keyed by pricing term, committed vs on-demand savings, " +
-		"and any supplementary costs not included in the estimate.\n\n" +
-		"The workload is described in cloud-agnostic terms (vcpus, memory_gb, storage_gb) — " +
-		"the tool selects the closest equivalent instance type per provider automatically.\n\n" +
-		"Args:\n" +
-		"    providers: Which providers to compare — [\"aws\", \"gcp\", \"azure\"] (default: all three).\n" +
-		"    region_preference: Region tier — \"us\" (default), \"eu\", \"apac\".\n" +
-		"    workload: Map of logical name → resource spec. Each spec needs 'type' " +
-		"(compute/storage/database/cache) plus vcpus, memory_gb, quantity, etc.\n" +
-		"    terms: Pricing terms — default [\"on_demand\", \"reserved_1yr\"]. " +
-		"Term translation is automatic: reserved_1yr maps to cud_1yr for GCP.\n\n" +
-		"Example:\n" +
-		"    workload: {\n" +
-		"      \"web_servers\": {\"type\": \"compute\", \"vcpus\": 4, \"memory_gb\": 16, \"quantity\": 3},\n" +
-		"      \"database\":    {\"type\": \"database\", \"vcpus\": 8, \"memory_gb\": 32},\n" +
-		"      \"storage\":     {\"type\": \"storage\", \"storage_gb\": 500, \"storage_type\": \"ssd\"}\n" +
-		"    }\n\n" +
-		"  Multi-disk storage (gp3/io2 vs pd-ssd/pd-extreme):\n" +
-		"    providers:[\"aws\",\"gcp\"], workload:{" +
-		"\"p_a\":{\"type\":\"storage\",\"storage_gb\":10000,\"storage_type\":\"gp3\",\"iops\":3000}," +
-		"\"p_c\":{\"type\":\"storage\",\"storage_gb\":500,\"storage_type\":\"io2\",\"iops\":64000}}"
+	descCompareBOM = `Price a multi-service workload across multiple cloud providers simultaneously and return a side-by-side cost comparison. Use this when the user wants to compare total costs across AWS, GCP, and/or Azure for the same infrastructure.
+
+OUTPUT FORMAT — aggregate totals only: for each workload key, storage capacity, provisioned IOPS, and provisioned throughput costs are summed into ONE number in the breakdown map. This tool does NOT return separate line items for storage $, IOPS $, and throughput $. If the user asks for a cost breakdown with storage capacity, provisioned IOPS, and provisioned throughput as separate line items per disk, use estimate_bom instead — it returns one row per price component.
+
+Storage: accepts abstract tiers ("ssd" → gp3/pd-ssd/premium-ssd, "hdd" → sc1/pd-standard/standard-hdd) or provider-specific types (gp3, io2, sc1, pd-ssd, pd-extreme, hyperdisk-extreme, etc.) with iops and throughput_mbps for IOPS pricing. Use compare_bom when a provider-vs-provider total-cost summary is sufficient.
+
+Returns per-provider totals keyed by pricing term, a breakdown map (workload_key → aggregate monthly $), committed vs on-demand savings, and any supplementary costs not included in the estimate.
+
+The workload is described in cloud-agnostic terms (vcpus, memory_gb, storage_gb) — the tool selects the closest equivalent instance type per provider automatically.
+
+Args:
+    providers: Which providers to compare — ["aws", "gcp", "azure"] (default: all three).
+    region_preference: Region tier — "us" (default), "eu", "apac".
+    workload: Map of logical name → resource spec. Each spec needs 'type' (compute/storage/database/cache) plus vcpus, memory_gb, quantity, etc.
+    terms: Pricing terms — default ["on_demand", "reserved_1yr"]. Term translation is automatic: reserved_1yr maps to cud_1yr for GCP.
+
+Example:
+    workload: {
+      "web_servers": {"type": "compute", "vcpus": 4, "memory_gb": 16, "quantity": 3},
+      "database":    {"type": "database", "vcpus": 8, "memory_gb": 32},
+      "storage":     {"type": "storage", "storage_gb": 500, "storage_type": "ssd"}
+    }
+
+  Multi-disk storage (gp3/io2 vs pd-ssd/pd-extreme):
+    providers:["aws","gcp"], workload:{"p_a":{"type":"storage","storage_gb":10000,"storage_type":"gp3","iops":3000},"p_c":{"type":"storage","storage_gb":500,"storage_type":"io2","iops":64000}}`
 )
 
 // ---- registerTools registers all 16 MCP tools on the server ----

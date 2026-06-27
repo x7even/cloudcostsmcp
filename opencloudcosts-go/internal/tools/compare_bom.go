@@ -361,7 +361,29 @@ func pickStorageType(provider, storageType string) string {
 			return code
 		}
 	}
-	// Fallback to SSD defaults.
+	// If the caller supplied a provider-specific type code (gp3, io2, sc1, pd-ssd,
+	// pd-extreme, hyperdisk-extreme, etc.), pass it through unchanged rather than
+	// silently mapping to an SSD default and returning a wrong price.
+	// The check is provider-scoped so that AWS type codes are never forwarded to
+	// GCP/Azure in compare_bom's multi-provider fan-out (and vice versa).
+	providerTypes := map[string]map[string]bool{
+		"aws": {
+			"gp2": true, "gp3": true, "io1": true, "io2": true,
+			"sc1": true, "st1": true, "standard": true,
+		},
+		"gcp": {
+			"pd-standard": true, "pd-balanced": true, "pd-ssd": true,
+			"pd-extreme": true, "hyperdisk-extreme": true, "hyperdisk-balanced": true,
+			"hyperdisk-throughput": true,
+		},
+		"azure": {
+			"premium-ssd": true, "standard-hdd": true, "ultra-ssd": true,
+		},
+	}
+	if pt, ok := providerTypes[provider]; ok && pt[st] {
+		return st
+	}
+	// Final fallback to SSD defaults for completely unknown types.
 	switch provider {
 	case "aws":
 		return "gp3"
