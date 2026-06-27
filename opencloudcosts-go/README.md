@@ -27,7 +27,7 @@ Cost questions are one of the most common things you ask an AI about infrastruct
 
 ### Option A: Build from source (recommended)
 
-Requires Go 1.24+.
+Requires Go 1.25.11+.
 
 ```bash
 git clone https://github.com/x7even/cloudcostsmcp
@@ -37,13 +37,7 @@ CGO_ENABLED=0 go build -o opencloudcosts ./cmd/opencloudcosts
 
 The result is a fully static binary with no system dependencies.
 
-### Option B: `go install`
-
-```bash
-CGO_ENABLED=0 go install github.com/x7even/cloudcostsmcp/opencloudcosts-go/cmd/opencloudcosts@latest
-```
-
-### Option C: Docker
+### Option B: Docker
 
 Multi-stage build produces a ~15 MB distroless image (scratch base, no shell, no OS).
 
@@ -67,17 +61,13 @@ docker run --rm -p 8080:8080 \
 
 ## Updating
 
-### From source or `go install`
+### From source
 
 ```bash
-# From source — pull and rebuild
 cd cloudcostsmcp
 git pull
 cd opencloudcosts-go
 CGO_ENABLED=0 go build -o opencloudcosts ./cmd/opencloudcosts
-
-# go install — rebuild from latest tag
-CGO_ENABLED=0 go install github.com/x7even/cloudcostsmcp/opencloudcosts-go/cmd/opencloudcosts@latest
 ```
 
 ### Docker
@@ -140,11 +130,11 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
 
 ```bash
 # Start with auth token
-./opencloudcosts --transport http --host 0.0.0.0 --port 8080 \
-  --env OCC_API_KEY=my-secret-token
+OCC_API_KEY=my-secret-token ./opencloudcosts --transport http --host 0.0.0.0 --port 8080
 
-# MCP endpoint
-curl -H "Authorization: Bearer my-secret-token" http://localhost:8080/mcp
+# MCP clients connect to the root endpoint
+# The server listens at / — configure your MCP client to use:
+#   http://localhost:8080/
 ```
 
 ---
@@ -302,17 +292,19 @@ No credentials required. Azure pricing uses the public [Retail Prices API](https
 {
   "tool": "compare_bom",
   "arguments": {
-    "workload": [
-      {"domain": "compute", "vcpu": 4, "memory_gb": 16, "quantity": 3},
-      {"domain": "database", "vcpu": 2, "engine": "MySQL", "deployment": "single-az"},
-      {"domain": "storage", "storage_type": "ssd", "size_gb": 500}
-    ],
-    "region": "us-east-1",
+    "workload": {
+      "app_servers": {"type": "compute", "vcpus": 4, "memory_gb": 16, "quantity": 3},
+      "database":    {"type": "database", "vcpus": 2, "memory_gb": 8, "engine": "mysql"},
+      "block_store": {"type": "storage", "storage_type": "ssd", "storage_gb": 500}
+    },
+    "region_preference": "us",
     "providers": ["aws", "gcp", "azure"],
     "terms": ["on_demand", "reserved_1yr"]
   }
 }
 ```
+
+`workload` is a named map — each key is a logical component. `region_preference` picks the region tier ("us", "eu", or "apac"); the tool selects the closest matching region per provider automatically.
 
 Returns a side-by-side cost breakdown per provider per term, with total monthly cost and savings vs on-demand.
 
@@ -322,16 +314,18 @@ Returns a side-by-side cost breakdown per provider per term, with total monthly 
 {
   "tool": "find_cheapest_region",
   "arguments": {
-    "provider": "aws",
-    "domain": "compute",
-    "resource_type": "p3.2xlarge",
-    "os": "Linux",
-    "term": "on_demand"
+    "spec": {
+      "provider": "aws",
+      "domain": "compute",
+      "resource_type": "p3.2xlarge",
+      "os": "Linux",
+      "term": "on_demand"
+    }
   }
 }
 ```
 
-Fans out concurrently across up to 32 regions and returns results sorted cheapest-first.
+Fans out concurrently across all available regions (up to 32 in parallel) and returns results sorted cheapest-first. Pass `regions: [...]` to limit the search to specific regions.
 
 ---
 
