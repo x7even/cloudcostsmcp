@@ -159,7 +159,7 @@ func (s *AppServer) callTool(
 	return result, extra, err
 }
 
-// buildMCPServer constructs the mcp.Server with all 15 tools registered.
+// buildMCPServer constructs the mcp.Server with all 16 tools registered.
 func (s *AppServer) buildMCPServer() *mcp.Server {
 	mcpSrv := mcp.NewServer(&mcp.Implementation{
 		Name:    "OpenCloudCosts MCP",
