@@ -717,6 +717,14 @@ func (p *Provider) DescribeCatalog(ctx context.Context) (*models.ProviderCatalog
 			},
 		},
 		ExampleInvocations: map[string]map[string]any{
+			"network": {
+				"provider":          "aws",
+				"domain":            "network",
+				"service":           "egress",
+				"source_region":     "us-east-1",
+				"destination_type":  "internet",
+				"data_gb_per_month": 1024.0,
+			},
 			"compute": {
 				"provider":      "aws",
 				"domain":        "compute",

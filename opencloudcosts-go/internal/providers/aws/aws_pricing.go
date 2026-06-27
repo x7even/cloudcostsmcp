@@ -17,6 +17,7 @@ import (
 
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/cache"
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/models"
+	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/providers"
 )
 
 // _regionToLocation maps AWS region codes to the "location" display names used
@@ -1136,6 +1137,13 @@ func (p *Provider) GetPrice(ctx context.Context, spec models.PricingSpec) (*mode
 			region = "us-east-1"
 		}
 		prices, err = p.GetLambdaPrice(ctx, region)
+
+	case models.PricingDomainAI:
+		// AWS Bedrock and SageMaker AI pricing requires live AWS credentials
+		// (Cost Explorer / Bedrock pricing endpoints). The static catalog does not
+		// include per-model inference rates. Return ErrNotSupported so the caller
+		// gets a clean not_supported response rather than retryable upstream_failure.
+		return nil, providers.ErrNotSupported
 
 	default:
 		return nil, fmt.Errorf("aws: GetPrice: unsupported domain %q in Part 1 — domain=%s service=%s",
