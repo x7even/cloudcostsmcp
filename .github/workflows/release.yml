@@ -20,12 +20,17 @@ jobs:
         with:
           go-version-file: opencloudcosts-go/go.mod
 
-      - uses: goreleaser/goreleaser-action@v6
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
         with:
           version: latest
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # Asset uploads fail on re-runs (already_exists). continue-on-error
+        # so the wheel build and PyPI publish still run — GoReleaser always
+        # writes dist/artifacts.json locally even when the upload step fails.
+        continue-on-error: true
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -43,6 +48,8 @@ jobs:
 
   publish-pypi:
     needs: goreleaser
+    # Run even if goreleaser had a non-fatal failure (e.g. re-run asset conflict)
+    if: ${{ needs.goreleaser.result == 'success' || needs.goreleaser.result == 'failure' }}
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
