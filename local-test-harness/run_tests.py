@@ -1838,9 +1838,40 @@ async def run_single(
                     body = resp.text[:300]
                 except Exception:
                     pass
-                trace["error"] = f"LLM API error (round {round_num + 1}): {e} | {body}"
-                print(f"  ERROR: {e} | {body}")
-                break
+                err_type = type(e).__name__
+                # Type-A transient: no response received at all (empty body, connection-level
+                # error). Retry this round once with a short back-off before giving up.
+                if not body and not getattr(e, "response", None):
+                    print(f"  TRANSIENT ({err_type}), retrying round {round_num + 1}...")
+                    await asyncio.sleep(3.0)
+                    try:
+                        resp2 = await client.post(
+                            f"{LLM_BASE_URL}/v1/chat/completions",
+                            json=payload,
+                            headers={"Authorization": f"Bearer {LLM_API_KEY}"} if LLM_API_KEY else {},
+                        )
+                        resp2.raise_for_status()
+                        data = resp2.json()
+                    except Exception as e2:
+                        body2 = ""
+                        try:
+                            body2 = resp2.text[:300]
+                        except Exception:
+                            pass
+                        trace["error"] = f"LLM API error (round {round_num + 1}): {type(e2).__name__}: {e2} | {body2}"
+                        print(f"  ERROR (retry also failed): {e2} | {body2}")
+                        break
+                    # Retry succeeded — jump to the top of the loop body below
+                    choice = data["choices"][0]
+                    assistant_msg = choice["message"]
+                    finish_reason = choice.get("finish_reason", "")
+                    content = assistant_msg.get("content") or ""
+                    reasoning = assistant_msg.get("reasoning_content") or ""
+                    # Fall through by reassigning locals then skipping the except block
+                else:
+                    trace["error"] = f"LLM API error (round {round_num + 1}): {err_type}: {e} | {body}"
+                    print(f"  ERROR: {err_type}: {e} | {body}")
+                    break
 
             choice = data["choices"][0]
             assistant_msg = choice["message"]
