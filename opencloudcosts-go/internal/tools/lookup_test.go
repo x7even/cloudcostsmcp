@@ -1847,5 +1847,98 @@ func containsStr(s, sub string) bool {
 	return false
 }
 
+// --------------------------------------------------------------------------
+// TestGetPrice_AuroraStorageFieldDisambiguates verifies that the "storage"
+// attribute (which AWS uses to distinguish Aurora Standard from Aurora
+// I/O-Optimized SKUs) is surfaced in the get_price response. Without this
+// field both Aurora SKUs look identical to the model (same instanceType, vcpu,
+// memory, and term) causing it to make additional disambiguating tool calls.
+//
+// Real AWS pricing API returns:
+//   - Aurora Standard:       storage = "EBS Only"
+//   - Aurora I/O-Optimized:  storage = "Aurora IO Optimization Mode"
+// --------------------------------------------------------------------------
+
+func TestGetPrice_AuroraStorageFieldDisambiguates(t *testing.T) {
+	auroraStandard := models.NormalizedPrice{
+		Provider:    models.CloudProviderAWS,
+		Service:     "database",
+		SKUID:       "AURORA-STD-SKU",
+		Description: "db.r6g.2xlarge",
+		Region:      "us-east-1",
+		Attributes: map[string]string{
+			"instanceType":   "db.r6g.2xlarge",
+			"vcpu":           "8",
+			"memory":         "64 GiB",
+			"databaseEngine": "Aurora PostgreSQL",
+			"storage":        "EBS Only",
+		},
+		PricingTerm:  models.PricingTermOnDemand,
+		PricePerUnit: 1.038,
+		Unit:         models.PriceUnitPerHour,
+		Currency:     "USD",
+	}
+	auroraIOOpt := models.NormalizedPrice{
+		Provider:    models.CloudProviderAWS,
+		Service:     "database",
+		SKUID:       "AURORA-IOOPT-SKU",
+		Description: "db.r6g.2xlarge",
+		Region:      "us-east-1",
+		Attributes: map[string]string{
+			"instanceType":   "db.r6g.2xlarge",
+			"vcpu":           "8",
+			"memory":         "64 GiB",
+			"databaseEngine": "Aurora PostgreSQL",
+			"storage":        "Aurora IO Optimization Mode",
+		},
+		PricingTerm:  models.PricingTermOnDemand,
+		PricePerUnit: 1.349,
+		Unit:         models.PriceUnitPerHour,
+		Currency:     "USD",
+	}
+
+	pvdr := &mockProvider{
+		name:          "aws",
+		defaultRegion: "us-east-1",
+		getPriceFunc: func(_ context.Context, _ models.PricingSpec) (*models.PricingResult, error) {
+			return makePriceResult(auroraStandard, auroraIOOpt), nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"aws": pvdr})
+	resp := callGetPrice(t, h, map[string]any{
+		"provider":      "aws",
+		"domain":        "database",
+		"service":       "rds",
+		"engine":        "aurora-postgresql",
+		"deployment":    "single-az",
+		"region":        "us-east-1",
+		"term":          "on_demand",
+		"resource_type": "db.r6g.2xlarge",
+	})
+
+	prices, ok := resp["public_prices"].([]any)
+	if !ok || len(prices) != 2 {
+		t.Fatalf("expected 2 public_prices, got %v", resp["public_prices"])
+	}
+
+	storageVals := make(map[string]bool)
+	for _, p := range prices {
+		pm := p.(map[string]any)
+		storageVal, hasStorage := pm["storage"]
+		if !hasStorage {
+			t.Errorf("public_prices entry missing 'storage' field: %v", pm)
+			continue
+		}
+		storageVals[storageVal.(string)] = true
+	}
+
+	if !storageVals["EBS Only"] {
+		t.Errorf("expected one price with storage='EBS Only' (Aurora Standard), got storage values: %v", storageVals)
+	}
+	if !storageVals["Aurora IO Optimization Mode"] {
+		t.Errorf("expected one price with storage='Aurora IO Optimization Mode' (Aurora I/O-Optimized), got storage values: %v", storageVals)
+	}
+}
+
 // Compile-time check that mockProvider satisfies the Provider interface.
 var _ providers.Provider = (*mockProvider)(nil)

@@ -355,20 +355,8 @@ const (
 	}`
 
 	schemaGetSpotHistory = `{
-		"properties": {
-			"spec": {
-				"additionalProperties": true,
-				"title": "Spec",
-				"type": "object"
-			},
-			"hours": {"default": 24, "title": "Hours", "type": "integer"},
-			"availability_zone": {
-				"default": "",
-				"title": "Availability Zone",
-				"type": "string"
-			}
-		},
-		"required": ["spec"],
+		"additionalProperties": true,
+		"properties": {},
 		"title": "get_spot_historyArguments",
 		"type": "object"
 	}`
@@ -598,7 +586,7 @@ const (
 
 	descGetDiscountSummary = "\n        Return a summary of all active cloud discounts for the authenticated account.\n\n        For AWS: active Savings Plans (type, commitment $/hr, utilization %) and\n        active Reserved Instances (instance type, count, payment type, days remaining),\n        plus Cost Explorer utilization for the previous month.\n\n        Requires credentials and OCC_AWS_ENABLE_COST_EXPLORER=true for AWS.\n\n        Args:\n            provider: Cloud provider — \"aws\" (GCP CUD support coming later)\n        "
 
-	descGetSpotHistory = "\n        Get spot price history and stability analysis for a compute instance type.\n\n        Returns per-AZ spot price statistics (current, min, max, avg, sample count),\n        overall volatility ratio, a stability label, and an actionable recommendation.\n        Currently supported by AWS (requires credentials). GCP and Azure return not_supported.\n\n        Args:\n            spec: PricingSpec dict with domain=\"compute\", resource_type (instance type), region.\n                  Example: {\"provider\": \"aws\", \"domain\": \"compute\", \"resource_type\": \"m5.xlarge\", \"region\": \"us-east-1\"}\n            hours: Lookback window in hours (default 24, max 720)\n            availability_zone: Filter to a specific AZ, e.g. \"us-east-1a\". Empty = all AZs (AWS only).\n        "
+	descGetSpotHistory = "get_spot_history is not available. For spot pricing, use get_price with term=\"spot\" to look up current spot prices, or use list_instance_types to browse instance families and their spot price ranges."
 
 	descRefreshCache = "\n        Invalidate the pricing cache to force fresh data on next request.\n\n        Args:\n            provider: Provider to clear (\"aws\", \"gcp\", \"azure\"), or empty string to purge expired entries.\n        "
 
@@ -621,6 +609,10 @@ const (
 	descCompareBOM = "Price a multi-service workload across multiple cloud providers simultaneously " +
 		"and return a side-by-side cost comparison. Use this when the user wants to compare " +
 		"costs across AWS, GCP, and/or Azure for the same infrastructure.\n\n" +
+		"Also ideal for block storage comparisons across providers — use type=\"storage\" workload " +
+		"items to compare EBS vs Persistent Disk vs Azure Managed Disks for the same capacity " +
+		"profile in one call. storage_type accepts abstract tiers (\"ssd\" → gp3/pd-ssd/premium-ssd, " +
+		"\"hdd\" → sc1/pd-standard/standard-hdd) so the same spec prices correctly across all three clouds.\n\n" +
 		"Returns per-provider totals keyed by pricing term, committed vs on-demand savings, " +
 		"and any supplementary costs not included in the estimate.\n\n" +
 		"The workload is described in cloud-agnostic terms (vcpus, memory_gb, storage_gb) — " +
@@ -705,9 +697,9 @@ func (s *AppServer) registerTools(srv *mcp.Server) {
 		Name:        "get_spot_history",
 		Description: descGetSpotHistory,
 		InputSchema: rawSchema(schemaGetSpotHistory),
-	}, func(ctx context.Context, req *mcp.CallToolRequest, in tools.GetSpotHistoryInput) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in tools.SpotHistoryStubInput) (*mcp.CallToolResult, any, error) {
 		return s.callTool(ctx, "get_spot_history", func(ctx context.Context) (*mcp.CallToolResult, any, error) {
-			return h.HandleGetSpotHistory(ctx, req, in)
+			return h.HandleSpotHistoryStub(ctx, req, in)
 		})
 	})
 

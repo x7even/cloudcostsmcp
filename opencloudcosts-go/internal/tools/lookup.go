@@ -370,11 +370,16 @@ func normalizedPriceSummary(p models.NormalizedPrice) map[string]any {
 	}
 
 	// Include selected attributes — mirrors Python's filter set.
+	// "storage" is included to disambiguate Aurora Standard ("EBS Only") from
+	// Aurora I/O-Optimized ("Aurora IO Optimization Mode") — these are the
+	// only two on-demand Aurora SKUs per instance type at Single-AZ, and without
+	// this field both appear identical to the model causing extra tool calls.
 	attrKeys := map[string]bool{
 		"instanceType":    true,
 		"vcpu":            true,
 		"memory":          true,
 		"operatingSystem": true,
+		"storage":         true,
 		"storage_type":    true,
 		"volumeType":      true,
 		"fallback":        true,
