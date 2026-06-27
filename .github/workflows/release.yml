@@ -35,14 +35,27 @@ jobs:
       - name: Build PyPI wheels
         run: python packaging/pypi/build_wheels.py
 
+      - name: Upload wheels as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pypi-wheels
+          path: dist/wheels/
+
+  publish-pypi:
+    needs: goreleaser
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Download wheels
+        uses: actions/download-artifact@v4
+        with:
+          name: pypi-wheels
+          path: dist/
+
       - name: Publish to PyPI
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-        run: |
-          if [ -z "$TWINE_PASSWORD" ]; then
-            echo "PYPI_API_TOKEN not set — skipping PyPI publish"
-            exit 0
-          fi
-          pip install twine
-          twine upload dist/wheels/*.whl
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
