@@ -2049,8 +2049,11 @@ async def run_single(
                 nudge = {
                     "role": "user",
                     "content": (
-                        "You have enough information. Stop calling tools and write your "
-                        "final answer now in plain text."
+                        "STOP. Do NOT make any more tool calls. "
+                        "Write your final answer as plain text ONLY — "
+                        "no XML tags, no <tool_call> blocks, no JSON. "
+                        "Just a normal text response summarizing what the tools returned. "
+                        "If some data was unavailable, say so in plain text."
                     ),
                 }
                 messages.append(nudge)
@@ -2106,11 +2109,18 @@ async def run_single(
                                             r_tool_result = {"error": str(re_)}
                                         trace["tool_calls"].append({"round": round_num, "tool": rfn["name"], "args": rargs, "result": r_tool_result})
                                         messages.append({"role": "tool", "tool_call_id": rtc["id"], "content": json.dumps(r_tool_result)})
-                                    # One final forced-text call
+                                    # One final forced-text call — explicitly forbid XML
+                                    final_nudge_msgs = _sanitise_tool_call_args(messages) + [{
+                                        "role": "user",
+                                        "content": (
+                                            "Now write your final answer as plain text only. "
+                                            "No XML, no tool calls, no JSON. Just text."
+                                        ),
+                                    }]
                                     try:
                                         fr = await client.post(
                                             f"{LLM_BASE_URL}/v1/chat/completions",
-                                            json={**payload, "messages": _sanitise_tool_call_args(messages), "tool_choice": "none"},
+                                            json={**payload, "messages": final_nudge_msgs, "tool_choice": "none"},
                                             headers={"Authorization": f"Bearer {LLM_API_KEY}"} if LLM_API_KEY else {},
                                         )
                                         fr.raise_for_status()
