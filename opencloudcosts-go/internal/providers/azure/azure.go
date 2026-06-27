@@ -1565,6 +1565,10 @@ func (p *Provider) GetOpenAIPrice(
 		// consume one trailing boundary character instead.
 		skuPattern := regexp.MustCompile(`(?i)` + regexp.QuoteMeta(modelCompact) + `(?:[^a-zA-Z0-9.]|$)`)
 		prodPattern := regexp.MustCompile(`(?i)` + regexp.QuoteMeta(modelNorm) + `(?:[^\w.]|$)`)
+		// Exclusion pattern: "o1" must not absorb "o1 mini" / "o1-mini" SKUs.
+		// prodPattern's boundary allows a trailing space, so "o1 mini" matches.
+		// Explicitly exclude any SKU whose model segment continues with " mini" or "-mini".
+		excludeMini := regexp.MustCompile(`(?i)` + regexp.QuoteMeta(modelNorm) + `[ -]mini`)
 
 		for _, item := range items {
 			meter := strings.ToLower(item.MeterName)
@@ -1575,6 +1579,9 @@ func (p *Provider) GetOpenAIPrice(
 			if !prodPattern.MatchString(product) &&
 				!prodPattern.MatchString(meter) &&
 				!skuPattern.MatchString(skuCompact) {
+				continue
+			}
+			if excludeMini.MatchString(product) || excludeMini.MatchString(meter) {
 				continue
 			}
 			pp := itemToPrice(item, region, models.PricingTermOnDemand, "openai")
