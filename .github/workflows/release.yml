@@ -5,6 +5,11 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build PyPI wheels for (e.g. v1.0.0)"
+        required: true
+        default: "v1.0.0"
 
 jobs:
   goreleaser:
@@ -25,13 +30,16 @@ jobs:
         uses: goreleaser/goreleaser-action@v6
         with:
           version: latest
-          args: release --clean
+          # On tag push: publish to GitHub releases.
+          # On workflow_dispatch: skip publish (assets already exist), just
+          # build binaries and write dist/artifacts.json for the PyPI step.
+          args: >-
+            release --clean
+            ${{ github.event_name == 'workflow_dispatch' && '--skip=publish' || '' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        # Asset uploads fail on re-runs (already_exists). continue-on-error
-        # so the wheel build and PyPI publish still run — GoReleaser always
-        # writes dist/artifacts.json locally even when the upload step fails.
-        continue-on-error: true
+          # For dispatch runs, tell goreleaser which tag to build from.
+          GORELEASER_CURRENT_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || '' }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -49,8 +57,6 @@ jobs:
 
   publish-pypi:
     needs: goreleaser
-    # Run even if goreleaser had a non-fatal failure (e.g. re-run asset conflict)
-    if: ${{ needs.goreleaser.result == 'success' || needs.goreleaser.result == 'failure' }}
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
