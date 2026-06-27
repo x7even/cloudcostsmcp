@@ -7,6 +7,83 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.0.0] — 2026-06-27
+
+### Summary
+
+v1.0.0 marks the production release of **opencloudcosts-go** — a complete Go rewrite of
+the MCP server reaching full parity with the Python implementation and then surpassing it
+in concurrency, reliability, and deployment simplicity. The gate: ≥99% pass rate with zero
+XML hallucinations on the 234-prompt LLM grounding harness. Final: **234/234 (100%)**.
+
+### Added
+
+**Go MCP server (opencloudcosts-go)**
+- **16 MCP tools** across four categories: lookup (get_price, get_prices_batch,
+  compare_prices, describe_catalog, search_pricing), FinOps (estimate_bom,
+  estimate_unit_economics, compare_bom, get_discount_summary), cache (refresh_cache,
+  cache_stats), and discovery (list_regions, list_instance_types, find_cheapest_region,
+  find_available_regions).
+- **compare_bom** — new tool that prices a cloud-agnostic workload spec across AWS, GCP,
+  and Azure simultaneously with per-provider, per-term cost breakdown and savings analysis.
+  Workload types: compute, storage, database, cache. Fan-out: 8 concurrent provider calls.
+- **Concurrent region fan-out** — `find_cheapest_region` and `find_available_regions` run
+  up to 32 goroutines in parallel (errgroup + semaphore). `compare_prices` fans across
+  regions with a semaphore of 10. `get_prices_batch` parallelises across instance types.
+- **Static single binary** — `CGO_ENABLED=0`, ~15 MB distroless Docker image (scratch
+  base), no runtime dependencies.
+- **Dual transport** — stdio (local Claude Code / Claude Desktop) and streamable HTTP
+  (remote/container/Kubernetes) in the same binary.
+- **Production HTTP features** — token-bucket rate limiting (`golang.org/x/time/rate`),
+  bearer-token auth (`OCC_API_KEY`), liveness (`/healthz`) and readiness (`/readyz`)
+  probes, graceful SIGTERM drain (`OCC_SHUTDOWN_TIMEOUT`).
+- **AWS public pricing HTTP fallback** — fetches bulk pricing files over HTTPS when
+  no AWS credentials are present; no IAM configuration required for list prices.
+- **GCP multi-source auth** — service account JSON (inline or base64), Workload Identity
+  Federation external account, short-lived access token, ADC file path, API key.
+
+**Harness (234 prompts, up from 199)**
+- 35 new harness scenarios: `AIMOD1–5` (AI model pricing), `BOM_RES1–2` (BOM resilience),
+  `GCPDB3`, `GCPEGR3`, `AV6`, `AV11`, `AZFN3`, `AZFN6`, `AZAI4`, `AZAI6`, `GC3`, `GC4`,
+  `GK4`, `GK5`, `GSQL5`, `PDISK`, `NET_STACK1`, `CL1`, `AURO1`, `FCR1–2`, `EGRESS_HV`,
+  `GPU2`, `GCX2`, and others.
+- **Retry on Type-A transient errors** — harness retries once on clean connection failures
+  (empty body, no `response` attribute) with 3s backoff.
+- **resp=None reset per round** — fixes resp-leak bug where a prior round's response
+  leaked into the error handler and bypassed retry for Type-A transients.
+- **XML hallucination fixes** — `function_name` JSON key parsed correctly in
+  `_extract_xml_tool_calls`; `<parameter=spec>` malformed XML format stripped.
+- **Loop-break hardening** — forced `tool_choice=none` turn injects prose conclusion
+  instead of emitting XML tool calls.
+- MCP tool timeout raised 45s → 90s for long-running fan-out tools.
+- `_repair_json` truncates over-closed JSON; request timeout raised 120s → 240s.
+
+### Fixed
+
+- **Azure o1-mini SKU contamination** — `prodPattern` boundary `(?:[^\w.]|$)` allows a
+  trailing space, causing "o1" to match "o1 mini" SKUs. New `excludeMini` regex explicitly
+  excludes any SKU whose model segment continues with ` mini` or `-mini`.
+- **Azure word-boundary regex** — prevents `gpt-4` from matching `gpt-4o`, `gpt-4.1`, etc.
+  Applied to product name, meter name, and compact SKU fields.
+- **GCP cloud_armor domain routing** — remapped from `network` to correct dispatch path.
+- Various linter issues resolved (golangci-lint v2, data race in schema snapshot test).
+
+### Changed
+
+- CI deployment pipeline switched from Python MCP server to Go binary for all environments.
+- `estimate_bom` line-item responses compacted to reduce LLM context pressure.
+
+### Notes
+
+- Python implementation (`src/opencloudcosts/`) remains in the repo and continues to work;
+  it is no longer the primary deployment target.
+- `search_pricing` is a deprecated redirect stub (was `get_search_pricing` in v0.8.x).
+- `get_spot_history` is not implemented in the Go server; the tool is registered and returns
+  a structured "not available" response.
+- Harness validated at 234/234 (100%) on `qwen3.6-35b-128k` via llama-swap.
+
+---
+
 ## [0.9.2] — 2026-06-22
 
 ### Added
@@ -471,8 +548,9 @@ Phase-based rollout:
 - **Phase 5**: GCP managed services (GKE, Memorystore, BigQuery, Vertex AI, Gemini,
   Cloud LB/CDN/NAT/Armor/Monitoring, Cloud SQL); Azure reserved pricing
 
-[Unreleased]: https://github.com/x7even/cloudcostmcp/compare/v0.9.2...HEAD
-[0.9.2]: https://github.com/x7even/cloudcostmcp/compare/v0.9.1...v0.9.2
+[Unreleased]: https://github.com/x7even/cloudcostsmcp/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/x7even/cloudcostsmcp/compare/v0.9.2...v1.0.0
+[0.9.2]: https://github.com/x7even/cloudcostsmcp/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/x7even/cloudcostmcp/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/x7even/cloudcostmcp/compare/v0.8.14...v0.9.0
 [0.8.14]: https://github.com/x7even/cloudcostmcp/compare/v0.8.13...v0.8.14

@@ -221,7 +221,8 @@ No credentials required. Azure pricing uses the public [Retail Prices API](https
 | `get_prices_batch` | Get prices for multiple compute instance types in a single region in one parallel call. |
 | `compare_prices` | Compare pricing for any service across multiple regions concurrently. |
 | `describe_catalog` | Discover what each provider supports and get example invocations for `get_price`. |
-| `search_pricing` | Legacy helper — redirects to the appropriate tool. |
+| `get_spot_history` | _Not implemented_ — registered for compatibility; returns a structured "not available" response. |
+| `search_pricing` | _Deprecated_ — redirects to the correct tool. Kept for backward compatibility. |
 
 #### `get_price` supported domains
 
@@ -246,7 +247,7 @@ No credentials required. Azure pricing uses the public [Retail Prices API](https
 | `estimate_bom` | Estimate total monthly and annual cost for a multi-resource infrastructure stack (compute + storage + database + AI) in a single call. |
 | `estimate_unit_economics` | Estimate per-unit economics — cost per user, per request, per transaction. |
 | `compare_bom` | Price the same workload across AWS, GCP, and Azure simultaneously and return a side-by-side comparison with savings analysis. |
-| `get_discount_summary` | Return a summary of active discounts for the authenticated account (Savings Plans, Reserved Instances, CUDs). |
+| `get_discount_summary` | Return a summary of active discounts for the authenticated account (Savings Plans, Reserved Instances, CUDs). Requires AWS credentials + `OCC_AWS_ENABLE_COST_EXPLORER=true`. |
 
 ### Cache management
 
