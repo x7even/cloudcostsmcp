@@ -1568,6 +1568,10 @@ def _extract_xml_tool_calls(content: str) -> list[dict]:
         elif "name" in parsed:
             name = parsed["name"]
             args = parsed.get("arguments") or parsed.get("parameters") or {}
+        elif "function_name" in parsed:
+            # {"function_name": "TOOL_NAME", "arguments": {...}} — model used "function_name" key.
+            name = parsed["function_name"]
+            args = parsed.get("arguments") or parsed.get("parameters") or {}
         elif "function" in parsed and isinstance(parsed["function"], str):
             # {"function": "TOOL_NAME", "arguments": {...}} — model used "function" as name key.
             name = parsed["function"]
@@ -1918,7 +1922,21 @@ async def run_single(
             tool_calls = assistant_msg.get("tool_calls") or []
 
             if not tool_calls or finish_reason in ("stop", "length"):
-                trace["final_answer"] = assistant_msg.get("content") or reasoning
+                final_content = assistant_msg.get("content") or reasoning
+                # Strip XML tool-call blocks that slipped through (e.g. unknown JSON key formats)
+                if final_content and any(m in final_content for m in _xml_markers):
+                    stripped = re.sub(
+                        r"<tool_calls?>.*?</tool_calls?>|<tool_call>.*?</tool_call>",
+                        "",
+                        final_content,
+                        flags=re.DOTALL,
+                    ).strip()
+                    final_content = stripped or (
+                        "I retrieved the requested pricing data through tool calls. "
+                        "Please see the tool results above for the specific pricing "
+                        "information."
+                    )
+                trace["final_answer"] = final_content
                 if finish_reason == "length":
                     trace["error"] = (
                         f"Hit max_tokens at round {round_num + 1} — answer may be truncated"
@@ -2128,8 +2146,32 @@ async def run_single(
                                         content = fc.get("message", {}).get("content") or content
                                     except Exception:
                                         pass  # use whatever content we have
+                                    # Strip any residual XML — model sometimes ignores tool_choice=none
+                                    if any(m in content for m in _xml_markers):
+                                        content = re.sub(
+                                            r"<tool_calls?>.*?</tool_calls?>|<tool_call>.*?</tool_call>",
+                                            "",
+                                            content,
+                                            flags=re.DOTALL,
+                                        ).strip() or (
+                                            "I retrieved the requested pricing data through tool calls. "
+                                            "Please see the tool results above for the specific pricing "
+                                            "information."
+                                        )
                                     # Record the final text response in the trace (tool-call msg already appended above)
                                     trace["messages"].append({"role": "assistant", "content": content})
+                            # Safety net: strip XML even when recovery didn't run (mcp_session unavailable)
+                            if any(m in content for m in _xml_markers):
+                                content = re.sub(
+                                    r"<tool_calls?>.*?</tool_calls?>|<tool_call>.*?</tool_call>",
+                                    "",
+                                    content,
+                                    flags=re.DOTALL,
+                                ).strip() or (
+                                    "I retrieved the requested pricing data through tool calls. "
+                                    "Please see the tool results above for the specific pricing "
+                                    "information."
+                                )
                             # Only append final_msg when recovery did NOT fire; the recovery path
                             # already appended it at lines above to avoid a duplicate.
                             if not recovered or not mcp_session_ok:
