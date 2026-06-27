@@ -1,569 +1,569 @@
 {
-      "tools": [
-            {
-                  "name": "get_price",
-                  "description": "\n        Unified pricing tool — returns public catalog rates plus contracted/effective prices\n        where credentials are available.\n\n        Pass a spec dict with at minimum: provider, domain, region.\n        Domain-specific required fields (call describe_catalog for the complete list):\n\n          COMPUTE  : resource_type (\"m5.xlarge\" / \"n1-standard-4\" / \"Standard_D4s_v3\")\n                     os (\"Linux\" or \"Windows\"), term (\"on_demand\"/\"spot\"/\"cud_1yr\")\n                     Fargate: vcpu (e.g. 2.0), memory_gb (e.g. 4.0), service=\"fargate\"\n          STORAGE  : storage_type (\"gp3\"/\"io2\"/\"sc1\"/\"standard\"/\"nearline\"/\"pd-extreme\"/\"hyperdisk-extreme\"/\"premium-ssd\")\n                     size_gb — disk size for monthly estimate\n                     iops — provisioned IOPS for io1/io2 (AWS) or pd-extreme/hyperdisk-extreme (GCP)\n                     throughput_mbps — provisioned throughput MB/s for gp3 (AWS); charge above 125 MB/s baseline\n          DATABASE : resource_type (\"db.r5.large\"/\"db-n1-standard-4\"), engine (\"MySQL\"),\n                     deployment (\"single-az\"/\"ha\"/\"multi-az\"), service (\"rds\"/\"cloud_sql\"/\"memorystore\")\n          AI       : model (\"claude-3-5-sonnet\"/\"gemini-1.5-flash\"), service (\"bedrock\"/\"gemini\"/\"vertex\"),\n                     input_tokens, output_tokens  |  machine_type + task for Vertex\n          CONTAINER: service (\"gke\"/\"eks\"), mode (\"standard\"/\"autopilot\"), node_count, vcpu, memory_gb\n          ANALYTICS: service (\"bigquery\"), query_tb, active_storage_gb, longterm_storage_gb, streaming_gb\n          NETWORK  : service (\"cloud_lb\"/\"cloud_cdn\"/\"cloud_nat\"/\"cloud_armor\"),\n                     lb_type, rule_count, data_gb, gateway_count, egress_gb, policy_count\n          OBSERVABILITY: service (\"cloudwatch\"/\"cloud_monitoring\"), ingestion_mib, log_gb\n          INTER_REGION_EGRESS: source_region, dest_region (empty = internet), data_gb\n                     Example: {\"provider\": \"aws\", \"domain\": \"inter_region_egress\",\n                               \"source_region\": \"us-east-1\", \"dest_region\": \"eu-west-1\"}\n\n        Returns public_prices[] always. When auth exists: contracted_prices[], effective_price,\n        auth_available=true.\n\n        Call describe_catalog(provider, domain, service) for an example_invocation you can\n        copy directly into this tool.\n\n        Args:\n            spec: PricingSpec dict — see field descriptions above.\n\n        Examples:\n            {\"provider\": \"aws\",   \"domain\": \"compute\",     \"resource_type\": \"m5.xlarge\",       \"region\": \"us-east-1\"}\n            {\"provider\": \"aws\",   \"domain\": \"ai\",          \"service\": \"bedrock\", \"model\": \"claude-3-5-sonnet\", \"region\": \"us-east-1\", \"input_tokens\": 1000000, \"output_tokens\": 1000000}\n            {\"provider\": \"gcp\",   \"domain\": \"compute\",     \"resource_type\": \"n1-standard-4\",   \"region\": \"us-central1\", \"term\": \"cud_1yr\"}\n            {\"provider\": \"gcp\",   \"domain\": \"analytics\",   \"service\": \"bigquery\", \"query_tb\": 10.0, \"active_storage_gb\": 500.0, \"region\": \"us\"}\n            {\"provider\": \"azure\", \"domain\": \"compute\",     \"resource_type\": \"Standard_D4s_v3\", \"region\": \"eastus\"}\n            {\"provider\": \"aws\",   \"domain\": \"database\",    \"service\": \"rds\", \"resource_type\": \"db.r5.large\", \"engine\": \"MySQL\", \"deployment\": \"single-az\", \"region\": \"us-east-1\"}\n        ",
-                  "inputSchema": {
-                        "properties": {
-                              "spec": {
-                                    "additionalProperties": true,
-                                    "title": "Spec",
-                                    "type": "object"
-                              }
-                        },
-                        "required": [
-                              "spec"
-                        ],
-                        "title": "get_priceArguments",
-                        "type": "object"
-                  },
-                  "outputSchema": {
-                        "additionalProperties": true,
-                        "title": "get_priceDictOutput",
-                        "type": "object"
-                  }
+  "tools": [
+    {
+      "name": "get_price",
+      "description": "\n        Unified pricing tool \u2014 returns public catalog rates plus contracted/effective prices\n        where credentials are available.\n\n        Pass a spec dict with at minimum: provider, domain, region.\n        Domain-specific required fields (call describe_catalog for the complete list):\n\n          COMPUTE  : resource_type (\"m5.xlarge\" / \"n1-standard-4\" / \"Standard_D4s_v3\")\n                     os (\"Linux\" or \"Windows\"), term (\"on_demand\"/\"spot\"/\"cud_1yr\")\n                     Fargate: vcpu (e.g. 2.0), memory_gb (e.g. 4.0), service=\"fargate\"\n          STORAGE  : storage_type (\"gp3\"/\"io2\"/\"sc1\"/\"standard\"/\"nearline\"/\"pd-extreme\"/\"hyperdisk-extreme\"/\"premium-ssd\")\n                     size_gb \u2014 disk size for monthly estimate\n                     iops \u2014 provisioned IOPS for io1/io2 (AWS) or pd-extreme/hyperdisk-extreme (GCP)\n                     throughput_mbps \u2014 provisioned throughput MB/s for gp3 (AWS); charge above 125 MB/s baseline\n          DATABASE : resource_type (\"db.r5.large\"/\"db-n1-standard-4\"), engine (\"MySQL\"),\n                     deployment (\"single-az\"/\"ha\"/\"multi-az\"), service (\"rds\"/\"cloud_sql\"/\"memorystore\")\n          AI       : model (\"claude-3-5-sonnet\"/\"gemini-1.5-flash\"), service (\"bedrock\"/\"gemini\"/\"vertex\"),\n                     input_tokens, output_tokens  |  machine_type + task for Vertex\n          CONTAINER: service (\"gke\"/\"eks\"), mode (\"standard\"/\"autopilot\"), node_count, vcpu, memory_gb\n          ANALYTICS: service (\"bigquery\"), query_tb, active_storage_gb, longterm_storage_gb, streaming_gb\n          NETWORK  : service (\"cloud_lb\"/\"cloud_cdn\"/\"cloud_nat\"/\"cloud_armor\"),\n                     lb_type, rule_count, data_gb, gateway_count, egress_gb, policy_count\n          OBSERVABILITY: service (\"cloudwatch\"/\"cloud_monitoring\"), ingestion_mib, log_gb\n          INTER_REGION_EGRESS: source_region, dest_region (empty = internet), data_gb\n                     Example: {\"provider\": \"aws\", \"domain\": \"inter_region_egress\",\n                               \"source_region\": \"us-east-1\", \"dest_region\": \"eu-west-1\"}\n\n        Returns public_prices[] always. When auth exists: contracted_prices[], effective_price,\n        auth_available=true.\n\n        Call describe_catalog(provider, domain, service) for an example_invocation you can\n        copy directly into this tool.\n\n        Args:\n            spec: PricingSpec dict \u2014 see field descriptions above.\n\n        Examples:\n            {\"provider\": \"aws\",   \"domain\": \"compute\",     \"resource_type\": \"m5.xlarge\",       \"region\": \"us-east-1\"}\n            {\"provider\": \"aws\",   \"domain\": \"ai\",          \"service\": \"bedrock\", \"model\": \"claude-3-5-sonnet\", \"region\": \"us-east-1\", \"input_tokens\": 1000000, \"output_tokens\": 1000000}\n            {\"provider\": \"gcp\",   \"domain\": \"compute\",     \"resource_type\": \"n1-standard-4\",   \"region\": \"us-central1\", \"term\": \"cud_1yr\"}\n            {\"provider\": \"gcp\",   \"domain\": \"analytics\",   \"service\": \"bigquery\", \"query_tb\": 10.0, \"active_storage_gb\": 500.0, \"region\": \"us\"}\n            {\"provider\": \"azure\", \"domain\": \"compute\",     \"resource_type\": \"Standard_D4s_v3\", \"region\": \"eastus\"}\n            {\"provider\": \"aws\",   \"domain\": \"database\",    \"service\": \"rds\", \"resource_type\": \"db.r5.large\", \"engine\": \"MySQL\", \"deployment\": \"single-az\", \"region\": \"us-east-1\"}\n        ",
+      "inputSchema": {
+        "properties": {
+          "spec": {
+            "additionalProperties": true,
+            "title": "Spec",
+            "type": "object"
+          }
+        },
+        "required": [
+          "spec"
+        ],
+        "title": "get_priceArguments",
+        "type": "object"
+      },
+      "outputSchema": {
+        "additionalProperties": true,
+        "title": "get_priceDictOutput",
+        "type": "object"
+      }
+    },
+    {
+      "name": "get_prices_batch",
+      "description": "\n        Get prices for multiple compute instance types in a single region in one call.\n\n        Fetches all prices concurrently. Useful for comparing a shortlist of candidate\n        instance types (e.g. m5.xlarge vs c5.xlarge vs r5.xlarge) without separate calls.\n\n        Args:\n            provider: Cloud provider \u2014 \"aws\", \"gcp\", or \"azure\"\n            instance_types: List of instance types, e.g. [\"m5.xlarge\", \"c5.xlarge\", \"r5.large\"]\n            region: Region code, e.g. \"us-east-1\" or \"us-central1\"\n            os: Operating system \u2014 \"Linux\" (default) or \"Windows\"\n            term: Pricing term \u2014 \"on_demand\" (default), \"spot\", \"reserved_1yr\", \"cud_1yr\"\n        ",
+      "inputSchema": {
+        "properties": {
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "instance_types": {
+            "items": {
+              "type": "string"
             },
-            {
-                  "name": "get_prices_batch",
-                  "description": "\n        Get prices for multiple compute instance types in a single region in one call.\n\n        Fetches all prices concurrently. Useful for comparing a shortlist of candidate\n        instance types (e.g. m5.xlarge vs c5.xlarge vs r5.xlarge) without separate calls.\n\n        Args:\n            provider: Cloud provider — \"aws\", \"gcp\", or \"azure\"\n            instance_types: List of instance types, e.g. [\"m5.xlarge\", \"c5.xlarge\", \"r5.large\"]\n            region: Region code, e.g. \"us-east-1\" or \"us-central1\"\n            os: Operating system — \"Linux\" (default) or \"Windows\"\n            term: Pricing term — \"on_demand\" (default), \"spot\", \"reserved_1yr\", \"cud_1yr\"\n        ",
-                  "inputSchema": {
-                        "properties": {
-                              "provider": {
-                                    "title": "Provider",
-                                    "type": "string"
-                              },
-                              "instance_types": {
-                                    "items": {
-                                          "type": "string"
-                                    },
-                                    "title": "Instance Types",
-                                    "type": "array"
-                              },
-                              "region": {
-                                    "title": "Region",
-                                    "type": "string"
-                              },
-                              "os": {
-                                    "default": "Linux",
-                                    "title": "Os",
-                                    "type": "string"
-                              },
-                              "term": {
-                                    "default": "on_demand",
-                                    "title": "Term",
-                                    "type": "string"
-                              }
-                        },
-                        "required": [
-                              "provider",
-                              "instance_types",
-                              "region"
-                        ],
-                        "title": "get_prices_batchArguments",
-                        "type": "object"
-                  },
-                  "outputSchema": {
-                        "additionalProperties": true,
-                        "title": "get_prices_batchDictOutput",
-                        "type": "object"
-                  }
+            "title": "Instance Types",
+            "type": "array"
+          },
+          "region": {
+            "title": "Region",
+            "type": "string"
+          },
+          "os": {
+            "default": "Linux",
+            "title": "Os",
+            "type": "string"
+          },
+          "term": {
+            "default": "on_demand",
+            "title": "Term",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "instance_types",
+          "region"
+        ],
+        "title": "get_prices_batchArguments",
+        "type": "object"
+      },
+      "outputSchema": {
+        "additionalProperties": true,
+        "title": "get_prices_batchDictOutput",
+        "type": "object"
+      }
+    },
+    {
+      "name": "compare_prices",
+      "description": "\n        Compare pricing for any service across multiple regions.\n\n        Fetches concurrently. Returns results sorted cheapest first, with % delta between\n        cheapest and most expensive. Optionally shows delta vs a baseline region.\n\n        Args:\n            spec: PricingSpec dict (same as get_price). The region field is overridden\n                  per comparison \u2014 you can pass any region in the spec.\n            regions: List of region codes to compare, e.g. [\"us-east-1\", \"eu-west-1\", \"ap-northeast-1\"]\n            baseline_region: Optional region for delta comparison, e.g. \"us-east-1\".\n        ",
+      "inputSchema": {
+        "properties": {
+          "spec": {
+            "additionalProperties": true,
+            "title": "Spec",
+            "type": "object"
+          },
+          "regions": {
+            "items": {
+              "type": "string"
             },
-            {
-                  "name": "compare_prices",
-                  "description": "\n        Compare pricing for any service across multiple regions.\n\n        Fetches concurrently. Returns results sorted cheapest first, with % delta between\n        cheapest and most expensive. Optionally shows delta vs a baseline region.\n\n        Args:\n            spec: PricingSpec dict (same as get_price). The region field is overridden\n                  per comparison — you can pass any region in the spec.\n            regions: List of region codes to compare, e.g. [\"us-east-1\", \"eu-west-1\", \"ap-northeast-1\"]\n            baseline_region: Optional region for delta comparison, e.g. \"us-east-1\".\n        ",
-                  "inputSchema": {
-                        "properties": {
-                              "spec": {
-                                    "additionalProperties": true,
-                                    "title": "Spec",
-                                    "type": "object"
-                              },
-                              "regions": {
-                                    "items": {
-                                          "type": "string"
-                                    },
-                                    "title": "Regions",
-                                    "type": "array"
-                              },
-                              "baseline_region": {
-                                    "default": "",
-                                    "title": "Baseline Region",
-                                    "type": "string"
-                              }
-                        },
-                        "required": [
-                              "spec",
-                              "regions"
-                        ],
-                        "title": "compare_pricesArguments",
-                        "type": "object"
-                  },
-                  "outputSchema": {
-                        "additionalProperties": true,
-                        "title": "compare_pricesDictOutput",
-                        "type": "object"
-                  }
+            "title": "Regions",
+            "type": "array"
+          },
+          "baseline_region": {
+            "default": "",
+            "title": "Baseline Region",
+            "type": "string"
+          }
+        },
+        "required": [
+          "spec",
+          "regions"
+        ],
+        "title": "compare_pricesArguments",
+        "type": "object"
+      },
+      "outputSchema": {
+        "additionalProperties": true,
+        "title": "compare_pricesDictOutput",
+        "type": "object"
+      }
+    },
+    {
+      "name": "search_pricing",
+      "description": "Deprecated helper that redirects to the correct tools. Use describe_catalog to browse available services by domain/provider, or get_price with a known spec.",
+      "inputSchema": {
+        "additionalProperties": true,
+        "properties": {},
+        "title": "search_pricingArguments",
+        "type": "object"
+      },
+      "outputSchema": {
+        "additionalProperties": true,
+        "title": "search_pricingDictOutput",
+        "type": "object"
+      }
+    },
+    {
+      "name": "get_discount_summary",
+      "description": "\n        Return a summary of all active cloud discounts for the authenticated account.\n\n        For AWS: active Savings Plans (type, commitment $/hr, utilization %) and\n        active Reserved Instances (instance type, count, payment type, days remaining),\n        plus Cost Explorer utilization for the previous month.\n\n        Requires credentials and OCC_AWS_ENABLE_COST_EXPLORER=true for AWS.\n\n        Args:\n            provider: Cloud provider \u2014 \"aws\" (GCP CUD support coming later)\n        ",
+      "inputSchema": {
+        "properties": {
+          "provider": {
+            "default": "aws",
+            "title": "Provider",
+            "type": "string"
+          }
+        },
+        "title": "get_discount_summaryArguments",
+        "type": "object"
+      },
+      "outputSchema": {
+        "additionalProperties": true,
+        "title": "get_discount_summaryDictOutput",
+        "type": "object"
+      }
+    },
+    {
+      "name": "get_spot_history",
+      "description": "get_spot_history is not available. For spot pricing, use get_price with term=\"spot\" to look up current spot prices, or use list_instance_types to browse instance families and their spot price ranges.",
+      "inputSchema": {
+        "additionalProperties": true,
+        "properties": {},
+        "title": "get_spot_historyArguments",
+        "type": "object"
+      },
+      "outputSchema": {
+        "additionalProperties": true,
+        "title": "get_spot_historyDictOutput",
+        "type": "object"
+      }
+    },
+    {
+      "name": "refresh_cache",
+      "description": "\n        Invalidate the pricing cache to force fresh data on next request.\n\n        Args:\n            provider: Provider to clear (\"aws\", \"gcp\", \"azure\"), or empty string to purge expired entries.\n        ",
+      "inputSchema": {
+        "properties": {
+          "provider": {
+            "default": "",
+            "title": "Provider",
+            "type": "string"
+          }
+        },
+        "title": "refresh_cacheArguments",
+        "type": "object"
+      },
+      "outputSchema": {
+        "additionalProperties": true,
+        "title": "refresh_cacheDictOutput",
+        "type": "object"
+      }
+    },
+    {
+      "name": "list_regions",
+      "description": "\n        List all regions where a cloud service is available for the given provider.\n\n        Args:\n            provider: Cloud provider \u2014 \"aws\", \"gcp\", or \"azure\"\n            domain: Domain filter \u2014 \"compute\" (default), \"storage\", \"database\"\n        ",
+      "inputSchema": {
+        "properties": {
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "domain": {
+            "default": "compute",
+            "title": "Domain",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider"
+        ],
+        "title": "list_regionsArguments",
+        "type": "object"
+      },
+      "outputSchema": {
+        "additionalProperties": true,
+        "title": "list_regionsDictOutput",
+        "type": "object"
+      }
+    },
+    {
+      "name": "list_instance_types",
+      "description": "\n        List available compute instance types matching the given filters.\n\n        Args:\n            provider: Cloud provider \u2014 \"aws\", \"gcp\", or \"azure\"\n            region: Region code, e.g. \"us-east-1\" (AWS), \"us-central1\" (GCP), \"eastus\" (Azure)\n            family: Instance family prefix filter, e.g. \"m5\" (AWS), \"n2\" (GCP)\n            min_vcpu: Minimum vCPU count filter\n            min_memory_gb: Minimum memory in GB filter\n            gpu: If True, only return GPU-enabled instance types\n        ",
+      "inputSchema": {
+        "properties": {
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "region": {
+            "title": "Region",
+            "type": "string"
+          },
+          "family": {
+            "default": "",
+            "title": "Family",
+            "type": "string"
+          },
+          "min_vcpu": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Min Vcpu"
+          },
+          "min_memory_gb": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Min Memory Gb"
+          },
+          "gpu": {
+            "default": false,
+            "title": "Gpu",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "provider",
+          "region"
+        ],
+        "title": "list_instance_typesArguments",
+        "type": "object"
+      },
+      "outputSchema": {
+        "additionalProperties": true,
+        "title": "list_instance_typesDictOutput",
+        "type": "object"
+      }
+    },
+    {
+      "name": "describe_catalog",
+      "description": "\n        Discover what each provider supports and how to call get_price.\n\n        - No args \u2192 full support matrix across all configured providers.\n        - provider only \u2192 all domains/services for that provider.\n        - provider + domain [+ service] \u2192 targeted guidance with required_fields,\n          supported_terms, filter_hints, and a ready-to-use example_invocation\n          you can pass directly to get_price.\n\n        Use this before get_price when unsure of exact field names or values.\n\n        Args:\n            provider: Cloud provider \u2014 \"aws\", \"gcp\", or \"azure\". Empty = all providers.\n            domain: Domain \u2014 \"compute\", \"storage\", \"database\", \"ai\", \"container\",\n                    \"serverless\", \"analytics\", \"network\", \"observability\". Empty = all.\n            service: Service \u2014 e.g. \"bedrock\", \"rds\", \"gke\", \"bigquery\". Empty = all.\n        ",
+      "inputSchema": {
+        "properties": {
+          "provider": {
+            "default": "",
+            "title": "Provider",
+            "type": "string"
+          },
+          "domain": {
+            "default": "",
+            "title": "Domain",
+            "type": "string"
+          },
+          "service": {
+            "default": "",
+            "title": "Service",
+            "type": "string"
+          }
+        },
+        "title": "describe_catalogArguments",
+        "type": "object"
+      },
+      "outputSchema": {
+        "additionalProperties": true,
+        "title": "describe_catalogDictOutput",
+        "type": "object"
+      }
+    },
+    {
+      "name": "find_cheapest_region",
+      "description": "\n        Find the cheapest region for any cloud service.\n\n        Queries pricing concurrently across regions and returns results sorted cheapest\n        first, with the price delta between cheapest and most expensive regions.\n\n        Args:\n            spec: PricingSpec dict (same as get_price). The region field is overridden\n                  for each comparison \u2014 pass any region in the spec.\n            regions: List of region codes to compare. Omit for major regions (faster).\n                     Pass [\"all\"] to search every available region (slow on first run without cache).\n            baseline_region: Optional region for delta comparison, e.g. \"us-east-1\".\n        ",
+      "inputSchema": {
+        "properties": {
+          "spec": {
+            "additionalProperties": true,
+            "title": "Spec",
+            "type": "object"
+          },
+          "regions": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Regions"
+          },
+          "baseline_region": {
+            "default": "",
+            "title": "Baseline Region",
+            "type": "string"
+          }
+        },
+        "required": [
+          "spec"
+        ],
+        "title": "find_cheapest_regionArguments",
+        "type": "object"
+      },
+      "outputSchema": {
+        "additionalProperties": true,
+        "title": "find_cheapest_regionDictOutput",
+        "type": "object"
+      }
+    },
+    {
+      "name": "find_available_regions",
+      "description": "\n        Find all regions where a specific service/instance type is available, cheapest first.\n\n        Args:\n            spec: PricingSpec dict (same as get_price). The region field is overridden\n                  per comparison \u2014 pass any region in the spec.\n            regions: Region codes to check. Omit for major regions.\n                     Pass [\"all\"] to search every available region.\n            baseline_region: Optional region for delta comparison.\n        ",
+      "inputSchema": {
+        "properties": {
+          "spec": {
+            "additionalProperties": true,
+            "title": "Spec",
+            "type": "object"
+          },
+          "regions": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Regions"
+          },
+          "baseline_region": {
+            "default": "",
+            "title": "Baseline Region",
+            "type": "string"
+          }
+        },
+        "required": [
+          "spec"
+        ],
+        "title": "find_available_regionsArguments",
+        "type": "object"
+      },
+      "outputSchema": {
+        "additionalProperties": true,
+        "title": "find_available_regionsDictOutput",
+        "type": "object"
+      }
+    },
+    {
+      "name": "cache_stats",
+      "description": "Return statistics about the local pricing cache (entry counts, DB size).",
+      "inputSchema": {
+        "properties": {},
+        "title": "cache_statsArguments",
+        "type": "object"
+      },
+      "outputSchema": {
+        "additionalProperties": true,
+        "title": "cache_statsDictOutput",
+        "type": "object"
+      }
+    },
+    {
+      "name": "estimate_bom",
+      "description": "\n        Use this tool for total infrastructure cost, TCO, monthly spend for a multi-resource\n        stack, or cost comparison between architectures.\n\n        Handles compute + storage + database + AI together in a single call \u2014 do NOT call\n        get_price individually for multi-resource questions; use this tool instead.\n\n        Returns per-item and total monthly/annual costs with real public pricing data,\n        plus a not_included list of supplementary hidden costs (egress, load balancers,\n        NAT Gateway, monitoring, backups). The not_included items are SUPPLEMENTARY \u2014\n        you do NOT need to call get_price for them unless the user explicitly asked for a\n        total-cost-of-ownership or comprehensive estimate. For core infrastructure\n        questions, simply note 'additional costs may apply' and list the items.\n\n        Each item should be a PricingSpec dict PLUS a quantity field:\n          - provider: \"aws\" | \"gcp\" | \"azure\"\n          - domain: \"compute\" | \"storage\" | \"database\" | \"ai\" | ...\n          - region: region code\n          - quantity: number of units (default 1)\n          - hours_per_month: hours/month for compute (default 730 = always-on)\n          - description: optional label for this line item\n          Plus domain-specific fields (see get_price or describe_catalog for details).\n\n        Examples:\n          Compute + database + storage on AWS:\n          [\n            {\"provider\": \"aws\", \"domain\": \"compute\", \"resource_type\": \"m5.xlarge\",   \"region\": \"us-east-1\", \"quantity\": 3},\n            {\"provider\": \"aws\", \"domain\": \"database\", \"service\": \"rds\", \"resource_type\": \"db.r6g.large\", \"engine\": \"MySQL\", \"deployment\": \"single-az\", \"region\": \"us-east-1\"},\n            {\"provider\": \"aws\", \"domain\": \"storage\",  \"storage_type\": \"gp3\", \"size_gb\": 500, \"region\": \"us-east-1\"}\n          ]\n\n          Mixed cloud:\n          [\n            {\"provider\": \"gcp\",   \"domain\": \"compute\", \"resource_type\": \"n1-standard-4\", \"region\": \"us-central1\", \"quantity\": 2},\n            {\"provider\": \"azure\", \"domain\": \"compute\", \"resource_type\": \"Standard_D4s_v3\", \"region\": \"eastus\", \"quantity\": 1}\n          ]\n        ",
+      "inputSchema": {
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
             },
-            {
-                  "name": "search_pricing",
-                  "description": "Deprecated helper that redirects to the correct tools. Use describe_catalog to browse available services by domain/provider, or get_price with a known spec.",
-                  "inputSchema": {
-                        "additionalProperties": true,
-                        "properties": {},
-                        "title": "search_pricingArguments",
-                        "type": "object"
-                  },
-                  "outputSchema": {
-                        "additionalProperties": true,
-                        "title": "search_pricingDictOutput",
-                        "type": "object"
-                  }
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "estimate_bomArguments",
+        "type": "object"
+      },
+      "outputSchema": {
+        "additionalProperties": true,
+        "title": "estimate_bomDictOutput",
+        "type": "object"
+      }
+    },
+    {
+      "name": "estimate_unit_economics",
+      "description": "\n        Estimate per-unit economics (cost per user, per request, per transaction) given\n        a Bill of Materials and expected monthly usage volume.\n\n        Args:\n            items: Same format as estimate_bom \u2014 list of cloud resource PricingSpec dicts\n                   plus quantity field. See estimate_bom for full item format.\n            units_per_month: Monthly volume being measured (e.g. 10000 users)\n            unit_label: What the unit represents \u2014 \"user\", \"request\", \"transaction\", etc.\n        ",
+      "inputSchema": {
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
             },
-            {
-                  "name": "get_discount_summary",
-                  "description": "\n        Return a summary of all active cloud discounts for the authenticated account.\n\n        For AWS: active Savings Plans (type, commitment $/hr, utilization %) and\n        active Reserved Instances (instance type, count, payment type, days remaining),\n        plus Cost Explorer utilization for the previous month.\n\n        Requires credentials and OCC_AWS_ENABLE_COST_EXPLORER=true for AWS.\n\n        Args:\n            provider: Cloud provider — \"aws\" (GCP CUD support coming later)\n        ",
-                  "inputSchema": {
-                        "properties": {
-                              "provider": {
-                                    "default": "aws",
-                                    "title": "Provider",
-                                    "type": "string"
-                              }
-                        },
-                        "title": "get_discount_summaryArguments",
-                        "type": "object"
-                  },
-                  "outputSchema": {
-                        "additionalProperties": true,
-                        "title": "get_discount_summaryDictOutput",
-                        "type": "object"
-                  }
+            "title": "Items",
+            "type": "array"
+          },
+          "units_per_month": {
+            "title": "Units Per Month",
+            "type": "number"
+          },
+          "unit_label": {
+            "default": "user",
+            "title": "Unit Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "items",
+          "units_per_month"
+        ],
+        "title": "estimate_unit_economicsArguments",
+        "type": "object"
+      },
+      "outputSchema": {
+        "additionalProperties": true,
+        "title": "estimate_unit_economicsDictOutput",
+        "type": "object"
+      }
+    },
+    {
+      "name": "compare_bom",
+      "description": "Price a multi-service workload across multiple cloud providers simultaneously and return a side-by-side cost comparison. Use this when the user wants to compare costs across AWS, GCP, and/or Azure for the same infrastructure. This is a COMPLETE single-call solution \u2014 no follow-up tool calls are needed after compare_bom returns.\n\nStorage support: compare_bom accepts provider-specific storage types directly.\n  Abstract tiers: \"ssd\" \u2192 gp3/pd-ssd/premium-ssd, \"hdd\" \u2192 sc1/pd-standard/standard-hdd\n  Provider-specific: storage_type=\"gp3\", \"io2\", \"sc1\", \"pd-ssd\", \"pd-extreme\", etc.\n  IOPS/throughput: add iops and throughput_mbps fields to any storage spec.\n  Use this tool (not estimate_bom) when comparing multiple disk profiles across clouds.\n\nReturns per-provider totals keyed by pricing term, committed vs on-demand savings, and any supplementary costs. The not_included items are supplementary \u2014 do NOT call get_price for them; just note 'additional costs may apply'.\n\nThe workload is described in cloud-agnostic terms (vcpus, memory_gb, storage_gb) \u2014 the tool selects the closest equivalent instance type per provider automatically.\n\nArgs:\n    providers: Which providers to compare \u2014 [\"aws\", \"gcp\", \"azure\"] (default: all three).\n    region_preference: Region tier \u2014 \"us\" (default), \"eu\", \"apac\".\n    workload: Map of logical name \u2192 resource spec. Each spec needs 'type' (compute/storage/database/cache) plus vcpus, memory_gb, quantity, etc.\n    terms: Pricing terms \u2014 default [\"on_demand\", \"reserved_1yr\"]. Term translation is automatic: reserved_1yr maps to cud_1yr for GCP.\n\nExamples:\n  3-tier compute+storage stack:\n    workload: {\n      \"web_servers\": {\"type\": \"compute\", \"vcpus\": 4, \"memory_gb\": 16, \"quantity\": 3},\n      \"database\":    {\"type\": \"database\", \"vcpus\": 8, \"memory_gb\": 32},\n      \"storage\":     {\"type\": \"storage\", \"storage_gb\": 500, \"storage_type\": \"ssd\"}\n    }\n\n  Multi-disk-profile storage comparison (AWS gp3/io2 vs GCP pd-ssd/pd-extreme):\n    providers: [\"aws\", \"gcp\"],\n    workload: {\n      \"profile_a\": {\"type\": \"storage\", \"storage_gb\": 10000, \"storage_type\": \"gp3\", \"iops\": 3000, \"throughput_mbps\": 125},\n      \"profile_b\": {\"type\": \"storage\", \"storage_gb\": 2000,  \"storage_type\": \"gp3\", \"iops\": 3000, \"throughput_mbps\": 500},\n      \"profile_c\": {\"type\": \"storage\", \"storage_gb\": 500,   \"storage_type\": \"io2\", \"iops\": 64000}\n    }",
+      "inputSchema": {
+        "properties": {
+          "providers": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "aws",
+                "gcp",
+                "azure"
+              ]
             },
-            {
-                  "name": "get_spot_history",
-                  "description": "get_spot_history is not available. For spot pricing, use get_price with term=\"spot\" to look up current spot prices, or use list_instance_types to browse instance families and their spot price ranges.",
-                  "inputSchema": {
-                        "additionalProperties": true,
-                        "properties": {},
-                        "title": "get_spot_historyArguments",
-                        "type": "object"
-                  },
-                  "outputSchema": {
-                        "additionalProperties": true,
-                        "title": "get_spot_historyDictOutput",
-                        "type": "object"
-                  }
+            "description": "Which providers to compare. Defaults to all three.",
+            "default": [
+              "aws",
+              "gcp",
+              "azure"
+            ],
+            "title": "Providers",
+            "type": "array"
+          },
+          "region_preference": {
+            "description": "Preferred region tier: 'us' (US regions), 'eu' (Europe), 'apac' (Asia-Pacific).",
+            "enum": [
+              "us",
+              "eu",
+              "apac"
+            ],
+            "default": "us",
+            "title": "Region Preference",
+            "type": "string"
+          },
+          "workload": {
+            "description": "Cloud-agnostic workload description. Each key is a logical service name.",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "description": "Resource type: 'compute', 'database', 'storage', 'cache'"
+                },
+                "vcpus": {
+                  "type": "number",
+                  "description": "Number of virtual CPUs"
+                },
+                "memory_gb": {
+                  "type": "number",
+                  "description": "Memory in GB"
+                },
+                "quantity": {
+                  "type": "number",
+                  "description": "Number of instances",
+                  "default": 1
+                },
+                "engine": {
+                  "type": "string",
+                  "description": "For databases: mysql, postgres, etc."
+                },
+                "storage_gb": {
+                  "type": "number",
+                  "description": "Storage size in GB (for storage/database)"
+                },
+                "storage_type": {
+                  "type": "string",
+                  "description": "ssd (default), hdd"
+                },
+                "os": {
+                  "type": "string",
+                  "default": "linux"
+                }
+              },
+              "required": [
+                "type"
+              ]
             },
-            {
-                  "name": "refresh_cache",
-                  "description": "\n        Invalidate the pricing cache to force fresh data on next request.\n\n        Args:\n            provider: Provider to clear (\"aws\", \"gcp\", \"azure\"), or empty string to purge expired entries.\n        ",
-                  "inputSchema": {
-                        "properties": {
-                              "provider": {
-                                    "default": "",
-                                    "title": "Provider",
-                                    "type": "string"
-                              }
-                        },
-                        "title": "refresh_cacheArguments",
-                        "type": "object"
-                  },
-                  "outputSchema": {
-                        "additionalProperties": true,
-                        "title": "refresh_cacheDictOutput",
-                        "type": "object"
-                  }
+            "title": "Workload",
+            "type": "object"
+          },
+          "terms": {
+            "items": {
+              "type": "string"
             },
-            {
-                  "name": "list_regions",
-                  "description": "\n        List all regions where a cloud service is available for the given provider.\n\n        Args:\n            provider: Cloud provider — \"aws\", \"gcp\", or \"azure\"\n            domain: Domain filter — \"compute\" (default), \"storage\", \"database\"\n        ",
-                  "inputSchema": {
-                        "properties": {
-                              "provider": {
-                                    "title": "Provider",
-                                    "type": "string"
-                              },
-                              "domain": {
-                                    "default": "compute",
-                                    "title": "Domain",
-                                    "type": "string"
-                              }
-                        },
-                        "required": [
-                              "provider"
-                        ],
-                        "title": "list_regionsArguments",
-                        "type": "object"
-                  },
-                  "outputSchema": {
-                        "additionalProperties": true,
-                        "title": "list_regionsDictOutput",
-                        "type": "object"
-                  }
-            },
-            {
-                  "name": "list_instance_types",
-                  "description": "\n        List available compute instance types matching the given filters.\n\n        Args:\n            provider: Cloud provider — \"aws\", \"gcp\", or \"azure\"\n            region: Region code, e.g. \"us-east-1\" (AWS), \"us-central1\" (GCP), \"eastus\" (Azure)\n            family: Instance family prefix filter, e.g. \"m5\" (AWS), \"n2\" (GCP)\n            min_vcpu: Minimum vCPU count filter\n            min_memory_gb: Minimum memory in GB filter\n            gpu: If True, only return GPU-enabled instance types\n        ",
-                  "inputSchema": {
-                        "properties": {
-                              "provider": {
-                                    "title": "Provider",
-                                    "type": "string"
-                              },
-                              "region": {
-                                    "title": "Region",
-                                    "type": "string"
-                              },
-                              "family": {
-                                    "default": "",
-                                    "title": "Family",
-                                    "type": "string"
-                              },
-                              "min_vcpu": {
-                                    "anyOf": [
-                                          {
-                                                "type": "integer"
-                                          },
-                                          {
-                                                "type": "string"
-                                          },
-                                          {
-                                                "type": "null"
-                                          }
-                                    ],
-                                    "default": null,
-                                    "title": "Min Vcpu"
-                              },
-                              "min_memory_gb": {
-                                    "anyOf": [
-                                          {
-                                                "type": "number"
-                                          },
-                                          {
-                                                "type": "string"
-                                          },
-                                          {
-                                                "type": "null"
-                                          }
-                                    ],
-                                    "default": null,
-                                    "title": "Min Memory Gb"
-                              },
-                              "gpu": {
-                                    "default": false,
-                                    "title": "Gpu",
-                                    "type": "boolean"
-                              }
-                        },
-                        "required": [
-                              "provider",
-                              "region"
-                        ],
-                        "title": "list_instance_typesArguments",
-                        "type": "object"
-                  },
-                  "outputSchema": {
-                        "additionalProperties": true,
-                        "title": "list_instance_typesDictOutput",
-                        "type": "object"
-                  }
-            },
-            {
-                  "name": "describe_catalog",
-                  "description": "\n        Discover what each provider supports and how to call get_price.\n\n        - No args → full support matrix across all configured providers.\n        - provider only → all domains/services for that provider.\n        - provider + domain [+ service] → targeted guidance with required_fields,\n          supported_terms, filter_hints, and a ready-to-use example_invocation\n          you can pass directly to get_price.\n\n        Use this before get_price when unsure of exact field names or values.\n\n        Args:\n            provider: Cloud provider — \"aws\", \"gcp\", or \"azure\". Empty = all providers.\n            domain: Domain — \"compute\", \"storage\", \"database\", \"ai\", \"container\",\n                    \"serverless\", \"analytics\", \"network\", \"observability\". Empty = all.\n            service: Service — e.g. \"bedrock\", \"rds\", \"gke\", \"bigquery\". Empty = all.\n        ",
-                  "inputSchema": {
-                        "properties": {
-                              "provider": {
-                                    "default": "",
-                                    "title": "Provider",
-                                    "type": "string"
-                              },
-                              "domain": {
-                                    "default": "",
-                                    "title": "Domain",
-                                    "type": "string"
-                              },
-                              "service": {
-                                    "default": "",
-                                    "title": "Service",
-                                    "type": "string"
-                              }
-                        },
-                        "title": "describe_catalogArguments",
-                        "type": "object"
-                  },
-                  "outputSchema": {
-                        "additionalProperties": true,
-                        "title": "describe_catalogDictOutput",
-                        "type": "object"
-                  }
-            },
-            {
-                  "name": "find_cheapest_region",
-                  "description": "\n        Find the cheapest region for any cloud service.\n\n        Queries pricing concurrently across regions and returns results sorted cheapest\n        first, with the price delta between cheapest and most expensive regions.\n\n        Args:\n            spec: PricingSpec dict (same as get_price). The region field is overridden\n                  for each comparison — pass any region in the spec.\n            regions: List of region codes to compare. Omit for major regions (faster).\n                     Pass [\"all\"] to search every available region (slow on first run without cache).\n            baseline_region: Optional region for delta comparison, e.g. \"us-east-1\".\n        ",
-                  "inputSchema": {
-                        "properties": {
-                              "spec": {
-                                    "additionalProperties": true,
-                                    "title": "Spec",
-                                    "type": "object"
-                              },
-                              "regions": {
-                                    "anyOf": [
-                                          {
-                                                "items": {
-                                                      "type": "string"
-                                                },
-                                                "type": "array"
-                                          },
-                                          {
-                                                "type": "null"
-                                          }
-                                    ],
-                                    "default": null,
-                                    "title": "Regions"
-                              },
-                              "baseline_region": {
-                                    "default": "",
-                                    "title": "Baseline Region",
-                                    "type": "string"
-                              }
-                        },
-                        "required": [
-                              "spec"
-                        ],
-                        "title": "find_cheapest_regionArguments",
-                        "type": "object"
-                  },
-                  "outputSchema": {
-                        "additionalProperties": true,
-                        "title": "find_cheapest_regionDictOutput",
-                        "type": "object"
-                  }
-            },
-            {
-                  "name": "find_available_regions",
-                  "description": "\n        Find all regions where a specific service/instance type is available, cheapest first.\n\n        Args:\n            spec: PricingSpec dict (same as get_price). The region field is overridden\n                  per comparison — pass any region in the spec.\n            regions: Region codes to check. Omit for major regions.\n                     Pass [\"all\"] to search every available region.\n            baseline_region: Optional region for delta comparison.\n        ",
-                  "inputSchema": {
-                        "properties": {
-                              "spec": {
-                                    "additionalProperties": true,
-                                    "title": "Spec",
-                                    "type": "object"
-                              },
-                              "regions": {
-                                    "anyOf": [
-                                          {
-                                                "items": {
-                                                      "type": "string"
-                                                },
-                                                "type": "array"
-                                          },
-                                          {
-                                                "type": "null"
-                                          }
-                                    ],
-                                    "default": null,
-                                    "title": "Regions"
-                              },
-                              "baseline_region": {
-                                    "default": "",
-                                    "title": "Baseline Region",
-                                    "type": "string"
-                              }
-                        },
-                        "required": [
-                              "spec"
-                        ],
-                        "title": "find_available_regionsArguments",
-                        "type": "object"
-                  },
-                  "outputSchema": {
-                        "additionalProperties": true,
-                        "title": "find_available_regionsDictOutput",
-                        "type": "object"
-                  }
-            },
-            {
-                  "name": "cache_stats",
-                  "description": "Return statistics about the local pricing cache (entry counts, DB size).",
-                  "inputSchema": {
-                        "properties": {},
-                        "title": "cache_statsArguments",
-                        "type": "object"
-                  },
-                  "outputSchema": {
-                        "additionalProperties": true,
-                        "title": "cache_statsDictOutput",
-                        "type": "object"
-                  }
-            },
-            {
-                  "name": "estimate_bom",
-                  "description": "\n        Use this tool for total infrastructure cost, TCO, monthly spend for a multi-resource\n        stack, or cost comparison between architectures.\n\n        Handles compute + storage + database + AI together in a single call — do NOT call\n        get_price individually for multi-resource questions; use this tool instead.\n\n        Returns per-item and total monthly/annual costs with real public pricing data,\n        plus a not_included list of hidden costs (egress, load balancers, NAT Gateway,\n        monitoring, backups). IMPORTANT: if not_included is present in the response, you\n        MUST call get_price for each listed item — using the exact command in each item's\n        how_to_price field — before writing your final answer. Do NOT estimate or guess\n        any cost from the not_included list.\n\n        Each item should be a PricingSpec dict PLUS a quantity field:\n          - provider: \"aws\" | \"gcp\" | \"azure\"\n          - domain: \"compute\" | \"storage\" | \"database\" | \"ai\" | ...\n          - region: region code\n          - quantity: number of units (default 1)\n          - hours_per_month: hours/month for compute (default 730 = always-on)\n          - description: optional label for this line item\n          Plus domain-specific fields (see get_price or describe_catalog for details).\n\n        Examples:\n          Compute + database + storage on AWS:\n          [\n            {\"provider\": \"aws\", \"domain\": \"compute\", \"resource_type\": \"m5.xlarge\",   \"region\": \"us-east-1\", \"quantity\": 3},\n            {\"provider\": \"aws\", \"domain\": \"database\", \"service\": \"rds\", \"resource_type\": \"db.r6g.large\", \"engine\": \"MySQL\", \"deployment\": \"single-az\", \"region\": \"us-east-1\"},\n            {\"provider\": \"aws\", \"domain\": \"storage\",  \"storage_type\": \"gp3\", \"size_gb\": 500, \"region\": \"us-east-1\"}\n          ]\n\n          Mixed cloud:\n          [\n            {\"provider\": \"gcp\",   \"domain\": \"compute\", \"resource_type\": \"n1-standard-4\", \"region\": \"us-central1\", \"quantity\": 2},\n            {\"provider\": \"azure\", \"domain\": \"compute\", \"resource_type\": \"Standard_D4s_v3\", \"region\": \"eastus\", \"quantity\": 1}\n          ]\n        ",
-                  "inputSchema": {
-                        "properties": {
-                              "items": {
-                                    "items": {
-                                          "additionalProperties": true,
-                                          "type": "object"
-                                    },
-                                    "title": "Items",
-                                    "type": "array"
-                              }
-                        },
-                        "required": [
-                              "items"
-                        ],
-                        "title": "estimate_bomArguments",
-                        "type": "object"
-                  },
-                  "outputSchema": {
-                        "additionalProperties": true,
-                        "title": "estimate_bomDictOutput",
-                        "type": "object"
-                  }
-            },
-            {
-                  "name": "estimate_unit_economics",
-                  "description": "\n        Estimate per-unit economics (cost per user, per request, per transaction) given\n        a Bill of Materials and expected monthly usage volume.\n\n        Args:\n            items: Same format as estimate_bom — list of cloud resource PricingSpec dicts\n                   plus quantity field. See estimate_bom for full item format.\n            units_per_month: Monthly volume being measured (e.g. 10000 users)\n            unit_label: What the unit represents — \"user\", \"request\", \"transaction\", etc.\n        ",
-                  "inputSchema": {
-                        "properties": {
-                              "items": {
-                                    "items": {
-                                          "additionalProperties": true,
-                                          "type": "object"
-                                    },
-                                    "title": "Items",
-                                    "type": "array"
-                              },
-                              "units_per_month": {
-                                    "title": "Units Per Month",
-                                    "type": "number"
-                              },
-                              "unit_label": {
-                                    "default": "user",
-                                    "title": "Unit Label",
-                                    "type": "string"
-                              }
-                        },
-                        "required": [
-                              "items",
-                              "units_per_month"
-                        ],
-                        "title": "estimate_unit_economicsArguments",
-                        "type": "object"
-                  },
-                  "outputSchema": {
-                        "additionalProperties": true,
-                        "title": "estimate_unit_economicsDictOutput",
-                        "type": "object"
-                  }
-            },
-            {
-                  "name": "compare_bom",
-                  "description": "Price a multi-service workload across multiple cloud providers simultaneously and return a side-by-side cost comparison. Use this when the user wants to compare costs across AWS, GCP, and/or Azure for the same infrastructure.\n\nNOTE: compare_bom uses abstract tiers for storage (\"ssd\" → gp3/pd-ssd/premium-ssd, \"hdd\" → sc1/pd-standard/standard-hdd, \"ssd-provisioned-iops\" → io2/pd-extreme). For comparisons that require specific disk types with exact per-IOPS or per-throughput billing (e.g. io2 with 64000 IOPS vs pd-extreme with 64000 IOPS), use estimate_bom instead, which accepts the full StoragePricingSpec including iops and throughput_mbps.\n\nReturns per-provider totals keyed by pricing term, committed vs on-demand savings, and any supplementary costs not included in the estimate.\n\nThe workload is described in cloud-agnostic terms (vcpus, memory_gb, storage_gb) — the tool selects the closest equivalent instance type per provider automatically.\n\nArgs:\n    providers: Which providers to compare — [\"aws\", \"gcp\", \"azure\"] (default: all three).\n    region_preference: Region tier — \"us\" (default), \"eu\", \"apac\".\n    workload: Map of logical name → resource spec. Each spec needs 'type' (compute/storage/database/cache) plus vcpus, memory_gb, quantity, etc.\n    terms: Pricing terms — default [\"on_demand\", \"reserved_1yr\"]. Term translation is automatic: reserved_1yr maps to cud_1yr for GCP.\n\nExample:\n    workload: {\n      \"web_servers\": {\"type\": \"compute\", \"vcpus\": 4, \"memory_gb\": 16, \"quantity\": 3},\n      \"database\":    {\"type\": \"database\", \"vcpus\": 8, \"memory_gb\": 32},\n      \"storage\":     {\"type\": \"storage\", \"storage_gb\": 500, \"storage_type\": \"ssd\"}\n    }",
-                  "inputSchema": {
-                        "properties": {
-                              "providers": {
-                                    "items": {
-                                          "type": "string",
-                                          "enum": [
-                                                "aws",
-                                                "gcp",
-                                                "azure"
-                                          ]
-                                    },
-                                    "description": "Which providers to compare. Defaults to all three.",
-                                    "default": [
-                                          "aws",
-                                          "gcp",
-                                          "azure"
-                                    ],
-                                    "title": "Providers",
-                                    "type": "array"
-                              },
-                              "region_preference": {
-                                    "description": "Preferred region tier: 'us' (US regions), 'eu' (Europe), 'apac' (Asia-Pacific).",
-                                    "enum": [
-                                          "us",
-                                          "eu",
-                                          "apac"
-                                    ],
-                                    "default": "us",
-                                    "title": "Region Preference",
-                                    "type": "string"
-                              },
-                              "workload": {
-                                    "description": "Cloud-agnostic workload description. Each key is a logical service name.",
-                                    "additionalProperties": {
-                                          "type": "object",
-                                          "properties": {
-                                                "type": {
-                                                      "type": "string",
-                                                      "description": "Resource type: 'compute', 'database', 'storage', 'cache'"
-                                                },
-                                                "vcpus": {
-                                                      "type": "number",
-                                                      "description": "Number of virtual CPUs"
-                                                },
-                                                "memory_gb": {
-                                                      "type": "number",
-                                                      "description": "Memory in GB"
-                                                },
-                                                "quantity": {
-                                                      "type": "number",
-                                                      "description": "Number of instances",
-                                                      "default": 1
-                                                },
-                                                "engine": {
-                                                      "type": "string",
-                                                      "description": "For databases: mysql, postgres, etc."
-                                                },
-                                                "storage_gb": {
-                                                      "type": "number",
-                                                      "description": "Storage size in GB (for storage/database)"
-                                                },
-                                                "storage_type": {
-                                                      "type": "string",
-                                                      "description": "ssd (default), hdd"
-                                                },
-                                                "os": {
-                                                      "type": "string",
-                                                      "default": "linux"
-                                                }
-                                          },
-                                          "required": [
-                                                "type"
-                                          ]
-                                    },
-                                    "title": "Workload",
-                                    "type": "object"
-                              },
-                              "terms": {
-                                    "items": {
-                                          "type": "string"
-                                    },
-                                    "description": "Pricing terms to include. Common values: on_demand, reserved_1yr, cud_1yr. Default: ['on_demand', 'reserved_1yr'].",
-                                    "default": [
-                                          "on_demand",
-                                          "reserved_1yr"
-                                    ],
-                                    "title": "Terms",
-                                    "type": "array"
-                              }
-                        },
-                        "required": [
-                              "workload"
-                        ],
-                        "title": "compare_bomArguments",
-                        "type": "object"
-                  },
-                  "outputSchema": {
-                        "additionalProperties": true,
-                        "title": "compare_bomDictOutput",
-                        "type": "object"
-                  }
-            }
-      ]
+            "description": "Pricing terms to include. Common values: on_demand, reserved_1yr, cud_1yr. Default: ['on_demand', 'reserved_1yr'].",
+            "default": [
+              "on_demand",
+              "reserved_1yr"
+            ],
+            "title": "Terms",
+            "type": "array"
+          }
+        },
+        "required": [
+          "workload"
+        ],
+        "title": "compare_bomArguments",
+        "type": "object"
+      },
+      "outputSchema": {
+        "additionalProperties": true,
+        "title": "compare_bomDictOutput",
+        "type": "object"
+      }
+    }
+  ]
 }

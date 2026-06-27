@@ -372,7 +372,7 @@ func gcpBOMAdvisories(services []string, sampleRegion string) []map[string]strin
 					"Inter-region same-continent: $0.01/GB; cross-continent: $0.08/GB.",
 				sampleRegion, strings.ToUpper(continent), baseRate, sampleRegion,
 			),
-			"action": "Call GetPrice with domain='inter_region_egress', source_region='" + sampleRegion + "', data_gb=<estimated monthly GB>",
+			"action": "Supplementary — if user asked for TCO, get_price(spec={\"domain\":\"inter_region_egress\",\"source_region\":\"" + sampleRegion + "\",\"data_gb\":<monthly_gb>})",
 		},
 	}
 }
