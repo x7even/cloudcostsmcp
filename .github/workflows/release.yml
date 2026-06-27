@@ -21,6 +21,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
 
       - uses: actions/setup-go@v5
         with:
@@ -40,6 +41,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # For dispatch runs, tell goreleaser which tag to build from.
           GORELEASER_CURRENT_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || '' }}
+        continue-on-error: ${{ github.event_name != 'workflow_dispatch' }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
