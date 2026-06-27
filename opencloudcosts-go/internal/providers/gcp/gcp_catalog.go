@@ -145,7 +145,7 @@ func gcpDescribeCatalog() *models.ProviderCatalog {
 				"network_tier":       "premium (default) | standard",
 			},
 			"observability/cloud_monitoring": {
-				"ingestion_mib": "MiB of custom/external metrics ingested per month (150 MiB free tier)",
+				"ingestion_mib": "MiB of custom/external metrics ingested per month (150 MiB free tier) — pass the user's actual volume to get a complete tiered cost breakdown in one call",
 				"service":       "cloud_monitoring",
 			},
 			"inter_region_egress": {
@@ -273,7 +273,7 @@ func gcpDescribeCatalog() *models.ProviderCatalog {
 				"provider":      "gcp",
 				"domain":        "observability",
 				"service":       "cloud_monitoring",
-				"ingestion_mib": 1000.0,
+				"ingestion_mib": 200000.0,
 				"region":        "us-central1",
 			},
 			"inter_region_egress": {

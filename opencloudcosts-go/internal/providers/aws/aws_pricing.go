@@ -1146,12 +1146,27 @@ func (p *Provider) GetPrice(ctx context.Context, spec models.PricingSpec) (*mode
 		return nil, err
 	}
 
-	return &models.PricingResult{
+	result := &models.PricingResult{
 		PublicPrices:  prices,
 		AuthAvailable: false,
 		Source:        "catalog",
 		SchemaVersion: "1",
-	}, nil
+	}
+
+	// Spot prices are not stored in the static catalog — they require live AWS API
+	// access. When term=spot returns no prices, add a note so the model stops
+	// retrying with different instance types and provides an estimate instead.
+	if len(prices) == 0 {
+		if cs, ok := spec.(*models.ComputePricingSpec); ok && cs.GetTerm() == models.PricingTermSpot {
+			result.Note = "Spot prices are not available from the static pricing catalog — they " +
+				"require live AWS credentials (Cost Explorer API). " +
+				"Provide an estimate: spot prices are typically 60-90% below on-demand for most instance types. " +
+				"Call get_price with the same spec and term='on_demand' to get the on-demand rate, then " +
+				"inform the user that spot prices vary and are typically 60-90% lower."
+		}
+	}
+
+	return result, nil
 }
 
 // FinOps methods (GetEffectivePrice, GetSpotHistory, GetDiscountSummary,
