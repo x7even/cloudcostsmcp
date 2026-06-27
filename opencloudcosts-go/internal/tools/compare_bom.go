@@ -23,6 +23,7 @@ import (
 	"sync"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/models"
 )
 
 // --------------------------------------------------------------------------
@@ -43,8 +44,12 @@ type WorkloadItem struct {
 	Engine string `json:"engine"`
 	// StorageGB is the storage size in GB (storage / database).
 	StorageGB float64 `json:"storage_gb"`
-	// StorageType is the storage category: "ssd" (default), "hdd".
+	// StorageType is the storage category: "ssd" (default), "hdd", "ssd-provisioned-iops".
 	StorageType string `json:"storage_type"`
+	// IOPS is the provisioned IOPS count for storage types that support it (e.g. ssd-provisioned-iops).
+	IOPS int `json:"iops"`
+	// ThroughputMBPS is the provisioned throughput in MB/s for storage types that support it.
+	ThroughputMBPS float64 `json:"throughput_mbps"`
 	// OS is the operating system for compute: "linux" (default) or "windows".
 	OS string `json:"os"`
 }
@@ -410,6 +415,14 @@ func workloadItemToSpec(item WorkloadItem, provider, region, term string) (map[s
 			"region":       region,
 			"term":         "on_demand", // storage is always on-demand pricing
 		}
+		// Pass IOPS and throughput when the workload item specifies them so
+		// that providers return per_iops_month / per_mbps_month price entries.
+		if item.IOPS > 0 {
+			spec["iops"] = item.IOPS
+		}
+		if item.ThroughputMBPS > 0 {
+			spec["throughput_mbps"] = item.ThroughputMBPS
+		}
 		return spec, stCode, nil
 
 	case "database":
@@ -653,7 +666,6 @@ func (h *Handler) HandleCompareBOM(
 					continue
 				}
 
-				price := pricing.PublicPrices[0]
 				qty := wItem.Quantity
 				if qty <= 0 {
 					qty = 1
@@ -662,9 +674,23 @@ func (h *Handler) HandleCompareBOM(
 				if sizeGB <= 0 {
 					sizeGB = 100
 				}
-				monthly := bomMonthlyCost(price, qty, 730.0, sizeGB)
-				res.breakdown[wKey] = roundToTwoDecimal(monthly)
-				res.totalMonthly += monthly
+				iopsCount := wItem.IOPS
+
+				// Iterate all price components so that multi-entry results
+				// (e.g. io2: storage + IOPS) are fully summed.
+				itemMonthly := 0.0
+				for _, price := range pricing.PublicPrices {
+					var componentCost float64
+					switch price.Unit {
+					case models.PriceUnitPerIOPSMonth:
+						componentCost = price.PricePerUnit * float64(iopsCount) * float64(qty)
+					default:
+						componentCost = bomMonthlyCost(price, qty, 730.0, sizeGB)
+					}
+					itemMonthly += componentCost
+				}
+				res.breakdown[wKey] = roundToTwoDecimal(itemMonthly)
+				res.totalMonthly += itemMonthly
 			}
 			res.totalMonthly = roundToTwoDecimal(res.totalMonthly)
 

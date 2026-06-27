@@ -1002,7 +1002,7 @@ func TestCacheKey_StoragePricingSpec(t *testing.T) {
 				},
 				StorageType: "gp3",
 			},
-			want: "aws:storage::us-east-1:on_demand:gp3::",
+			want: "aws:storage::us-east-1:on_demand:gp3:::",
 		},
 		{
 			name: "with size and iops",
@@ -1017,7 +1017,7 @@ func TestCacheKey_StoragePricingSpec(t *testing.T) {
 				SizeGB:      ptr(100.0),
 				IOPS:        ptr(3000),
 			},
-			want: "aws:storage::us-east-1:on_demand:io1:100:3000",
+			want: "aws:storage::us-east-1:on_demand:io1:100:3000:",
 		},
 	}
 

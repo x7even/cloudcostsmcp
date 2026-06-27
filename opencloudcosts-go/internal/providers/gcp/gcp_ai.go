@@ -486,16 +486,16 @@ func (p *Provider) getBigQueryPrice(
 	}
 
 	if queryTB != nil {
-		result["estimated_query_cost"] = fmt.Sprintf("$%.2f", (*queryTB)*analysisRate)
+		result["estimated_query_cost"] = (*queryTB) * analysisRate
 	}
 	if activeStorageGB != nil {
-		result["estimated_active_storage_cost"] = fmt.Sprintf("$%.2f", (*activeStorageGB)/1024*activeStorageRate)
+		result["estimated_active_storage_cost"] = (*activeStorageGB) * activeStorageRate
 	}
 	if longtermStorageGB != nil {
-		result["estimated_longterm_storage_cost"] = fmt.Sprintf("$%.2f", (*longtermStorageGB)/1024*longtermStorageRate)
+		result["estimated_longterm_storage_cost"] = (*longtermStorageGB) * longtermStorageRate
 	}
 	if streamingGB != nil {
-		result["estimated_streaming_cost"] = fmt.Sprintf("$%.2f", (*streamingGB)/1024*streamingRate)
+		result["estimated_streaming_cost"] = (*streamingGB) * streamingRate
 	}
 
 	// Build NormalizedPrices for each rate found.

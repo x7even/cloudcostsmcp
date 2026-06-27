@@ -122,6 +122,17 @@ func (p *Provider) GetNetworkPrice(
 		src = "us-east-1"
 	}
 
+	// When no destination region is specified, the caller expects internet egress
+	// tiered pricing — not inter-region transfer. Route to internetEgressPrices so
+	// the server behavior matches the documented promise.
+	if dst == "" {
+		dataGB := 0.0
+		if es, ok := spec.(*models.EgressPricingSpec); ok {
+			dataGB = es.DataGB
+		}
+		return internetEgressPrices(src, dataGB, time.Now()), nil
+	}
+
 	cacheKey := fmt.Sprintf("aws:network_egress:%s:%s", src, dst)
 	if cached, ok := p.cache.Get(cacheKey); ok {
 		var prices []models.NormalizedPrice

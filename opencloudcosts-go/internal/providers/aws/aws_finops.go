@@ -659,8 +659,10 @@ func (p *Provider) DescribeCatalog(ctx context.Context) (*models.ProviderCatalog
 				"os":        "'Linux' or 'Windows'",
 			},
 			"storage": {
-				"storage_type": "'gp3', 'io1', 'st1', 'sc1', 's3-standard'",
-				"size_gb":      "size for monthly estimate",
+				"storage_type":    "'gp3', 'io2', 'io1', 'st1', 'sc1', 's3-standard'",
+				"size_gb":         "size for monthly estimate",
+				"iops":            "provisioned IOPS count for io1/io2 (int); returned as separate per_iops_month line item",
+				"throughput_mbps": "provisioned throughput MB/s for gp3; charge applies to MB/s above 125 MB/s baseline at $0.04/MB/s-month",
 			},
 			"database/rds": {
 				"resource_type": "DB instance type e.g. 'db.r5.large'",
@@ -711,7 +713,7 @@ func (p *Provider) DescribeCatalog(ctx context.Context) (*models.ProviderCatalog
 			"container/eks":            {"service": "eks"},
 			"inter_region_egress": {
 				"source_region": "origin region e.g. 'us-east-1'",
-				"dest_region":   "destination region e.g. 'eu-west-1'; empty = internet egress",
+				"dest_region":   "destination region e.g. 'eu-west-1' (required for inter-region transfer; for internet egress use domain=network service=egress destination_type=internet instead)",
 			},
 		},
 		ExampleInvocations: map[string]map[string]any{
@@ -768,6 +770,8 @@ func (p *Provider) DescribeCatalog(ctx context.Context) (*models.ProviderCatalog
 				"storage_type": "gp3",
 				"region":       "us-east-1",
 				"size_gb":      100,
+				"_iops_example":         "For io2: add \"iops\": 64000 to get the provisioned IOPS line item",
+				"_throughput_example":   "For gp3 with 500 MB/s: add \"throughput_mbps\": 500 (baseline 125 MB/s free)",
 			},
 			"database/rds": {
 				"provider":      "aws",

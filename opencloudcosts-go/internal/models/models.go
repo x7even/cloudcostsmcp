@@ -320,9 +320,10 @@ func (s *ComputePricingSpec) UnmarshalJSON(data []byte) error {
 // StoragePricingSpec prices block and object storage.
 type StoragePricingSpec struct {
 	BasePricingSpec
-	StorageType string   `json:"storage_type"`
-	SizeGB      *float64 `json:"size_gb,omitempty"`
-	IOPS        *int     `json:"iops,omitempty"`
+	StorageType   string    `json:"storage_type"`
+	SizeGB        *float64  `json:"size_gb,omitempty"`
+	IOPS          *int      `json:"iops,omitempty"`
+	ThroughputMBPS *float64 `json:"throughput_mbps,omitempty"`
 }
 
 var _ PricingSpec = (*StoragePricingSpec)(nil)
@@ -337,7 +338,11 @@ func (s *StoragePricingSpec) CacheKey() string {
 	if s.IOPS != nil {
 		iops = fmt.Sprintf("%v", *s.IOPS)
 	}
-	return fmt.Sprintf("%s:%s:%s:%s", s.baseCacheKey(), s.StorageType, sizeGB, iops)
+	throughput := ""
+	if s.ThroughputMBPS != nil {
+		throughput = fmt.Sprintf("%v", *s.ThroughputMBPS)
+	}
+	return fmt.Sprintf("%s:%s:%s:%s:%s", s.baseCacheKey(), s.StorageType, sizeGB, iops, throughput)
 }
 
 // UnmarshalJSON pre-populates defaults then decodes.

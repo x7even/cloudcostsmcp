@@ -263,26 +263,51 @@ func processBOMItems(
 			continue
 		}
 
-		price := result.PublicPrices[0]
-
 		// Build description if not provided.
 		if description == "" {
 			description = descriptionFromSpec(parsed)
 		}
 
-		monthly := bomMonthlyCost(price, quantity, hoursPerMonth, sizeGB)
-		annual := monthly * 12
+		// Extract provisioned IOPS count from StoragePricingSpec so that
+		// per_iops_month prices are multiplied correctly.
+		var iopsCount int
+		if stoSpec, ok := parsed.(*models.StoragePricingSpec); ok && stoSpec.IOPS != nil {
+			iopsCount = *stoSpec.IOPS
+		}
 
-		lineItems = append(lineItems, bomLineItem{
-			description: description,
-			provider:    string(price.Provider),
-			service:     price.Service,
-			region:      price.Region,
-			quantity:    quantity,
-			unitPrice:   price,
-			monthlyCost: monthly,
-			annualCost:  annual,
-		})
+		// Iterate all price components — providers such as AWS io2 return two
+		// entries: one per_gb_month (storage) and one per_iops_month (IOPS).
+		// Taking only PublicPrices[0] would drop the IOPS charge entirely.
+		for _, price := range result.PublicPrices {
+			var monthly float64
+			switch price.Unit {
+			case models.PriceUnitPerIOPSMonth:
+				// Multiply by provisioned IOPS count, not by storage size.
+				monthly = price.PricePerUnit * float64(iopsCount) * float64(quantity)
+			default:
+				monthly = bomMonthlyCost(price, quantity, hoursPerMonth, sizeGB)
+			}
+			annual := monthly * 12
+
+			// Suffix the description for multi-component line items so the
+			// model can present separate rows (e.g. "storage capacity" vs
+			// "provisioned IOPS") as required by the PDISK prompt.
+			lineDesc := description
+			if len(result.PublicPrices) > 1 {
+				lineDesc = fmt.Sprintf("%s — %s", description, price.Description)
+			}
+
+			lineItems = append(lineItems, bomLineItem{
+				description: lineDesc,
+				provider:    string(price.Provider),
+				service:     price.Service,
+				region:      price.Region,
+				quantity:    quantity,
+				unitPrice:   price,
+				monthlyCost: monthly,
+				annualCost:  annual,
+			})
+		}
 	}
 
 	return lineItems, errs

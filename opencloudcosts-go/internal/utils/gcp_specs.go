@@ -584,6 +584,10 @@ var GCPStorageSKU = map[string]StorageSKU{
 		Desc:    "Extreme PD Capacity",
 		AltDesc: "Extreme PD Capacity",
 	},
+	"hyperdisk-extreme": {
+		Desc:    "Hyperdisk Extreme Capacity",
+		AltDesc: "Hyperdisk Extreme",
+	},
 }
 
 // WindowsSKU returns the (cpuDescFragment, ramDescFragment) for Windows SKU

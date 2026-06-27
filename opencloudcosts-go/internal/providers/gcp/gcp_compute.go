@@ -171,6 +171,7 @@ func (p *Provider) GetPrice(ctx context.Context, spec models.PricingSpec) (*mode
 		if storageType == "" {
 			storageType = "standard"
 		}
+		stLower := strings.ToLower(storageType)
 		sizeGB := 0.0
 		if s.SizeGB != nil {
 			sizeGB = *s.SizeGB
@@ -178,6 +179,54 @@ func (p *Provider) GetPrice(ctx context.Context, spec models.PricingSpec) (*mode
 		prices, err := p.GetStoragePrice(ctx, storageType, s.Region, sizeGB)
 		if err != nil {
 			return nil, err
+		}
+		// For hyperdisk-extreme: if the live GCP catalog lookup returned no
+		// results (SKU pattern may not yet be indexed), fall back to the
+		// published static rate of $0.125/GB-month.
+		if len(prices) == 0 && stLower == "hyperdisk-extreme" {
+			now := time.Now().UTC()
+			prices = []models.NormalizedPrice{{
+				Provider:      models.CloudProviderGCP,
+				Service:       "storage",
+				SKUID:         fmt.Sprintf("gcp:storage:hyperdisk-extreme:%s:static", s.Region),
+				ProductFamily: "Storage",
+				Description:   "GCP Hyperdisk Extreme storage — static rate ($0.125/GB-month)",
+				Region:        s.Region,
+				PricingTerm:   models.PricingTermOnDemand,
+				PricePerUnit:  0.125,
+				Unit:          models.PriceUnitPerGBMonth,
+				Currency:      "USD",
+				Attributes: map[string]string{
+					"fallback":     "true",
+					"storage_type": "hyperdisk-extreme",
+				},
+				FetchedAt: &now,
+			}}
+		}
+		// For pd-extreme and hyperdisk-extreme with provisioned IOPS, append a
+		// per_iops_month price entry. Published GCP rate: $0.080/IOPS-month.
+		if s.IOPS != nil && *s.IOPS > 0 &&
+			(stLower == "pd-extreme" || stLower == "hyperdisk-extreme") {
+			iopsCount := *s.IOPS
+			now := time.Now().UTC()
+			prices = append(prices, models.NormalizedPrice{
+				Provider:      models.CloudProviderGCP,
+				Service:       "storage",
+				SKUID:         fmt.Sprintf("gcp:storage:%s:%s:iops:static", stLower, s.Region),
+				ProductFamily: "Storage",
+				Description:   fmt.Sprintf("GCP %s provisioned IOPS — static rate ($0.080/IOPS-month)", storageType),
+				Region:        s.Region,
+				PricingTerm:   models.PricingTermOnDemand,
+				PricePerUnit:  0.080,
+				Unit:          models.PriceUnitPerIOPSMonth,
+				Currency:      "USD",
+				Attributes: map[string]string{
+					"fallback":     "true",
+					"storage_type": stLower,
+					"iops":         fmt.Sprintf("%d", iopsCount),
+				},
+				FetchedAt: &now,
+			})
 		}
 		return buildResult(prices, nil), nil
 	}

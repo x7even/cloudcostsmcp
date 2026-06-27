@@ -78,8 +78,9 @@ func gcpDescribeCatalog() *models.ProviderCatalog {
 				"storage_type": "standard | nearline | coldline | archive",
 			},
 			"storage/persistent_disk": {
-				"storage_type": "pd-ssd | pd-balanced | pd-standard | pd-extreme",
+				"storage_type": "pd-ssd | pd-balanced | pd-standard | pd-extreme | hyperdisk-extreme",
 				"size_gb":      "Disk size in GiB for monthly cost estimate",
+				"iops":         "Provisioned IOPS for pd-extreme or hyperdisk-extreme (int); returned as separate per_iops_month line item at $0.080/IOPS-month",
 			},
 			"database/cloud_sql": {
 				"resource_type": "Cloud SQL instance type e.g. 'db-n1-standard-4', 'db-n1-standard-8', 'db-n1-standard-16', 'db-custom-8-32768'. Use the db-n1-standard-N family for standard workloads; there is no db-n2 variant for Cloud SQL.",

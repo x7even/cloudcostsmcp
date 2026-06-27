@@ -1069,6 +1069,33 @@ func (p *Provider) GetPrice(ctx context.Context, spec models.PricingSpec) (*mode
 			sizeGB = *ss.SizeGB
 		}
 		prices, err = p.GetStoragePrice(ctx, ss.StorageType, ss.GetRegion(), sizeGB)
+		// For gp3 with throughput above the 125 MB/s baseline, append a flat
+		// per_month entry for the above-baseline throughput charge.
+		// Published rate: $0.04/MB/s-month for each MB/s above 125 MB/s.
+		if err == nil && strings.ToLower(ss.StorageType) == "gp3" &&
+			ss.ThroughputMBPS != nil && *ss.ThroughputMBPS > 125 {
+			aboveBaseline := *ss.ThroughputMBPS - 125.0
+			throughputCharge := aboveBaseline * 0.04
+			now := time.Now().UTC()
+			prices = append(prices, models.NormalizedPrice{
+				Provider:      models.CloudProviderAWS,
+				Service:       "storage",
+				SKUID:         fmt.Sprintf("aws:ebs:gp3:%s:throughput:static", ss.GetRegion()),
+				ProductFamily: "Storage",
+				Description:   fmt.Sprintf("AWS EBS gp3 throughput above baseline (%.0f MB/s @ $0.04/MB/s-month) — static rate", aboveBaseline),
+				Region:        ss.GetRegion(),
+				PricingTerm:   models.PricingTermOnDemand,
+				PricePerUnit:  throughputCharge,
+				Unit:          models.PriceUnitPerMonth,
+				Currency:      "USD",
+				Attributes: map[string]string{
+					"fallback":         "true",
+					"storage_type":     "gp3",
+					"throughput_above": fmt.Sprintf("%.0f", aboveBaseline),
+				},
+				FetchedAt: &now,
+			})
+		}
 
 	case models.PricingDomainDatabase:
 		ds, ok := spec.(*models.DatabasePricingSpec)
