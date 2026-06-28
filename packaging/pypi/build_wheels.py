@@ -125,7 +125,12 @@ def main() -> None:
 
 
 def _metadata_content(version: str) -> bytes:
-    return (
+    readme_path = Path(__file__).parent.parent.parent / "README.md"
+    try:
+        readme = readme_path.read_text(encoding="utf-8")
+    except OSError:
+        readme = ""
+    header = (
         f"Metadata-Version: 2.1\n"
         f"Name: {PACKAGE_NAME}\n"
         f"Version: {version}\n"
@@ -133,7 +138,17 @@ def _metadata_content(version: str) -> bytes:
         f"Author: {AUTHOR}\n"
         f"License: {LICENSE}\n"
         f"Requires-Python: {REQUIRES_PYTHON}\n"
-    ).encode()
+        f"Project-URL: Homepage, https://github.com/x7even/cloudcostsmcp\n"
+        f"Project-URL: Source, https://github.com/x7even/cloudcostsmcp\n"
+        f"Project-URL: Issues, https://github.com/x7even/cloudcostsmcp/issues\n"
+        f"Classifier: License :: OSI Approved :: MIT License\n"
+        f"Classifier: Programming Language :: Other\n"
+        f"Classifier: Topic :: Office/Business :: Financial\n"
+    )
+    if readme:
+        header += "Description-Content-Type: text/markdown; charset=UTF-8\n"
+        return (header + "\n" + readme).encode("utf-8")
+    return header.encode("utf-8")
 
 
 def _wheel_content(python_tag: str, abi_tag: str, platform_tag: str) -> bytes:
