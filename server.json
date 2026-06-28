@@ -1,0 +1,58 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.x7even/cloudcostsmcp",
+  "description": "Anchor AI FinOps to real, live cloud pricing — AWS, GCP & Azure public and enterprise rates.",
+  "repository": {
+    "url": "https://github.com/x7even/cloudcostsmcp",
+    "source": "github"
+  },
+  "version": "0.9.2",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "opencloudcosts",
+      "version": "0.9.2",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "OCC_GCP_API_KEY",
+          "description": "GCP free API key — required for GCP pricing, no billing account needed.",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "OCC_AWS_ENABLE_COST_EXPLORER",
+          "description": "Set to true to enable effective/discounted AWS pricing via Cost Explorer ($0.01/call).",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string",
+          "default": "false"
+        },
+        {
+          "name": "AWS_ACCESS_KEY_ID",
+          "description": "AWS credentials — only needed for effective pricing (RI/Savings Plans). Public pricing works without credentials.",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "AWS_SECRET_ACCESS_KEY",
+          "description": "AWS secret key — paired with AWS_ACCESS_KEY_ID for effective pricing.",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "OCC_GCP_BILLING_ACCOUNT_ID",
+          "description": "GCP billing account ID — enables effective/contract pricing via Cloud Billing API.",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string"
+        }
+      ]
+    }
+  ]
+}

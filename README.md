@@ -1,5 +1,7 @@
 # OpenCloudCosts MCP
 
+<!-- mcp-name: io.github.x7even/cloudcostsmcp -->
+
 ## Anchor AI FinOps to real, live cloud pricing.
 
 An open source MCP server that gives AI assistants accurate cloud pricing data for AWS, GCP, and Azure.
