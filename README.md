@@ -20,7 +20,7 @@ Supports both **public list pricing** (no credentials needed for AWS and Azure; 
 - "List all c6g instances in eu-west-1 with >= 8 vCPUs"
 - "What's my effective hourly rate on m5.xlarge after Savings Plans?"
 
-## Tools (v1.0.0 — 15 tools)
+## Tools (v1.0.0 — 16 tools)
 
 **Pricing**
 
@@ -93,23 +93,19 @@ curl -L https://github.com/x7even/cloudcostsmcp/releases/latest/download/openclo
 ### Option 3 — Docker / container
 
 ```bash
-# HTTP transport, bound to all interfaces
+# Build the image first (no pre-built image is published)
+cd opencloudcosts-go
+docker build -t opencloudcosts:local .
+
+# Run — HTTP transport, bound to all interfaces
 docker run -p 8080:8080 \
   -e OCC_GCP_API_KEY=AIza... \
   -v ~/.aws:/root/.aws:ro \
-  ghcr.io/x7even/opencloudcosts-go:latest
+  opencloudcosts:local
 ```
 
-The container image is ~15 MB (distroless scratch base). It starts in HTTP transport
-mode by default. Pass cloud credentials via `-e` flags or mount `~/.aws` for AWS.
-No credentials are required for AWS and Azure public pricing.
-
-```bash
-# Build locally from source
-cd opencloudcosts-go
-docker build -t opencloudcosts:local .
-docker run -p 8080:8080 opencloudcosts:local
-```
+The image is ~15 MB (distroless scratch base, static binary). No credentials are
+required for AWS and Azure public pricing.
 
 ### Option 4 — build from source
 
@@ -146,7 +142,7 @@ Add to `~/.claude/settings.json` or your project's `.mcp.json`:
   "mcpServers": {
     "cloudcost": {
       "transport": "http",
-      "url": "http://localhost:8080/mcp"
+      "url": "http://localhost:8080/"
     }
   }
 }
@@ -154,7 +150,7 @@ Add to `~/.claude/settings.json` or your project's `.mcp.json`:
 
 ### Kubernetes
 
-See `deploy/kubernetes/` for manifests. The image is `ghcr.io/x7even/opencloudcosts-go:latest`.
+See `deploy/kubernetes/` for manifests. Build and push your own image (see Docker section above), then reference it in `deployment.yaml`.
 Credentials are passed via environment variables or Kubernetes Secrets — same variable
 names as the Docker examples above.
 
