@@ -171,7 +171,14 @@ opencloudcosts            # stdio mode (for local MCP clients)
 opencloudcosts --transport http --host 0.0.0.0 --port 8080  # HTTP mode
 ```
 
-### Option 2 — binary download
+### Option 2 — Homebrew (macOS / Linux)
+
+```bash
+brew tap x7even/opencloudcosts
+brew install opencloudcosts
+```
+
+### Option 3 — binary download
 
 Download the pre-built binary for your platform from the [latest release](https://github.com/x7even/cloudcostsmcp/releases/latest):
 
@@ -185,7 +192,7 @@ curl -L https://github.com/x7even/cloudcostsmcp/releases/latest/download/openclo
 ./opencloudcosts
 ```
 
-### Option 3 — Docker / container
+### Option 4 — Docker / container
 
 ```bash
 # Build the image first (no pre-built image is published)
@@ -202,7 +209,7 @@ docker run -p 8080:8080 \
 The image is ~15 MB (distroless scratch base, static binary). No credentials are
 required for AWS and Azure public pricing.
 
-### Option 4 — build from source
+### Option 5 — build from source
 
 ```bash
 git clone https://github.com/x7even/cloudcostsmcp

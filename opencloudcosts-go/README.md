@@ -25,7 +25,14 @@ Cost questions are one of the most common things you ask an AI about infrastruct
 
 ## Install
 
-### Option A: Build from source (recommended)
+### Option A: Homebrew (macOS / Linux)
+
+```bash
+brew tap x7even/opencloudcosts
+brew install opencloudcosts
+```
+
+### Option B: Build from source
 
 Requires Go 1.25.11+.
 
@@ -37,7 +44,7 @@ CGO_ENABLED=0 go build -o opencloudcosts ./cmd/opencloudcosts
 
 The result is a fully static binary with no system dependencies.
 
-### Option B: Docker
+### Option C: Docker
 
 Multi-stage build produces a ~15 MB distroless image (scratch base, no shell, no OS).
 
