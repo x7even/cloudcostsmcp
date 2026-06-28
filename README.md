@@ -286,30 +286,9 @@ OpenCloudCosts can access sensitive billing data when configured with cloud cred
 **What this server can access**
 With credentials configured: actual spend, contract/negotiated pricing, reservation and savings plan data. Understand this before granting access in shared or multi-user environments.
 
-## Phases
+## Recent releases
 
-- **Phase 1** ✅ AWS public pricing (EC2, EBS, list instances)
-- **Phase 2** ✅ AWS effective pricing (Cost Explorer, Savings Plans, Reserved Instances)
-- **Phase 3** ✅ GCP public pricing (Compute Engine families, Persistent Disk, CUDs)
-- **Phase 4** ✅ Azure public pricing (Retail Prices API, no credentials)
-- **Phase 4** ✅ Streamable-HTTP transport (`--transport http`), Dockerfile
-- **Phase 4** ✅ Spot price history tool (`get_spot_history`), GCP Windows pricing
-- **Phase 5** ✅ GCP managed services — GKE, Memorystore, BigQuery, Vertex AI, Gemini
-- **Phase 5** ✅ GCP networking — Cloud LB, CDN, NAT, Cloud Armor, Cloud Monitoring
-- **Phase 5** ✅ GCP Cloud SQL; Azure reserved pricing
-- **v0.8.0** ✅ Consolidated to 15-tool surface; unified `get_price(spec)` dispatcher; `describe_catalog` discovery; 123/123 (100%) harness pass rate
-- **v0.8.2** ✅ Provider protocol cleanup — `major_regions()`, `default_region()`, `bom_advisories()` on all providers; zero provider-string conditionals in tool layer
-- **v0.8.3** ✅ Trust metadata on `NormalizedPrice` (`fetched_at`, `source_url`, `cache_age_seconds`); inter-region egress domain + AWS data transfer pricing
-- **v0.8.4** ✅ Numeric price fields — structured `{amount, unit, currency, display}` dicts replace formatted strings at all tool boundaries
-- **v0.8.5** ✅ Service→domain inference (`fill_domain`); structured `invalid_spec` error hints; 123/123 harness (up from 84%)
-- **v0.8.8** ✅ Azure breadth: SQL Database, Cosmos DB, AKS, Azure Functions, Azure OpenAI; 151/151 harness (28 new test scenarios)
-- **v0.8.9** ✅ GCP effective/contract pricing via Cloud Billing Pricing API v1beta (`OCC_GCP_BILLING_ACCOUNT_ID`); GCP now at parity with AWS effective pricing
-- **v0.8.10** ✅ `GcpAuthProvider` — multi-source OAuth (SA JSON B64, WIF, ADC, metadata server, raw token); `google-auth[requests]` optional `[gcp]` extra; event-loop-safe refresh; no gcloud required in containers
-- **v0.8.11** ✅ GCP storage and database contract pricing — GCS, Persistent Disk, Cloud SQL (all engines/sizes/HA), Memorystore; `effective_price` on `StoragePricingSpec` and `DatabasePricingSpec` when billing account configured
-- **v0.8.12** ✅ Azure egress pricing (`inter_region_egress` domain) — internet and inter-region outbound transfer, Zone 1 rates from Retail Prices API, 5 GB/month free tier, monthly estimate in response
-- **v0.8.13** ✅ GCP network contract pricing — Cloud LB, CDN, NAT, Cloud Armor; `effective_price` on `NetworkPricingSpec` when billing account configured
-- **v0.8.14** ✅ GCP internet and inter-region egress (`inter_region_egress` domain) — continent-based rates from SKU catalog with static fallbacks; cross-cloud egress comparison now works across AWS, GCP, and Azure
-- **v0.9.1** ✅ GCP egress contract pricing — `effective_price` on internet egress when billing account configured; fix `PricingResult.source` Literal to include `"catalog+billing_api"`
-- **v0.9.2** ✅ Azure OpenAI word-boundary model matching — regex fix prevents GPT-4/GPT-4o/GPT-4.1 prefix collisions; standard-SKU filter reduces lookup noise
-- **v0.9.2** ✅ Azure Functions Consumption plan pricing fix; `list_instance_types` default cap (25); AWS bulk pricing streamed via ijson
-- **v0.9.2** ✅ Harness: HTTP MCP transport, reasoning-content stripping, MCP restart resilience, 199-prompt suite (up from 169)
+- **v0.9.1** ✅ GCP egress contract pricing; fix `PricingResult.source` Literal
+- **v0.9.2** ✅ Azure OpenAI model matching fix; Azure Functions pricing fix; `list_instance_types` cap; AWS bulk pricing via ijson; 199-prompt harness suite
+- **v1.0.0** ✅ Go rewrite — static binary, dual stdio/HTTP transport, 16 tools, `compare_bom` cross-cloud workload comparison, concurrent region fan-out (32 goroutines), Azure o1-mini SKU fix; **234/234 (100%) LLM grounding harness**
+- **v1.0.1** ✅ PyPI package description; CI Trusted Publisher fix; `go install` tag
