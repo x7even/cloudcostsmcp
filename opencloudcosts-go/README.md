@@ -177,10 +177,10 @@ Set `OCC_CACHE_TTL_HOURS=0` to disable price caching entirely (always-fresh, hig
 | `OCC_MAX_RESULTS` | `20` | Max results for list/search tools |
 | `OCC_LOG_LEVEL` | `info` | Log verbosity: `debug`, `info`, `warn`, `error` |
 | `OCC_API_KEY` | _(none)_ | Bearer token for HTTP transport auth |
-| `OCC_RATE_LIMIT` | `10` | Requests/second (token bucket, HTTP transport) |
-| `OCC_REQUEST_TIMEOUT` | `30s` | Per-request deadline |
-| `OCC_PROVIDER_TIMEOUT` | `15s` | Per-provider API call deadline |
-| `OCC_SHUTDOWN_TIMEOUT` | `10s` | Graceful shutdown drain period (SIGTERM) |
+| `OCC_RATE_LIMIT` | `200` | Requests/second (token bucket, HTTP transport) |
+| `OCC_REQUEST_TIMEOUT` | `60s` | Per-request deadline |
+| `OCC_PROVIDER_TIMEOUT` | `30s` | Per-provider API call deadline |
+| `OCC_SHUTDOWN_TIMEOUT` | `15s` | Graceful shutdown drain period (SIGTERM) |
 
 ### AWS
 

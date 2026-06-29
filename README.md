@@ -89,7 +89,7 @@ Azure Reserved VM pricing (1-year and 3-year terms) is available via the public 
 - `compare_prices`: semaphore of **10 concurrent region calls**
 - `get_prices_batch`: parallelized across instance types within a region
 
-**Rate limiting and timeouts** — Token-bucket rate limiter at 10 req/s on the HTTP transport (`OCC_RATE_LIMIT`). Per-request deadline: 30s (`OCC_REQUEST_TIMEOUT`). Per-provider API call: 15s (`OCC_PROVIDER_TIMEOUT`). Graceful SIGTERM drain: 10s (`OCC_SHUTDOWN_TIMEOUT`).
+**Rate limiting and timeouts** — Token-bucket rate limiter at 200 req/s on the HTTP transport (`OCC_RATE_LIMIT`). Per-request deadline: 60s (`OCC_REQUEST_TIMEOUT`). Per-provider API call: 30s (`OCC_PROVIDER_TIMEOUT`). Graceful SIGTERM drain: 15s (`OCC_SHUTDOWN_TIMEOUT`).
 
 **Cache** — Prices are stored in a **concurrent in-memory cache** (read-optimised with `sync.RWMutex`) with atomic JSON persistence at `~/.cache/opencloudcosts/cache.json`. TTLs: public prices 24h (`OCC_CACHE_TTL_HOURS`), region/instance metadata 7 days (`OCC_METADATA_TTL_DAYS`), effective/contracted rates 1h (`OCC_EFFECTIVE_PRICE_TTL_HOURS`). Cache survives binary updates. 401/403 responses from billing APIs are never cached, so credential rotation takes effect immediately.
 
