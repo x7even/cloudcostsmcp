@@ -14,6 +14,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `service_mismatch` flag when an explicit `service` hint finds no match. Flags compound
   inter-region/Wavelength `AWSDataTransfer` SKUs with a warning rather than guessing silently.
 
+### Fixed
+
+- **get_price_by_sku: ambiguous multi-product matches no longer silently default to the
+  cheapest alternate** — a usage-type suffix that maps to more than one distinct billable
+  product (e.g. ELB's `LCUUsage` spans Application/Network/Gateway load balancer pricing; RDS's
+  `InstanceUsage:<type>` spans every database engine on that instance type) was previously
+  resolved by picking whichever candidate row happened to be cheapest, with no indication to
+  the caller that the price was a guess. Added optional `operation`/`product_family`
+  disambiguating hint fields (the same CUR columns that accompany a usage-type/SKU value) so
+  callers can resolve these up front. Regions that remain ambiguous after hint-based and
+  canonical-default narrowing are now excluded entirely from `all_regions_sorted`,
+  `cheapest_price`, `most_expensive_price`, and baseline-delta calculations, and are instead
+  surfaced under a new `ambiguous_in` field with every candidate row listed so the caller must
+  explicitly disambiguate rather than trust a silently-guessed number.
+- **get_price_by_sku: fixed a 100% timeout on EC2 `BoxUsage` and EBS `VolumeUsage` lookups** —
+  term assembly was re-deriving each SKU's on-demand/reserved terms via an O(M) linear
+  `strings.HasPrefix` scan over the full terms map per SKU, which against AmazonEC2's ~120K
+  products/terms bulk offer file made the overall lookup O(P×M) and reliably exceeded the
+  request timeout. `collectTermsForSKUs` now preserves the SKU-level grouping it already
+  produces while streaming the offer file, so term assembly is a direct O(1) `map[sku]` lookup
+  instead.
+
 ---
 
 ## [1.0.0] — 2026-06-27

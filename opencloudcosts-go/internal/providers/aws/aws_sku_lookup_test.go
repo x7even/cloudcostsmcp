@@ -23,6 +23,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/models"
 )
 
 // resetSKUCatalogCache clears the process-lifetime (service,region) catalog
@@ -211,7 +213,7 @@ func TestLookupSKUInRegion_Match(t *testing.T) {
 	overrideBulkBaseURL(t, server.URL)
 
 	p := &Provider{}
-	result, err := p.LookupSKUAcrossRegions(context.Background(), "aws", "BoxUsage:r6id.24xlarge", "AmazonEC2", []string{"us-east-1"})
+	result, err := p.LookupSKUAcrossRegions(context.Background(), "aws", "BoxUsage:r6id.24xlarge", "AmazonEC2", []string{"us-east-1"}, "", "")
 	if err != nil {
 		t.Fatalf("LookupSKUAcrossRegions returned error: %v", err)
 	}
@@ -246,7 +248,7 @@ func TestLookupSKUInRegion_NoMapping(t *testing.T) {
 	overrideBulkBaseURL(t, server.URL)
 
 	p := &Provider{}
-	result, err := p.LookupSKUAcrossRegions(context.Background(), "aws", "BoxUsage:r6id.24xlarge", "AmazonEC2", []string{"us-east-1"})
+	result, err := p.LookupSKUAcrossRegions(context.Background(), "aws", "BoxUsage:r6id.24xlarge", "AmazonEC2", []string{"us-east-1"}, "", "")
 	if err != nil {
 		t.Fatalf("LookupSKUAcrossRegions returned error: %v", err)
 	}
@@ -269,7 +271,7 @@ func TestLookupSKUInRegion_EmptyProductsAlsoNoMapping(t *testing.T) {
 	overrideBulkBaseURL(t, server.URL)
 
 	p := &Provider{}
-	result, err := p.LookupSKUAcrossRegions(context.Background(), "aws", "BoxUsage:r6id.24xlarge", "AmazonEC2", []string{"us-east-1"})
+	result, err := p.LookupSKUAcrossRegions(context.Background(), "aws", "BoxUsage:r6id.24xlarge", "AmazonEC2", []string{"us-east-1"}, "", "")
 	if err != nil {
 		t.Fatalf("LookupSKUAcrossRegions returned error: %v", err)
 	}
@@ -289,7 +291,7 @@ func TestLookupSKUInRegion_FetchFailureIsError(t *testing.T) {
 	overrideBulkBaseURL(t, server.URL)
 
 	p := &Provider{}
-	result, err := p.LookupSKUAcrossRegions(context.Background(), "aws", "BoxUsage:r6id.24xlarge", "AmazonEC2", []string{"us-east-1"})
+	result, err := p.LookupSKUAcrossRegions(context.Background(), "aws", "BoxUsage:r6id.24xlarge", "AmazonEC2", []string{"us-east-1"}, "", "")
 	if err != nil {
 		t.Fatalf("LookupSKUAcrossRegions returned error: %v", err)
 	}
@@ -316,6 +318,7 @@ func TestLookupSKUAcrossRegions_PerRegionValidation_NonFatal(t *testing.T) {
 	result, err := p.LookupSKUAcrossRegions(
 		context.Background(), "aws", "BoxUsage:r6id.24xlarge", "AmazonEC2",
 		[]string{"us-east-1", "cn-north-1", "not-a-region"},
+		"", "",
 	)
 	if err != nil {
 		t.Fatalf("LookupSKUAcrossRegions returned error: %v", err)
@@ -346,7 +349,7 @@ func TestLookupSKUAcrossRegions_EmptyRegionsRejected(t *testing.T) {
 	overrideBulkBaseURL(t, "http://127.0.0.1:1/unreachable")
 
 	p := &Provider{}
-	_, err := p.LookupSKUAcrossRegions(context.Background(), "aws", "BoxUsage:r6id.24xlarge", "AmazonEC2", nil)
+	_, err := p.LookupSKUAcrossRegions(context.Background(), "aws", "BoxUsage:r6id.24xlarge", "AmazonEC2", nil, "", "")
 	if err == nil {
 		t.Fatal("expected an error for empty regions, got nil")
 	}
@@ -371,7 +374,7 @@ func TestLookupSKUAcrossRegions_TooManyRegionsRejected(t *testing.T) {
 	}
 
 	p := &Provider{}
-	_, err := p.LookupSKUAcrossRegions(context.Background(), "aws", "BoxUsage:r6id.24xlarge", "AmazonEC2", regions)
+	_, err := p.LookupSKUAcrossRegions(context.Background(), "aws", "BoxUsage:r6id.24xlarge", "AmazonEC2", regions, "", "")
 	if err == nil {
 		t.Fatal("expected an error for >30 regions, got nil")
 	}
@@ -391,7 +394,7 @@ func TestLookupSKUAcrossRegions_WrongProviderRejected(t *testing.T) {
 	overrideBulkBaseURL(t, "http://127.0.0.1:1/unreachable")
 
 	p := &Provider{}
-	_, err := p.LookupSKUAcrossRegions(context.Background(), "gcp", "BoxUsage:r6id.24xlarge", "AmazonEC2", []string{"us-east-1"})
+	_, err := p.LookupSKUAcrossRegions(context.Background(), "gcp", "BoxUsage:r6id.24xlarge", "AmazonEC2", []string{"us-east-1"}, "", "")
 	if err == nil {
 		t.Fatal("expected an error for provider=gcp, got nil")
 	}
@@ -432,7 +435,7 @@ func TestLookupSKUAcrossRegions_ExplicitHintFailsThenInferredFallbackMatches(t *
 	overrideBulkBaseURL(t, server.URL)
 
 	p := &Provider{}
-	result, err := p.LookupSKUAcrossRegions(context.Background(), "aws", "AWS-Out-Bytes", "AmazonEC2", []string{"us-east-1"})
+	result, err := p.LookupSKUAcrossRegions(context.Background(), "aws", "AWS-Out-Bytes", "AmazonEC2", []string{"us-east-1"}, "", "")
 	if err != nil {
 		t.Fatalf("LookupSKUAcrossRegions returned error: %v", err)
 	}
@@ -455,6 +458,84 @@ func TestLookupSKUAcrossRegions_ExplicitHintFailsThenInferredFallbackMatches(t *
 	}
 }
 
+// TestLookupSKUAcrossRegions_HintTriedAgainstFallbackServiceCatalog verifies
+// the RC2 review's finding-3 fix: when an explicit service= hint disagrees
+// with the heuristically inferred service (candidates = [serviceHint,
+// inferredService], as in
+// TestLookupSKUAcrossRegions_ExplicitHintFailsThenInferredFallbackMatches
+// above), and the FIRST candidate's catalog does contain a row for this
+// suffix but that row contradicts a supplied operation/product_family hint,
+// the lookup must not give up right there and report hint_no_match against
+// only that first candidate — it must also try the second candidate's
+// catalog, which may be where the hint-matching row actually lives. Before
+// this fix, lookupSKUInRegion returned as soon as ANY candidate's catalog
+// contained the suffix at all, regardless of whether the hint matched
+// anything in it, silently starving later candidates of a chance to
+// resolve the hint.
+func TestLookupSKUAcrossRegions_HintTriedAgainstFallbackServiceCatalog(t *testing.T) {
+	resetSKUCatalogCache(t)
+
+	mux := http.NewServeMux()
+	// AmazonEC2 (the explicit, "wrong" service hint here) happens to also
+	// have a row for the "LCUUsage" suffix, but for an unrelated operation
+	// that the hint does not match.
+	mux.HandleFunc("/AmazonEC2/current/us-east-1/index.json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(skuBulkJSONMulti([]multiProductSpec{
+			{
+				sku: "SKU-EC2-DECOY", usageType: "LCUUsage", location: "US East (N. Virginia)",
+				priceUSD:   "0.0010000000",
+				extraAttrs: map[string]string{"operation": "SomeUnrelatedEC2Operation"},
+			},
+		})))
+	})
+	// AWSELB (the inferred fallback service) has the actual hint-matching row.
+	mux.HandleFunc("/AWSELB/current/us-east-1/index.json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(skuBulkJSONMulti([]multiProductSpec{
+			{
+				sku: "SKU-ALB", usageType: "LCUUsage", location: "US East (N. Virginia)",
+				priceUSD:   "0.0080000000",
+				extraAttrs: map[string]string{"operation": "LoadBalancing:Application"},
+			},
+		})))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	overrideBulkBaseURL(t, server.URL)
+
+	p := &Provider{}
+	result, err := p.LookupSKUAcrossRegions(
+		context.Background(), "aws", "LCUUsage", "AmazonEC2", []string{"us-east-1"},
+		"LoadBalancing:Application", "",
+	)
+	if err != nil {
+		t.Fatalf("LookupSKUAcrossRegions returned error: %v", err)
+	}
+	if result.InferredService != "AWSELB" {
+		t.Fatalf("expected inferred_service=AWSELB, got %q", result.InferredService)
+	}
+
+	rr := result.Regions[0]
+	if rr.Ambiguous {
+		t.Fatalf("expected the hint to resolve via the fallback AWSELB catalog, got ambiguous result: %+v", rr)
+	}
+	if rr.HintStatus != HintStatusResolved {
+		t.Errorf("hint_status = %q, want %q", rr.HintStatus, HintStatusResolved)
+	}
+	if rr.ServiceUsed != "AWSELB" {
+		t.Errorf("ServiceUsed = %q, want AWSELB (the fallback candidate that actually matched the hint)", rr.ServiceUsed)
+	}
+	if !rr.ServiceMismatch {
+		t.Errorf("expected ServiceMismatch=true (explicit hint AmazonEC2 didn't match ServiceUsed AWSELB)")
+	}
+	if len(rr.Prices) != 1 || rr.Prices[0].SKUID != "SKU-ALB" {
+		t.Fatalf("expected the single Application LB price from the fallback catalog, got %+v", rr.Prices)
+	}
+}
+
 // TestLookupSKUAcrossRegions_CompoundTransferWarning verifies both compound
 // fixture SKUs from the ground-truth data produce the compound-transfer
 // warning text.
@@ -467,7 +548,7 @@ func TestLookupSKUAcrossRegions_CompoundTransferWarning(t *testing.T) {
 			overrideBulkBaseURL(t, server.URL)
 
 			p := &Provider{}
-			result, err := p.LookupSKUAcrossRegions(context.Background(), "aws", sku, "AWSDataTransfer", []string{"us-east-1"})
+			result, err := p.LookupSKUAcrossRegions(context.Background(), "aws", sku, "AWSDataTransfer", []string{"us-east-1"}, "", "")
 			if err != nil {
 				t.Fatalf("LookupSKUAcrossRegions returned error: %v", err)
 			}
@@ -507,7 +588,7 @@ func TestLookupSKUAcrossRegions_ServiceUndeterminable(t *testing.T) {
 	overrideBulkBaseURL(t, "http://127.0.0.1:1/unreachable")
 
 	p := &Provider{}
-	_, err := p.LookupSKUAcrossRegions(context.Background(), "aws", "SomeMadeUpUsageTypeXYZ123", "", []string{"us-east-1"})
+	_, err := p.LookupSKUAcrossRegions(context.Background(), "aws", "SomeMadeUpUsageTypeXYZ123", "", []string{"us-east-1"}, "", "")
 	if err == nil {
 		t.Fatal("expected an error, got nil")
 	}
@@ -543,14 +624,14 @@ func TestGetOrFetchSKUCatalog_MemoizesAcrossCalls(t *testing.T) {
 	p := &Provider{}
 
 	// First lookup: SKU with a prefix that strips to the fixture's suffix.
-	_, err := p.LookupSKUAcrossRegions(context.Background(), "aws", "BoxUsage:r6id.24xlarge", "AmazonEC2", []string{"us-east-1"})
+	_, err := p.LookupSKUAcrossRegions(context.Background(), "aws", "BoxUsage:r6id.24xlarge", "AmazonEC2", []string{"us-east-1"}, "", "")
 	if err != nil {
 		t.Fatalf("first LookupSKUAcrossRegions returned error: %v", err)
 	}
 	// Second lookup: a different SKU string, same (service, region) pair —
 	// this one has no matching row (NoMapping), but must still reuse the
 	// memoized catalog rather than re-fetching.
-	_, err = p.LookupSKUAcrossRegions(context.Background(), "aws", "BoxUsage:completely-different.xlarge", "AmazonEC2", []string{"us-east-1"})
+	_, err = p.LookupSKUAcrossRegions(context.Background(), "aws", "BoxUsage:completely-different.xlarge", "AmazonEC2", []string{"us-east-1"}, "", "")
 	if err != nil {
 		t.Fatalf("second LookupSKUAcrossRegions returned error: %v", err)
 	}
@@ -666,7 +747,7 @@ func TestLookupSKUInRegion_MultiRowResolvesToCanonicalDefault(t *testing.T) {
 	overrideBulkBaseURL(t, server.URL)
 
 	p := &Provider{}
-	result, err := p.LookupSKUAcrossRegions(context.Background(), "aws", "BoxUsage:r6id.24xlarge", "AmazonEC2", []string{"us-east-1"})
+	result, err := p.LookupSKUAcrossRegions(context.Background(), "aws", "BoxUsage:r6id.24xlarge", "AmazonEC2", []string{"us-east-1"}, "", "")
 	if err != nil {
 		t.Fatalf("LookupSKUAcrossRegions returned error: %v", err)
 	}
@@ -708,7 +789,7 @@ func TestLookupSKUInRegion_MultiRowGenuinelyAmbiguousIsFlagged(t *testing.T) {
 	overrideBulkBaseURL(t, server.URL)
 
 	p := &Provider{}
-	result, err := p.LookupSKUAcrossRegions(context.Background(), "aws", "InstanceUsage:db.r5.large", "AmazonRDS", []string{"us-east-1"})
+	result, err := p.LookupSKUAcrossRegions(context.Background(), "aws", "InstanceUsage:db.r5.large", "AmazonRDS", []string{"us-east-1"}, "", "")
 	if err != nil {
 		t.Fatalf("LookupSKUAcrossRegions returned error: %v", err)
 	}
@@ -733,13 +814,408 @@ func TestLookupSKUInRegion_SingleRowNeverFlaggedAmbiguous(t *testing.T) {
 	overrideBulkBaseURL(t, server.URL)
 
 	p := &Provider{}
-	result, err := p.LookupSKUAcrossRegions(context.Background(), "aws", "BoxUsage:r6id.24xlarge", "AmazonEC2", []string{"us-east-1"})
+	result, err := p.LookupSKUAcrossRegions(context.Background(), "aws", "BoxUsage:r6id.24xlarge", "AmazonEC2", []string{"us-east-1"}, "", "")
 	if err != nil {
 		t.Fatalf("LookupSKUAcrossRegions returned error: %v", err)
 	}
 	if result.Regions[0].Ambiguous {
 		t.Errorf("expected a single matching row to never be flagged ambiguous")
 	}
+}
+
+// --------------------------------------------------------------------------
+// resolveSKUCandidates — operation/product_family hint disambiguation
+// (RC2 Bug 1 fix: ambiguous matches must never silently resolve to
+// "cheapest"; a hint must deterministically select the correct alternate,
+// and fail closed — remain ambiguous — when the hint matches nothing.)
+// --------------------------------------------------------------------------
+
+// elbLCUCandidates reproduces the RC1 field-test's Example A ground truth:
+// the bare "LCUUsage" suffix is shared by Application/Network/Gateway load
+// balancer capacity pricing, distinguished only by the "operation" attribute
+// and top-level productFamily. Gateway is deliberately the cheapest of the
+// three (it is what the pre-fix code silently picked) and Application is
+// deliberately NOT the cheapest, so a test that merely reproduces "cheapest"
+// cannot pass by accident.
+func elbLCUCandidates() []models.NormalizedPrice {
+	return []models.NormalizedPrice{
+		{
+			Service: "AWSELB", ProductFamily: "Load Balancer-Application", PricePerUnit: 0.0080,
+			Attributes: map[string]string{"operation": "LoadBalancing:Application", "usagetype": "LCUUsage"},
+			SKUID:      "SKU-ALB",
+		},
+		{
+			Service: "AWSELB", ProductFamily: "Load Balancer-Network", PricePerUnit: 0.0060,
+			Attributes: map[string]string{"operation": "LoadBalancing:Network", "usagetype": "LCUUsage"},
+			SKUID:      "SKU-NLB",
+		},
+		{
+			Service: "AWSELB", ProductFamily: "Load Balancer-Gateway", PricePerUnit: 0.0040,
+			Attributes: map[string]string{"operation": "LoadBalancing:Gateway", "usagetype": "LCUUsage"},
+			SKUID:      "SKU-GWLB",
+		},
+	}
+}
+
+// rdsEngineCandidates reproduces the RC1 field-test's Example B ground
+// truth: the "InstanceUsage:db.r8g.2xl" suffix is shared by every DB engine
+// on that instance type. Plain PostgreSQL is deliberately the cheapest of
+// the five (it is what the pre-fix code silently picked); Aurora PostgreSQL
+// — identified by operation "CreateDBInstance:0021" — is deliberately NOT
+// the cheapest, matching the report's worked numbers ($0.956 vs $1.104).
+func rdsEngineCandidates() []models.NormalizedPrice {
+	return []models.NormalizedPrice{
+		{
+			Service: "AmazonRDS", ProductFamily: "Database Instance", PricePerUnit: 1.010,
+			Attributes: map[string]string{"operation": "CreateDBInstance:0002", "databaseEngine": "MySQL"},
+			SKUID:      "SKU-MYSQL",
+		},
+		{
+			Service: "AmazonRDS", ProductFamily: "Database Instance", PricePerUnit: 0.956,
+			Attributes: map[string]string{"operation": "CreateDBInstance:0014", "databaseEngine": "PostgreSQL"},
+			SKUID:      "SKU-POSTGRES",
+		},
+		{
+			Service: "AmazonRDS", ProductFamily: "Database Instance", PricePerUnit: 1.030,
+			Attributes: map[string]string{"operation": "CreateDBInstance:0009", "databaseEngine": "MariaDB"},
+			SKUID:      "SKU-MARIADB",
+		},
+		{
+			Service: "AmazonRDS", ProductFamily: "Database Instance", PricePerUnit: 1.080,
+			Attributes: map[string]string{"operation": "CreateDBInstance:0020", "databaseEngine": "Aurora MySQL"},
+			SKUID:      "SKU-AURORA-MYSQL",
+		},
+		{
+			Service: "AmazonRDS", ProductFamily: "Database Instance", PricePerUnit: 1.104,
+			Attributes: map[string]string{"operation": "CreateDBInstance:0021", "databaseEngine": "Aurora PostgreSQL"},
+			SKUID:      "SKU-AURORA-POSTGRES",
+		},
+	}
+}
+
+// TestResolveSKUCandidates_TableDriven is the core unit-level coverage for
+// the hint-based disambiguation logic added in RC2 (resolveSKUCandidates):
+// no exhaustive HTTP mocking is required here, since resolveSKUCandidates
+// operates purely on []models.NormalizedPrice.
+func TestResolveSKUCandidates_TableDriven(t *testing.T) {
+	tests := []struct {
+		name              string
+		prices            []models.NormalizedPrice
+		operationHint     string
+		productFamilyHint string
+
+		wantAmbiguous     bool
+		wantHintStatus    string
+		wantChosenCount   int
+		wantChosenSKUID   string // only checked when wantChosenCount == 1
+		wantChosenPriceIs float64
+		checkChosenPrice  bool
+	}{
+		// --- ELB LCUUsage: bare suffix, no hint => must NOT silently pick
+		// Gateway (the cheapest); must be flagged ambiguous with all 3 kept.
+		{
+			name:            "ELB no hint stays ambiguous with all 3 candidates",
+			prices:          elbLCUCandidates(),
+			wantAmbiguous:   true,
+			wantHintStatus:  HintStatusNoHint,
+			wantChosenCount: 3,
+		},
+		// --- ELB with a correct operation hint => resolves deterministically
+		// to Application LB, matching the report's worked example.
+		{
+			name:              "ELB operation hint resolves to Application LB",
+			prices:            elbLCUCandidates(),
+			operationHint:     "LoadBalancing:Application",
+			wantAmbiguous:     false,
+			wantHintStatus:    HintStatusResolved,
+			wantChosenCount:   1,
+			wantChosenSKUID:   "SKU-ALB",
+			checkChosenPrice:  true,
+			wantChosenPriceIs: 0.0080,
+		},
+		// --- ELB with a correct operation hint, case-insensitively supplied.
+		{
+			name:              "ELB operation hint is case-insensitive",
+			prices:            elbLCUCandidates(),
+			operationHint:     "loadbalancing:application",
+			wantAmbiguous:     false,
+			wantHintStatus:    HintStatusResolved,
+			wantChosenCount:   1,
+			wantChosenSKUID:   "SKU-ALB",
+			checkChosenPrice:  true,
+			wantChosenPriceIs: 0.0080,
+		},
+		// --- ELB with a correct product_family hint (instead of operation)
+		// resolves the same way.
+		{
+			name:              "ELB product_family hint resolves to Application LB",
+			prices:            elbLCUCandidates(),
+			productFamilyHint: "Load Balancer-Application",
+			wantAmbiguous:     false,
+			wantHintStatus:    HintStatusResolved,
+			wantChosenCount:   1,
+			wantChosenSKUID:   "SKU-ALB",
+			checkChosenPrice:  true,
+			wantChosenPriceIs: 0.0080,
+		},
+		// --- ELB with a hint matching zero rows fails closed: still
+		// ambiguous, does NOT fall through to picking any default (cheapest
+		// or otherwise), and the full original candidate set is preserved.
+		{
+			name:            "ELB hint matching zero rows fails closed",
+			prices:          elbLCUCandidates(),
+			operationHint:   "LoadBalancing:ClassicDoesNotExist",
+			wantAmbiguous:   true,
+			wantHintStatus:  HintStatusNoMatch,
+			wantChosenCount: 3,
+		},
+		// --- RDS engine collision, no hint => ambiguous, all 5 kept.
+		{
+			name:            "RDS no hint stays ambiguous with all 5 candidates",
+			prices:          rdsEngineCandidates(),
+			wantAmbiguous:   true,
+			wantHintStatus:  HintStatusNoHint,
+			wantChosenCount: 5,
+		},
+		// --- RDS with the operation code from the report's worked example
+		// resolves deterministically to Aurora PostgreSQL — NOT plain
+		// PostgreSQL (the cheapest, and what the pre-fix code silently
+		// picked).
+		{
+			name:              "RDS operation hint resolves to Aurora PostgreSQL",
+			prices:            rdsEngineCandidates(),
+			operationHint:     "CreateDBInstance:0021",
+			wantAmbiguous:     false,
+			wantHintStatus:    HintStatusResolved,
+			wantChosenCount:   1,
+			wantChosenSKUID:   "SKU-AURORA-POSTGRES",
+			checkChosenPrice:  true,
+			wantChosenPriceIs: 1.104,
+		},
+		// --- RDS with a hint matching zero rows fails closed.
+		{
+			name:            "RDS hint matching zero rows fails closed",
+			prices:          rdsEngineCandidates(),
+			operationHint:   "CreateDBInstance:9999",
+			wantAmbiguous:   true,
+			wantHintStatus:  HintStatusNoMatch,
+			wantChosenCount: 5,
+		},
+		// --- Genuinely single-row match, no hint supplied: never flagged
+		// ambiguous (regression guard).
+		{
+			name: "single row is never ambiguous when no hint is supplied",
+			prices: []models.NormalizedPrice{
+				{Service: "AmazonDynamoDB", PricePerUnit: 0.25, SKUID: "SKU-ONLY"},
+			},
+			wantAmbiguous:   false,
+			wantHintStatus:  HintStatusNoHint,
+			wantChosenCount: 1,
+			wantChosenSKUID: "SKU-ONLY",
+		},
+		// --- Single-row match, hint supplied and it actually matches the
+		// row: resolved_by_hint, not just "no_hint_supplied" — the hint did
+		// real (if trivial) confirming work and callers should be able to
+		// see that.
+		{
+			name: "single row matching a supplied hint resolves by hint",
+			prices: []models.NormalizedPrice{
+				{
+					Service: "AWSELB", ProductFamily: "Load Balancer-Application", PricePerUnit: 0.0080,
+					Attributes: map[string]string{"operation": "LoadBalancing:Application"},
+					SKUID:      "SKU-ALB",
+				},
+			},
+			operationHint:     "LoadBalancing:Application",
+			wantAmbiguous:     false,
+			wantHintStatus:    HintStatusResolved,
+			wantChosenCount:   1,
+			wantChosenSKUID:   "SKU-ALB",
+			checkChosenPrice:  true,
+			wantChosenPriceIs: 0.0080,
+		},
+		// --- Single-row match, hint supplied but it CONTRADICTS the sole
+		// row (e.g. the suffix happens to be unique in this region's
+		// catalog, but the caller's operation/product_family hint names a
+		// different product than the one row actually present). This is the
+		// RC2 correctness/security review finding: resolveSKUCandidates must
+		// not silently return that one row as a confident match just because
+		// there was "nothing to disambiguate" among rows — the hint itself
+		// must still be honored and fail closed, exactly like the
+		// zero-hint-match case for a genuinely multi-row suffix. Silently
+		// ignoring a contradicting hint here would let the wrong product's
+		// price feed the headline result with no flag at all.
+		{
+			name: "single row contradicting a supplied hint fails closed, not silently accepted",
+			prices: []models.NormalizedPrice{
+				{
+					Service: "AWSELB", ProductFamily: "Load Balancer-Gateway", PricePerUnit: 0.0040,
+					Attributes: map[string]string{"operation": "LoadBalancing:Gateway"},
+					SKUID:      "SKU-GWLB",
+				},
+			},
+			operationHint:  "LoadBalancing:Application",
+			wantAmbiguous:  true,
+			wantHintStatus: HintStatusNoMatch,
+			// The fail-closed path returns the original, unfiltered prices
+			// slice (here just the one rejected Gateway-LB row) so a caller
+			// still sees it via alternate_matches — but wantAmbiguous=true is
+			// the load-bearing signal here, not this SKUID: the row is
+			// present-but-rejected, not a confirmed match.
+			wantChosenCount: 1,
+			wantChosenSKUID: "SKU-GWLB",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			chosen, ambiguous, hintStatus := resolveSKUCandidates(tc.prices, tc.operationHint, tc.productFamilyHint)
+			if ambiguous != tc.wantAmbiguous {
+				t.Errorf("ambiguous = %v, want %v", ambiguous, tc.wantAmbiguous)
+			}
+			if hintStatus != tc.wantHintStatus {
+				t.Errorf("hintStatus = %q, want %q", hintStatus, tc.wantHintStatus)
+			}
+			if len(chosen) != tc.wantChosenCount {
+				t.Fatalf("len(chosen) = %d, want %d (chosen=%+v)", len(chosen), tc.wantChosenCount, chosen)
+			}
+			if tc.wantChosenCount == 1 {
+				if chosen[0].SKUID != tc.wantChosenSKUID {
+					t.Errorf("chosen[0].SKUID = %q, want %q", chosen[0].SKUID, tc.wantChosenSKUID)
+				}
+				if tc.checkChosenPrice && chosen[0].PricePerUnit != tc.wantChosenPriceIs {
+					t.Errorf("chosen[0].PricePerUnit = %v, want %v", chosen[0].PricePerUnit, tc.wantChosenPriceIs)
+				}
+			}
+		})
+	}
+}
+
+// TestLookupSKUInRegion_HintResolvesELBAmbiguity is an end-to-end (HTTP-mocked)
+// wiring check that operationHint/productFamilyHint actually reach
+// resolveSKUCandidates through LookupSKUAcrossRegions/lookupSKUInRegion — the
+// table-driven test above exercises resolveSKUCandidates directly and does
+// not prove the hint parameters are threaded through the full call chain.
+func TestLookupSKUInRegion_HintResolvesELBAmbiguity(t *testing.T) {
+	resetSKUCatalogCache(t)
+	specs := make([]multiProductSpec, 0, 3)
+	for _, c := range []struct {
+		sku, op, family, price string
+	}{
+		{"SKU-ALB", "LoadBalancing:Application", "Load Balancer-Application", "0.0080000000"},
+		{"SKU-NLB", "LoadBalancing:Network", "Load Balancer-Network", "0.0060000000"},
+		{"SKU-GWLB", "LoadBalancing:Gateway", "Load Balancer-Gateway", "0.0040000000"},
+	} {
+		specs = append(specs, multiProductSpec{
+			sku: c.sku, usageType: "LCUUsage", location: "US East (N. Virginia)", priceUSD: c.price,
+			extraAttrs: map[string]string{"operation": c.op},
+		})
+	}
+	body := skuBulkJSONMultiWithProductFamily(specs, map[string]string{
+		"SKU-ALB": "Load Balancer-Application", "SKU-NLB": "Load Balancer-Network", "SKU-GWLB": "Load Balancer-Gateway",
+	})
+	server := newBulkTestServer(t, []byte(body), map[string]string{"Content-Type": "application/json"}, http.StatusOK)
+	defer server.Close()
+	overrideBulkBaseURL(t, server.URL)
+
+	p := &Provider{}
+
+	t.Run("no hint stays ambiguous", func(t *testing.T) {
+		result, err := p.LookupSKUAcrossRegions(context.Background(), "aws", "LCUUsage", "AWSELB", []string{"us-east-1"}, "", "")
+		if err != nil {
+			t.Fatalf("LookupSKUAcrossRegions returned error: %v", err)
+		}
+		rr := result.Regions[0]
+		if !rr.Ambiguous || len(rr.Prices) != 3 || rr.HintStatus != HintStatusNoHint {
+			t.Fatalf("expected ambiguous=true, 3 prices, hint_status=no_hint_supplied, got %+v", rr)
+		}
+	})
+
+	t.Run("operation hint resolves to Application LB", func(t *testing.T) {
+		result, err := p.LookupSKUAcrossRegions(
+			context.Background(), "aws", "LCUUsage", "AWSELB", []string{"us-east-1"},
+			"LoadBalancing:Application", "",
+		)
+		if err != nil {
+			t.Fatalf("LookupSKUAcrossRegions returned error: %v", err)
+		}
+		rr := result.Regions[0]
+		if rr.Ambiguous {
+			t.Fatalf("expected ambiguous=false once resolved by hint, got %+v", rr)
+		}
+		if rr.HintStatus != HintStatusResolved {
+			t.Errorf("hint_status = %q, want %q", rr.HintStatus, HintStatusResolved)
+		}
+		if len(rr.Prices) != 1 || rr.Prices[0].PricePerUnit != 0.008 {
+			t.Fatalf("expected the single Application LB price (0.008), got %+v", rr.Prices)
+		}
+	})
+
+	t.Run("hint matching zero rows fails closed", func(t *testing.T) {
+		result, err := p.LookupSKUAcrossRegions(
+			context.Background(), "aws", "LCUUsage", "AWSELB", []string{"us-east-1"},
+			"LoadBalancing:ClassicDoesNotExist", "",
+		)
+		if err != nil {
+			t.Fatalf("LookupSKUAcrossRegions returned error: %v", err)
+		}
+		rr := result.Regions[0]
+		if !rr.Ambiguous || rr.HintStatus != HintStatusNoMatch || len(rr.Prices) != 3 {
+			t.Fatalf("expected fail-closed ambiguous result with all 3 candidates preserved, got %+v", rr)
+		}
+	})
+}
+
+// skuBulkJSONMultiWithProductFamily is like skuBulkJSONMulti but lets each
+// SKU carry its own top-level productFamily (skuBulkJSONMulti hard-codes
+// "Compute Instance" for every row), needed to exercise the product_family
+// hint path against realistic ELB-shaped rows.
+func skuBulkJSONMultiWithProductFamily(specs []multiProductSpec, productFamilyBySKU map[string]string) string {
+	products := make(map[string]any, len(specs))
+	onDemand := make(map[string]any, len(specs))
+	for _, s := range specs {
+		attrs := map[string]string{
+			"usagetype": s.usageType,
+			"location":  s.location,
+		}
+		for k, v := range s.extraAttrs {
+			attrs[k] = v
+		}
+		family := productFamilyBySKU[s.sku]
+		if family == "" {
+			family = "Compute Instance"
+		}
+		products[s.sku] = map[string]any{
+			"sku":           s.sku,
+			"productFamily": family,
+			"attributes":    attrs,
+		}
+		termCode := s.sku + ".JRTCKXETXF"
+		rateCode := termCode + ".6YS6EN2CT7"
+		onDemand[s.sku] = map[string]any{
+			termCode: map[string]any{
+				"offerTermCode": "JRTCKXETXF",
+				"priceDimensions": map[string]any{
+					rateCode: map[string]any{
+						"unit":         "Hrs",
+						"pricePerUnit": map[string]string{"USD": s.priceUSD},
+					},
+				},
+			},
+		}
+	}
+	doc := map[string]any{
+		"products": products,
+		"terms": map[string]any{
+			"OnDemand": onDemand,
+			"Reserved": map[string]any{},
+		},
+	}
+	b, err := json.Marshal(doc)
+	if err != nil {
+		panic(err) // test-only helper; a marshal failure here is a test bug
+	}
+	return string(b)
 }
 
 // --------------------------------------------------------------------------
@@ -772,7 +1248,7 @@ func TestLookupSKUAcrossRegions_CaseInsensitiveHintUsesCanonicalCasing(t *testin
 	overrideBulkBaseURL(t, server.URL)
 
 	p := &Provider{}
-	result, err := p.LookupSKUAcrossRegions(context.Background(), "aws", "BoxUsage:r6id.24xlarge", "amazonec2", []string{"us-east-1"})
+	result, err := p.LookupSKUAcrossRegions(context.Background(), "aws", "BoxUsage:r6id.24xlarge", "amazonec2", []string{"us-east-1"}, "", "")
 	if err != nil {
 		t.Fatalf("LookupSKUAcrossRegions returned error: %v", err)
 	}
@@ -804,7 +1280,7 @@ func TestLookupSKUAcrossRegions_SKUTooLongRejected(t *testing.T) {
 
 	longSKU := strings.Repeat("A", maxSKULength+1)
 	p := &Provider{}
-	_, err := p.LookupSKUAcrossRegions(context.Background(), "aws", longSKU, "AmazonEC2", []string{"us-east-1"})
+	_, err := p.LookupSKUAcrossRegions(context.Background(), "aws", longSKU, "AmazonEC2", []string{"us-east-1"}, "", "")
 	if err == nil {
 		t.Fatal("expected an error for an over-length sku, got nil")
 	}
@@ -815,6 +1291,47 @@ func TestLookupSKUAcrossRegions_SKUTooLongRejected(t *testing.T) {
 	if skuErr.Code != SKUErrSKUTooLong {
 		t.Errorf("expected code %q, got %q", SKUErrSKUTooLong, skuErr.Code)
 	}
+}
+
+// TestLookupSKUAcrossRegions_HintTooLongRejected verifies oversized
+// operation/product_family hints are rejected before any network call, for
+// input-validation parity with sku/service (RC2 security review finding: the
+// hints were previously unbounded while sku/service both had shape/length
+// checks).
+func TestLookupSKUAcrossRegions_HintTooLongRejected(t *testing.T) {
+	resetSKUCatalogCache(t)
+	overrideBulkBaseURL(t, "http://127.0.0.1:1/unreachable")
+
+	longHint := strings.Repeat("A", maxHintLength+1)
+	p := &Provider{}
+
+	t.Run("operation", func(t *testing.T) {
+		_, err := p.LookupSKUAcrossRegions(context.Background(), "aws", "LCUUsage", "AWSELB", []string{"us-east-1"}, longHint, "")
+		if err == nil {
+			t.Fatal("expected an error for an over-length operation hint, got nil")
+		}
+		skuErr, ok := err.(*SKULookupError)
+		if !ok {
+			t.Fatalf("expected *SKULookupError, got %T: %v", err, err)
+		}
+		if skuErr.Code != SKUErrHintTooLong {
+			t.Errorf("expected code %q, got %q", SKUErrHintTooLong, skuErr.Code)
+		}
+	})
+
+	t.Run("product_family", func(t *testing.T) {
+		_, err := p.LookupSKUAcrossRegions(context.Background(), "aws", "LCUUsage", "AWSELB", []string{"us-east-1"}, "", longHint)
+		if err == nil {
+			t.Fatal("expected an error for an over-length product_family hint, got nil")
+		}
+		skuErr, ok := err.(*SKULookupError)
+		if !ok {
+			t.Fatalf("expected *SKULookupError, got %T: %v", err, err)
+		}
+		if skuErr.Code != SKUErrHintTooLong {
+			t.Errorf("expected code %q, got %q", SKUErrHintTooLong, skuErr.Code)
+		}
+	})
 }
 
 // TestIsValidAWSRegionCodeShape_RealCodesAccepted is a regression test for

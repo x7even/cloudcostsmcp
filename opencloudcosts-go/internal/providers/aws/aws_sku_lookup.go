@@ -215,6 +215,7 @@ const (
 	SKUErrTooManyRegions        = "too_many_regions"
 	SKUErrInvalidService        = "invalid_service"
 	SKUErrServiceUndeterminable = "service_undeterminable"
+	SKUErrHintTooLong           = "hint_too_long"
 )
 
 // maxSKULength bounds the raw sku string. Real AWS usage-type strings are at
@@ -224,6 +225,17 @@ const (
 // messages, and (via stripUsageTypePrefix) regex matching, not to constrain
 // any real usage-type shape.
 const maxSKULength = 1024
+
+// maxHintLength bounds operationHint/productFamilyHint. Real AWS "operation"
+// and "productFamily" attribute values are short (well under 100 characters
+// for every value observed in the offer files this tool reads). Unlike sku,
+// these hints are never interpolated into a URL path or echoed into a log
+// line/error message — they are only ever compared via strings.EqualFold
+// against catalog attribute values (see resolveSKUCandidates) — so this cap
+// exists purely for input-validation parity with sku/service rather than to
+// close any injection vector, and is generous for the same reason maxSKULength
+// is.
+const maxHintLength = 256
 
 // SKULookupError is returned for request-level failures that apply to the
 // whole lookup (bad input, unsupported provider) as opposed to a single
@@ -490,6 +502,19 @@ type SKULookupRegionResult struct {
 	// Description / SKUID rather than trusting a single "the" price.
 	Ambiguous bool `json:"ambiguous,omitempty"`
 
+	// HintStatus explains *why* Ambiguous is what it is, one of the
+	// HintStatus* constants: "resolved_by_hint" (an operation/product_family
+	// hint narrowed Prices to exactly one row — Ambiguous is false),
+	// "hint_no_match" (a hint was supplied but matched none of the
+	// candidates — fails closed, Prices holds the original unfiltered set,
+	// Ambiguous is true), "hint_ambiguous" (a hint was supplied and matched
+	// more than one candidate even after canonical-default narrowing —
+	// Ambiguous is true), or "no_hint_supplied" (no hint was given; ordinary
+	// canonicalDefaultAttrs narrowing applied, which may or may not have
+	// resolved to one row). Only meaningful when len(Prices) > 1 originally
+	// applied (i.e. there was something to disambiguate at all).
+	HintStatus string `json:"hint_status,omitempty"`
+
 	NoMapping bool `json:"no_mapping,omitempty"`
 
 	Error string `json:"error,omitempty"`
@@ -553,12 +578,22 @@ type SKULookupResult struct {
 // serviceHint is empty and no inference is possible, this returns a
 // SKULookupError with Code == SKUErrServiceUndeterminable rather than
 // guessing.
+//
+// operationHint and productFamilyHint, if non-empty, disambiguate a usage-
+// type suffix that matches more than one distinct billable product (e.g.
+// ELB's LCUUsage suffix spans Application/Network/Gateway load balancer
+// pricing; RDS's InstanceUsage:<type> suffix spans every database engine on
+// that instance type). They correspond to the AWS product "operation"
+// attribute and top-level productFamily respectively — see
+// resolveSKUCandidates for exactly how they're applied.
 func (p *Provider) LookupSKUAcrossRegions(
 	ctx context.Context,
 	providerName string,
 	sku string,
 	serviceHint string,
 	regions []string,
+	operationHint string,
+	productFamilyHint string,
 ) (*SKULookupResult, error) {
 	if !strings.EqualFold(providerName, "aws") {
 		return nil, &SKULookupError{
@@ -603,6 +638,24 @@ func (p *Provider) LookupSKUAcrossRegions(
 		return nil, &SKULookupError{
 			Code:    SKUErrInvalidService,
 			Message: fmt.Sprintf("service %q is not shaped like a valid AWS servicecode", serviceHint),
+		}
+	}
+	if len(operationHint) > maxHintLength {
+		return nil, &SKULookupError{
+			Code: SKUErrHintTooLong,
+			Message: fmt.Sprintf(
+				"operation must be at most %d characters (got %d) — real AWS \"operation\" attribute "+
+					"values are far shorter", maxHintLength, len(operationHint),
+			),
+		}
+	}
+	if len(productFamilyHint) > maxHintLength {
+		return nil, &SKULookupError{
+			Code: SKUErrHintTooLong,
+			Message: fmt.Sprintf(
+				"product_family must be at most %d characters (got %d) — real AWS productFamily "+
+					"values are far shorter", maxHintLength, len(productFamilyHint),
+			),
 		}
 	}
 
@@ -670,7 +723,7 @@ func (p *Provider) LookupSKUAcrossRegions(
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			regionResults[idx] = p.lookupSKUInRegion(ctx, rgn, suffix, candidates, serviceHint)
+			regionResults[idx] = p.lookupSKUInRegion(ctx, rgn, suffix, candidates, serviceHint, operationHint, productFamilyHint)
 		}(i, region)
 	}
 	wg.Wait()
@@ -717,26 +770,118 @@ var canonicalDefaultAttrs = map[string]string{
 	"capacitystatus":  "Used",
 }
 
+// Hint-resolution status codes, surfaced on SKULookupRegionResult.HintStatus
+// so a caller can tell *why* a region is still ambiguous rather than just
+// seeing "ambiguous: true" again. See resolveSKUCandidates.
+const (
+	// HintStatusNoHint means neither operationHint nor productFamilyHint was
+	// supplied — resolution fell back to the existing canonicalDefaultAttrs
+	// narrowing (or, if that also failed to narrow, plain ambiguity).
+	HintStatusNoHint = "no_hint_supplied"
+	// HintStatusResolved means a supplied hint narrowed the candidates to
+	// exactly one row.
+	HintStatusResolved = "resolved_by_hint"
+	// HintStatusNoMatch means a hint was supplied but matched zero candidate
+	// rows — resolution fails closed: the original unfiltered candidate set
+	// is returned, still ambiguous, rather than silently ignoring the hint.
+	HintStatusNoMatch = "hint_no_match"
+	// HintStatusAmbiguous means a hint was supplied and matched more than one
+	// row (canonical-default narrowing was then tried on that hint-filtered
+	// subset and still could not get to exactly one).
+	HintStatusAmbiguous = "hint_ambiguous"
+)
+
 // resolveSKUCandidates narrows prices (all rows sharing one stripped
-// usage-type suffix) down to the canonical-default match when one uniquely
-// applies. If prices has at most one row to begin with, it is returned
-// as-is (not ambiguous). Otherwise, rows are filtered by
-// canonicalDefaultAttrs (a row's Attributes value must equal the canonical
-// default for every key canonicalDefaultAttrs and that row both have — a row
-// missing a given key is not excluded by it, since absence of an attribute
-// is not a mismatch, just a service that doesn't carry that dimension). If
-// that narrowing leaves exactly one row, it is returned as the sole,
-// non-ambiguous match. If it leaves zero rows (no row matches every
-// canonical default the candidates collectively carry) or more than one
-// row (the suffix genuinely does not disambiguate them, e.g. RDS engine
-// variants), the *original, unfiltered* candidate set is returned with
-// ambiguous=true, so the caller sees every real candidate rather than an
-// arbitrarily-narrowed subset it can't make sense of.
-func resolveSKUCandidates(prices []models.NormalizedPrice) (chosen []models.NormalizedPrice, ambiguous bool) {
-	if len(prices) <= 1 {
-		return prices, false
+// usage-type suffix) down to a single match, using an optional caller-
+// supplied disambiguating hint before falling back to the existing
+// canonicalDefaultAttrs narrowing.
+//
+// If prices has at most one row to begin with AND no hint was supplied, it
+// is returned as-is (not ambiguous, hint status "no_hint_supplied" — hints
+// are irrelevant when there is nothing to disambiguate). Critically, this
+// short-circuit does NOT apply when a hint IS supplied: a single-row match
+// still goes through the hint-filtering block below, so a hint that
+// contradicts the sole candidate row fails closed (HintStatusNoMatch,
+// ambiguous=true) instead of silently returning that row as if it were a
+// confident match. Without this, a caller-supplied hint naming a different
+// product than the one row actually present would be ignored entirely,
+// reintroducing a silent-wrong-price failure mode for the single-row case.
+//
+// When operationHint and/or productFamilyHint are non-empty, prices is first
+// filtered to rows where (operationHint == "" || matches
+// Attributes["operation"] case-insensitively) AND (productFamilyHint == ""
+// || matches ProductFamily case-insensitively):
+//   - Exactly one match: resolved by hint — returned immediately as the sole,
+//     non-ambiguous match. Canonical-default narrowing is not applied to it.
+//   - Zero matches: fails closed. A supplied-but-nonmatching hint must never
+//     be silently ignored, so the *original, unfiltered* prices are returned
+//     with ambiguous=true and hint status "hint_no_match".
+//   - More than one match: canonicalDefaultAttrs narrowing is applied to
+//     that hint-filtered subset (not the original full set). If that narrows
+//     to exactly one row, it is returned as the sole match. Otherwise the
+//     hint-filtered subset (still a real improvement over the full set) is
+//     returned with ambiguous=true and hint status "hint_ambiguous".
+//
+// With no hints supplied, behavior is unchanged from before hints existed:
+// rows are filtered by canonicalDefaultAttrs (a row's Attributes value must
+// equal the canonical default for every key canonicalDefaultAttrs and that
+// row both have — a row missing a given key is not excluded by it, since
+// absence of an attribute is not a mismatch, just a service that doesn't
+// carry that dimension). If that narrowing leaves exactly one row, it is
+// returned as the sole, non-ambiguous match. Otherwise the *original,
+// unfiltered* candidate set is returned with ambiguous=true, so the caller
+// sees every real candidate rather than an arbitrarily-narrowed subset it
+// can't make sense of.
+func resolveSKUCandidates(
+	prices []models.NormalizedPrice,
+	operationHint, productFamilyHint string,
+) (chosen []models.NormalizedPrice, ambiguous bool, hintStatus string) {
+	hasHint := operationHint != "" || productFamilyHint != ""
+
+	if len(prices) <= 1 && !hasHint {
+		return prices, false, HintStatusNoHint
 	}
 
+	if hasHint {
+		var hintFiltered []models.NormalizedPrice
+		for _, p := range prices {
+			if operationHint != "" && !strings.EqualFold(p.Attributes["operation"], operationHint) {
+				continue
+			}
+			if productFamilyHint != "" && !strings.EqualFold(p.ProductFamily, productFamilyHint) {
+				continue
+			}
+			hintFiltered = append(hintFiltered, p)
+		}
+
+		switch len(hintFiltered) {
+		case 0:
+			// Fail closed: never silently fall through to the unfiltered set
+			// as if the hint had not been supplied.
+			return prices, true, HintStatusNoMatch
+		case 1:
+			return hintFiltered, false, HintStatusResolved
+		default:
+			narrowed := narrowByCanonicalDefaults(hintFiltered)
+			if len(narrowed) == 1 {
+				return narrowed, false, HintStatusResolved
+			}
+			return hintFiltered, true, HintStatusAmbiguous
+		}
+	}
+
+	narrowed := narrowByCanonicalDefaults(prices)
+	if len(narrowed) == 1 {
+		return narrowed, false, HintStatusNoHint
+	}
+	return prices, true, HintStatusNoHint
+}
+
+// narrowByCanonicalDefaults filters prices down to rows matching
+// canonicalDefaultAttrs on every key both the row and the map carry. See
+// canonicalDefaultAttrs' docs for why a missing key on a row is not treated
+// as a mismatch.
+func narrowByCanonicalDefaults(prices []models.NormalizedPrice) []models.NormalizedPrice {
 	var narrowed []models.NormalizedPrice
 	for _, p := range prices {
 		matchesAll := true
@@ -750,23 +895,23 @@ func resolveSKUCandidates(prices []models.NormalizedPrice) (chosen []models.Norm
 			narrowed = append(narrowed, p)
 		}
 	}
-
-	if len(narrowed) == 1 {
-		return narrowed, false
-	}
-	return prices, true
+	return narrowed
 }
 
 // lookupSKUInRegion searches candidates (in order) for a product row whose
 // usage-type suffix equals suffix, in a single region. See
 // SKULookupRegionResult's docs for how Prices / NoMapping / Error are
-// distinguished.
+// distinguished. operationHint/productFamilyHint are passed through to
+// resolveSKUCandidates to disambiguate multi-row matches — see that
+// function's docs.
 func (p *Provider) lookupSKUInRegion(
 	ctx context.Context,
 	region string,
 	suffix string,
 	candidates []string,
 	explicitHint string,
+	operationHint string,
+	productFamilyHint string,
 ) SKULookupRegionResult {
 	rr := SKULookupRegionResult{Region: region, AttemptedServices: candidates}
 
@@ -784,6 +929,19 @@ func (p *Provider) lookupSKUInRegion(
 
 	var lastErr error
 	anyFetchSucceeded := false
+	// hintNoMatchFallback remembers the first candidate service whose catalog
+	// contained the suffix but whose rows all failed a supplied hint
+	// (HintStatusNoMatch). A hint should be given every candidate service's
+	// catalog a chance to resolve it — not just whichever candidate happens
+	// to be tried first — before this region is reported hint_no_match: e.g.
+	// an explicit service= hint that disagrees with the heuristically
+	// inferred service (candidates = [serviceHint, inferredService]) may
+	// happen to also carry the suffix, but for an unrelated product that the
+	// operation/product_family hint correctly rejects — the *inferred*
+	// service's catalog is where the real match lives. If no later candidate
+	// does better, this fallback is what gets returned, so behavior for a
+	// single-candidate call (the overwhelmingly common case) is unchanged.
+	var hintNoMatchFallback *SKULookupRegionResult
 	for _, svc := range candidates {
 		bySuffix, err := p.getOrFetchSKUCatalog(ctx, svc, region)
 		if err != nil {
@@ -792,14 +950,31 @@ func (p *Provider) lookupSKUInRegion(
 		}
 		anyFetchSucceeded = true
 
-		if prices, ok := bySuffix[suffix]; ok && len(prices) > 0 {
-			rr.ServiceUsed = svc
-			rr.Prices, rr.Ambiguous = resolveSKUCandidates(prices)
-			if explicitHint != "" && !strings.EqualFold(svc, explicitHint) {
-				rr.ServiceMismatch = true
-			}
-			return rr
+		prices, ok := bySuffix[suffix]
+		if !ok || len(prices) == 0 {
+			continue
 		}
+
+		candidateResult := rr
+		candidateResult.ServiceUsed = svc
+		candidateResult.Prices, candidateResult.Ambiguous, candidateResult.HintStatus =
+			resolveSKUCandidates(prices, operationHint, productFamilyHint)
+		if explicitHint != "" && !strings.EqualFold(svc, explicitHint) {
+			candidateResult.ServiceMismatch = true
+		}
+
+		if candidateResult.HintStatus == HintStatusNoMatch {
+			if hintNoMatchFallback == nil {
+				hintNoMatchFallback = &candidateResult
+			}
+			continue
+		}
+
+		return candidateResult
+	}
+
+	if hintNoMatchFallback != nil {
+		return *hintNoMatchFallback
 	}
 
 	if !anyFetchSucceeded && lastErr != nil {
