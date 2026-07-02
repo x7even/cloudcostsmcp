@@ -115,6 +115,61 @@ Compare a spec across multiple regions concurrently. Returns sorted cheapest fir
 
 ---
 
+### `get_price_by_sku`
+
+Resolve a raw AWS usage-type/SKU string — exactly as it appears in a Cost & Usage Report (CUR) export,
+e.g. `"CAN1-BoxUsage:r5a.8xlarge"` — to a price, across one or more regions. **AWS only.**
+
+Use this instead of `get_price`/`compare_prices` when starting from a raw billing export line item
+(a CUR `UsageType`/`SKU` value) rather than a known `resource_type`/domain spec. The region-prefix
+token (e.g. `"CAN1-"`, `"EU-"`, or no prefix at all for `us-east-1`) is stripped from the usage-type
+string to get a region-independent suffix, which is then matched against each target region's
+pricing catalog.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `provider` | string | | `"aws"` (default and only supported value) |
+| `sku` | string | ✓ | Raw usage-type/SKU string, e.g. `"CAN1-BoxUsage:r5a.8xlarge"` |
+| `service` | string | | AWS servicecode hint, e.g. `"AmazonEC2"`, `"AWSELB"`, `"AmazonRDS"`, `"AmazonDynamoDB"`, `"AmazonElastiCache"`, `"AWSDataTransfer"`. Inferred from the usage-type pattern if omitted. |
+| `regions` | list[string] | ✓ | AWS region codes to check, e.g. `["ca-central-1", "us-east-1"]`. Max 30. |
+| `baseline_region` | string | | Region for delta comparison, e.g. `"us-east-1"` |
+
+**Service inference and mismatch fallback.** If `service` is omitted, the AWS servicecode is inferred
+from the usage-type pattern (e.g. `BoxUsage:` → `AmazonEC2`, `LCUUsage` → `AWSELB`), and
+`service_source` in the response is set to `"inferred"` (vs. `"explicit"` when `service` was
+supplied). Real CUR exports aren't always internally consistent — e.g. `AWSDataTransfer` usage types
+sometimes appear against an `"AWS Product"` column of `"AmazonEC2"`. If an explicit `service` hint
+finds no match in a region but the inferred servicecode does, the tool falls back to the inferred
+match rather than reporting no result, and flags `service_mismatch: true` on that region's entry.
+
+**No-match vs. fetch-failure.** Regions where the catalog was fetched successfully but no row matches
+the resolved suffix are listed in `no_mapping_in` (checked, not modeled). Regions where the catalog
+fetch itself failed are listed separately in `errors_in`. This distinction lets callers tell
+"priced but not available here" apart from "we couldn't check."
+
+**Ambiguous multi-row matches.** A usage-type suffix does not always map to a single priced product
+row — e.g. an EC2 `BoxUsage:<instanceType>` suffix matches one row per
+operatingSystem/tenancy/preInstalledSw/capacitystatus combination (Linux, Windows, RHEL, Shared vs.
+Dedicated tenancy, etc.), all sharing the identical usage-type string. The tool first narrows these
+to the same canonical-default attributes (`operatingSystem=Linux`, `tenancy=Shared`,
+`preInstalledSw=NA`, `capacitystatus=Used`) the rest of this server uses; if that narrowing resolves
+to exactly one row, the match is returned normally. If it doesn't (the suffix genuinely doesn't
+disambiguate the rows — RDS `databaseEngine` variants are a common case, since no usage-type string
+encodes the engine), the region's entry is flagged `ambiguous: true`, `price_per_unit` is only the
+cheapest of the candidates (not a confirmed match), and every candidate row is listed in
+`alternate_matches` (with `alternate_match_count`) so the caller can pick the correct row via its
+`description`/`attributes`/`sku_id`. A top-level warning is also added whenever any region hit this
+case.
+
+**Known limitation — compound/wavelength data-transfer SKUs.** Some `AWSDataTransfer` usage types
+carry *two* region-shaped tokens, e.g. `"USE1WL1ATL1-CAN1-AWS-Out-Bytes"` (inter-region or AWS
+Wavelength transfer). This tool's single-prefix-strip matching model does not fully resolve these —
+it still attempts a match and infers `AWSDataTransfer`, but adds a warning to the response noting the
+result may be inaccurate and should be verified manually, rather than silently returning a wrong or
+empty match.
+
+---
+
 ### `search_pricing`
 
 Free-text search across the pricing catalog. Useful when you don't know the exact SKU or service name.

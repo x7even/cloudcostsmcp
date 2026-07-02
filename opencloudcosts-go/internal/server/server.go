@@ -1,5 +1,5 @@
 // Package server wires the modelcontextprotocol/go-sdk MCP server, registers
-// all 16 tools, and exposes RunStdio / RunHTTP transports.
+// all 17 tools, and exposes RunStdio / RunHTTP transports.
 //
 // Tool InputSchemas are taken verbatim from schemas/tools-snapshot.json (the
 // Phase 0 Python snapshot) rather than being auto-generated from Go struct
@@ -159,7 +159,7 @@ func (s *AppServer) callTool(
 	return result, extra, err
 }
 
-// buildMCPServer constructs the mcp.Server with all 16 tools registered.
+// buildMCPServer constructs the mcp.Server with all 17 tools registered.
 func (s *AppServer) buildMCPServer() *mcp.Server {
 	mcpSrv := mcp.NewServer(&mcp.Implementation{
 		Name:    "OpenCloudCosts MCP",
@@ -336,6 +336,27 @@ const (
 		},
 		"required": ["spec", "regions"],
 		"title": "compare_pricesArguments",
+		"type": "object"
+	}`
+
+	schemaGetPriceBySKU = `{
+		"properties": {
+			"provider": {"default": "aws", "title": "Provider", "type": "string"},
+			"sku": {"title": "Sku", "type": "string"},
+			"service": {"default": "", "title": "Service", "type": "string"},
+			"regions": {
+				"items": {"type": "string"},
+				"title": "Regions",
+				"type": "array"
+			},
+			"baseline_region": {
+				"default": "",
+				"title": "Baseline Region",
+				"type": "string"
+			}
+		},
+		"required": ["sku", "regions"],
+		"title": "get_price_by_skuArguments",
 		"type": "object"
 	}`
 
@@ -582,6 +603,8 @@ const (
 
 	descComparePrices = "\n        Compare pricing for any service across multiple regions.\n\n        Fetches concurrently. Returns results sorted cheapest first, with % delta between\n        cheapest and most expensive. Optionally shows delta vs a baseline region.\n\n        Args:\n            spec: PricingSpec dict (same as get_price). The region field is overridden\n                  per comparison — you can pass any region in the spec.\n            regions: List of region codes to compare, e.g. [\"us-east-1\", \"eu-west-1\", \"ap-northeast-1\"]\n            baseline_region: Optional region for delta comparison, e.g. \"us-east-1\".\n        "
 
+	descGetPriceBySKU = "\n        Resolve a raw AWS usage-type/SKU string — exactly as it appears in a Cost & Usage Report\n        (CUR) export, e.g. \"CAN1-BoxUsage:r5a.8xlarge\" — to a price, across one or more regions.\n\n        Use this instead of get_price/compare_prices when you have a raw billing export line item\n        (a \"UsageType\" or \"SKU\" column value) and need to reconcile it against current public\n        pricing, rather than starting from a known resource_type/domain spec. This tool strips the\n        region-prefix token from the usage-type string (e.g. \"CAN1-\", \"EU-\", or no prefix at all\n        for us-east-1) to get a region-independent suffix, then matches that suffix against each\n        target region's pricing catalog.\n\n        If service is omitted, the AWS servicecode is inferred from the usage-type pattern (e.g.\n        \"BoxUsage:\" implies AmazonEC2, \"LCUUsage\" implies AWSELB) — service_source in the response\n        indicates \"explicit\" or \"inferred\". If a supplied service hint finds no match but the\n        inferred servicecode does (real CUR data isn't always internally consistent — e.g. data-\n        transfer usage types sometimes appear against an \"AmazonEC2\" AWS Product column but are\n        actually billed under AWSDataTransfer), the tool falls back to the inferred match and flags\n        service_mismatch on that region's result rather than reporting no match.\n\n        Regions with no catalog entry for the resolved suffix are reported in no_mapping_in\n        (checked, not found) — this is distinct from errors_in (the catalog fetch itself failed).\n        Known limitation: compound inter-region/wavelength data-transfer SKUs with two region-\n        shaped tokens (e.g. \"USE1WL1ATL1-CAN1-AWS-Out-Bytes\") are not fully resolved by the\n        single-prefix-strip model; these produce a warning rather than a silently wrong match.\n\n        Args:\n            provider: Cloud provider — only \"aws\" is supported (raw usage-type SKUs are an AWS\n                      CUR concept with no GCP/Azure equivalent).\n            sku: The raw usage-type/SKU string exactly as it appears in the CUR export.\n            service: Optional AWS servicecode hint (e.g. \"AmazonEC2\", \"AWSELB\", \"AmazonRDS\",\n                     \"AmazonDynamoDB\", \"AmazonElastiCache\", \"AWSDataTransfer\"). If omitted, it is\n                     inferred from the usage-type pattern.\n            regions: List of AWS region codes to check, e.g. [\"us-east-1\", \"eu-west-1\"]. Required,\n                     max 30.\n            baseline_region: Optional region for delta comparison, e.g. \"us-east-1\".\n\n        Examples:\n            {\"sku\": \"CAN1-BoxUsage:r5a.8xlarge\", \"regions\": [\"ca-central-1\", \"us-east-1\"]}\n            {\"sku\": \"CAN1-AWS-Out-Bytes\", \"service\": \"AmazonEC2\", \"regions\": [\"ca-central-1\"]}\n        "
+
 	descSearchPricing = "Deprecated helper that redirects to the correct tools. Use describe_catalog to browse available services by domain/provider, or get_price with a known spec."
 
 	descGetDiscountSummary = "\n        Return a summary of all active cloud discounts for the authenticated account.\n\n        For AWS: active Savings Plans (type, commitment $/hr, utilization %) and\n        active Reserved Instances (instance type, count, payment type, days remaining),\n        plus Cost Explorer utilization for the previous month.\n\n        Requires credentials and OCC_AWS_ENABLE_COST_EXPLORER=true for AWS.\n\n        Args:\n            provider: Cloud provider — \"aws\" (GCP CUD support coming later)\n        "
@@ -633,7 +656,7 @@ Example:
     providers:["aws","gcp"], workload:{"p_a":{"type":"storage","storage_gb":10000,"storage_type":"gp3","iops":3000},"p_c":{"type":"storage","storage_gb":500,"storage_type":"io2","iops":64000}}`
 )
 
-// ---- registerTools registers all 16 MCP tools on the server ----
+// ---- registerTools registers all 17 MCP tools on the server ----
 //
 // Each handler is a typed ToolHandlerFor[In, any] closure that:
 //   1. Calls s.callTool() to apply timeout, logging, and panic recovery.
@@ -671,6 +694,16 @@ func (s *AppServer) registerTools(srv *mcp.Server) {
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in tools.ComparePricesInput) (*mcp.CallToolResult, any, error) {
 		return s.callTool(ctx, "compare_prices", func(ctx context.Context) (*mcp.CallToolResult, any, error) {
 			return h.HandleComparePrices(ctx, req, in)
+		})
+	})
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "get_price_by_sku",
+		Description: descGetPriceBySKU,
+		InputSchema: rawSchema(schemaGetPriceBySKU),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in tools.GetPriceBySKUInput) (*mcp.CallToolResult, any, error) {
+		return s.callTool(ctx, "get_price_by_sku", func(ctx context.Context) (*mcp.CallToolResult, any, error) {
+			return h.HandleGetPriceBySKU(ctx, req, in)
 		})
 	})
 

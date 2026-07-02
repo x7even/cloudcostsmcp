@@ -38,6 +38,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/models"
 )
@@ -179,7 +180,7 @@ func isValidAWSServiceCode(s string) bool {
 // of the suffix-matching design in this file is to work for AWS regions this
 // codebase has never seen before. A fixed allowlist would defeat that; a
 // shape check does not.
-var awsRegionCodeShapeRe = regexp.MustCompile(`^[a-z]{2}(-gov)?-[a-z]+-[0-9]{1,2}$`)
+var awsRegionCodeShapeRe = regexp.MustCompile(`^[a-z]{2}(-gov)?-[a-z]{2,20}-[0-9]{1,2}$`)
 
 // isValidAWSRegionCodeShape reports whether region is shaped like a real AWS
 // region code. It does not check whether the region actually exists.
@@ -209,11 +210,20 @@ func isChinaPartitionRegion(region string) bool {
 const (
 	SKUErrUnsupportedProvider   = "unsupported_provider"
 	SKUErrSKURequired           = "sku_required"
+	SKUErrSKUTooLong            = "sku_too_long"
 	SKUErrRegionsRequired       = "regions_required"
 	SKUErrTooManyRegions        = "too_many_regions"
 	SKUErrInvalidService        = "invalid_service"
 	SKUErrServiceUndeterminable = "service_undeterminable"
 )
+
+// maxSKULength bounds the raw sku string. Real AWS usage-type strings are at
+// most a couple hundred characters (the longest observed compound-transfer
+// tokens are well under 100); this generous cap exists only to reject
+// pathological/abusive input before it is echoed back into log lines, error
+// messages, and (via stripUsageTypePrefix) regex matching, not to constrain
+// any real usage-type shape.
+const maxSKULength = 1024
 
 // SKULookupError is returned for request-level failures that apply to the
 // whole lookup (bad input, unsupported provider) as opposed to a single
@@ -266,6 +276,25 @@ var skuCatalogCache = struct {
 	entries map[string]*skuCatalogEntry
 }{entries: make(map[string]*skuCatalogEntry)}
 
+// skuCatalogEntryTTL bounds how long a fetched (service, region) catalog is
+// reused before being treated as stale and re-fetched. Without this, a
+// long-running server process would hold every (service, region) catalog it
+// has ever fetched in memory forever, and would never pick up AWS pricing
+// changes for the rest of its lifetime. Falls back to
+// defaultSKUCatalogEntryTTL when the provider has no configured cache TTL
+// (p.cfg == nil, e.g. in unit tests that construct &Provider{} directly).
+const defaultSKUCatalogEntryTTL = 24 * time.Hour
+
+// maxSKUCatalogCacheEntries hard-caps the number of distinct (service,
+// region) entries held at once. Combined with the TTL above, this bounds the
+// cache's worst-case memory footprint instead of letting it grow unbounded
+// for the lifetime of the process (a single reconciliation run against
+// maxSKULookupRegions regions with a service-hint/inferred-service mismatch
+// can populate up to 2*maxSKULookupRegions=60 entries by itself, so the cap
+// must comfortably exceed that for normal usage while still being a real
+// bound). When full, the oldest completed entry is evicted to make room.
+const maxSKUCatalogCacheEntries = 128
+
 // skuCatalogEntry holds the memoized result for one (service, region) pair.
 // sync.Once ensures concurrent lookups for the same pair (e.g. the
 // per-region fan-out below, or two different SKUs sharing a candidate
@@ -274,37 +303,88 @@ type skuCatalogEntry struct {
 	once     sync.Once
 	bySuffix map[string][]models.NormalizedPrice
 	err      error
+
+	// fetchedAt is set to time.Now() (under skuCatalogCache.mu, by the sole
+	// goroutine that runs once.Do's body) once the fetch completes. It stays
+	// the zero Time while a fetch is in flight, which getSKUCatalogEntry and
+	// evictOldestLocked both rely on to never treat/evict an in-flight entry
+	// as stale/evictable.
+	fetchedAt time.Time
 }
 
 // getSKUCatalogEntry returns the (possibly new) cache slot for key, creating
-// it under the map mutex if absent. The actual fetch happens outside this
-// mutex, inside the entry's own sync.Once, so slow fetches for different
-// keys never block each other.
-func getSKUCatalogEntry(key string) *skuCatalogEntry {
+// it under the map mutex if absent or stale. The actual fetch happens
+// outside this mutex, inside the entry's own sync.Once, so slow fetches for
+// different keys never block each other.
+func getSKUCatalogEntry(key string, ttl time.Duration) *skuCatalogEntry {
 	skuCatalogCache.mu.Lock()
 	defer skuCatalogCache.mu.Unlock()
-	e, ok := skuCatalogCache.entries[key]
-	if !ok {
-		e = &skuCatalogEntry{}
-		skuCatalogCache.entries[key] = e
+
+	if e, ok := skuCatalogCache.entries[key]; ok {
+		if e.fetchedAt.IsZero() || time.Since(e.fetchedAt) <= ttl {
+			return e
+		}
+		// Stale: drop it and fall through to create a fresh entry below.
+		delete(skuCatalogCache.entries, key)
 	}
+
+	if len(skuCatalogCache.entries) >= maxSKUCatalogCacheEntries {
+		evictOldestLocked()
+	}
+
+	e := &skuCatalogEntry{}
+	skuCatalogCache.entries[key] = e
 	return e
 }
 
-// getOrFetchSKUCatalog returns the memoized (fetch-once-per-process)
-// suffix->prices index for (service, region), fetching it via fetchSKUCatalog
-// on first use.
+// evictOldestLocked removes the completed entry with the oldest fetchedAt
+// from skuCatalogCache.entries. Entries still in flight (fetchedAt still
+// zero) are never chosen — evicting a slot another goroutine is actively
+// fetching into would just cause that goroutine's result to be silently
+// discarded. Callers must hold skuCatalogCache.mu.
+func evictOldestLocked() {
+	var oldestKey string
+	var oldestAt time.Time
+	for k, e := range skuCatalogCache.entries {
+		if e.fetchedAt.IsZero() {
+			continue
+		}
+		if oldestKey == "" || e.fetchedAt.Before(oldestAt) {
+			oldestKey, oldestAt = k, e.fetchedAt
+		}
+	}
+	if oldestKey != "" {
+		delete(skuCatalogCache.entries, oldestKey)
+	}
+}
+
+// skuCatalogCacheTTL returns p's configured cache TTL, falling back to
+// defaultSKUCatalogEntryTTL when p or p.cfg is nil (unit tests construct
+// &Provider{} directly) or when CacheTTLHours is unset/non-positive.
+func skuCatalogCacheTTL(p *Provider) time.Duration {
+	if p != nil && p.cfg != nil && p.cfg.CacheTTLHours > 0 {
+		return time.Duration(p.cfg.CacheTTLHours) * time.Hour
+	}
+	return defaultSKUCatalogEntryTTL
+}
+
+// getOrFetchSKUCatalog returns the memoized suffix->prices index for
+// (service, region), fetching it via fetchSKUCatalog on first use or once
+// the previous fetch has aged past skuCatalogCacheTTL.
 //
 // A failed fetch is intentionally NOT memoized permanently: sync.Once only
 // runs its function once regardless of outcome, so on error this evicts the
 // entry before returning, letting the next caller for the same key retry
 // from scratch instead of being stuck with a transient network failure (e.g.
-// a timeout) for the rest of the process's lifetime.
+// a timeout) for the rest of the entry's TTL.
 func (p *Provider) getOrFetchSKUCatalog(ctx context.Context, service, region string) (map[string][]models.NormalizedPrice, error) {
 	key := service + "|" + region
-	entry := getSKUCatalogEntry(key)
+	entry := getSKUCatalogEntry(key, skuCatalogCacheTTL(p))
 	entry.once.Do(func() {
 		entry.bySuffix, entry.err = fetchSKUCatalog(ctx, p, service, region)
+		skuCatalogCache.mu.Lock()
+		entry.fetchedAt = time.Now()
+		skuCatalogCache.mu.Unlock()
 	})
 	if entry.err != nil {
 		skuCatalogCache.mu.Lock()
@@ -390,7 +470,25 @@ type SKULookupRegionResult struct {
 	// inferred-service fallback catalog did. See LookupSKUAcrossRegions docs.
 	ServiceMismatch bool `json:"service_mismatch,omitempty"`
 
+	// Prices holds the resolved candidate row(s) for this region. In the
+	// common case this is a single row. When multiple product rows share the
+	// same stripped usage-type suffix (e.g. an EC2 BoxUsage suffix matches
+	// Linux, Windows, and RHEL rows, or Shared vs Dedicated tenancy rows),
+	// resolveSKUCandidates first narrows to the codebase's established
+	// canonical-default attributes (see canonicalDefaultAttrs) before this is
+	// populated. If that narrowing still leaves more than one row — i.e. the
+	// usage-type suffix genuinely does not disambiguate them (the clearest
+	// case: RDS databaseEngine, which no usage-type string encodes) — all
+	// remaining candidates are kept here and Ambiguous is set, rather than
+	// silently picking one (e.g. the cheapest) and reporting it as *the*
+	// price.
 	Prices []models.NormalizedPrice `json:"prices,omitempty"`
+
+	// Ambiguous is true when Prices contains more than one row that
+	// resolveSKUCandidates could not narrow down to a single canonical match
+	// — the caller must disambiguate using Prices[i].Attributes /
+	// Description / SKUID rather than trusting a single "the" price.
+	Ambiguous bool `json:"ambiguous,omitempty"`
 
 	NoMapping bool `json:"no_mapping,omitempty"`
 
@@ -475,6 +573,15 @@ func (p *Provider) LookupSKUAcrossRegions(
 	if sku == "" {
 		return nil, &SKULookupError{Code: SKUErrSKURequired, Message: "sku must not be empty"}
 	}
+	if len(sku) > maxSKULength {
+		return nil, &SKULookupError{
+			Code: SKUErrSKUTooLong,
+			Message: fmt.Sprintf(
+				"sku must be at most %d characters (got %d) — real AWS usage-type strings are far shorter",
+				maxSKULength, len(sku),
+			),
+		}
+	}
 	if len(regions) == 0 {
 		return nil, &SKULookupError{
 			Code:    SKUErrRegionsRequired,
@@ -520,6 +627,18 @@ func (p *Provider) LookupSKUAcrossRegions(
 		candidates = []string{serviceHint, inferredService}
 		result.ServiceSource = "explicit"
 		result.InferredService = inferredService
+	case serviceHint != "" && inferred && serviceHint != inferredService:
+		// serviceHint and inferredService are the same servicecode modulo
+		// casing (e.g. hint "amazonec2" vs canonical "AmazonEC2") — not a
+		// genuine mismatch, but the bulk-pricing URL path this candidate is
+		// interpolated into (see aws_bulk.go) is case-sensitive, so using the
+		// caller's mis-cased hint verbatim would silently fail to match
+		// AWS's actual servicecode path segment. Use the canonically-cased
+		// inferredService as the sole candidate instead of retrying the same
+		// (wrong-cased) servicecode twice.
+		candidates = []string{inferredService}
+		result.ServiceSource = "explicit"
+		result.InferredService = inferredService
 	case serviceHint != "":
 		candidates = []string{serviceHint}
 		result.ServiceSource = "explicit"
@@ -560,6 +679,84 @@ func (p *Provider) LookupSKUAcrossRegions(
 	return result, nil
 }
 
+// --------------------------------------------------------------------------
+// Multi-row-per-suffix disambiguation
+// --------------------------------------------------------------------------
+//
+// A stripped usage-type suffix (see stripUsageTypePrefix) is NOT always
+// unique within a (service, region) catalog: AWS usage-type strings do not
+// encode every attribute that distinguishes one priced product row from
+// another with the same "operation" shape. The clearest example is EC2's
+// "BoxUsage:<instanceType>" suffix, which matches one row per
+// operatingSystem x tenancy x preInstalledSw x capacitystatus combination
+// (Linux/Windows/RHEL/SUSE, Shared/Dedicated/Host, with/without SQL Server,
+// on-demand/reserved-capacity) — all sharing the identical usage-type suffix
+// in the raw offer file. Silently picking "the cheapest of these" (as an
+// earlier version of this file did) can return a materially wrong price: the
+// cheapest row for a given suffix is very often a Dedicated-tenancy or
+// Windows-with-SQL row, not the plain Linux/Shared row a caller reconciling
+// a CUR export almost always means.
+//
+// canonicalDefaultAttrs mirrors the canonical-default attribute set this
+// codebase already uses elsewhere for exactly this purpose — computeFilters
+// in aws_pricing.go (used by GetComputePrice/SearchPricing) narrows EC2
+// candidate rows down to operatingSystem=Linux, tenancy=Shared,
+// preInstalledSw=NA, capacitystatus=Used. That existing convention is reused
+// here rather than inventing a second one, and deliberately kept to exactly
+// those four keys (no more): a candidate row that lacks a given key entirely
+// (e.g. an RDS row has no "tenancy" attribute at all) is left unfiltered on
+// that key rather than excluded, so this narrowing only ever disambiguates
+// EC2-shaped rows and has no effect — narrowing or otherwise — on services
+// that don't carry these attributes (RDS's databaseEngine collisions, for
+// instance, are not resolvable this way and are correctly left ambiguous
+// below).
+var canonicalDefaultAttrs = map[string]string{
+	"operatingSystem": "Linux",
+	"tenancy":         "Shared",
+	"preInstalledSw":  "NA",
+	"capacitystatus":  "Used",
+}
+
+// resolveSKUCandidates narrows prices (all rows sharing one stripped
+// usage-type suffix) down to the canonical-default match when one uniquely
+// applies. If prices has at most one row to begin with, it is returned
+// as-is (not ambiguous). Otherwise, rows are filtered by
+// canonicalDefaultAttrs (a row's Attributes value must equal the canonical
+// default for every key canonicalDefaultAttrs and that row both have — a row
+// missing a given key is not excluded by it, since absence of an attribute
+// is not a mismatch, just a service that doesn't carry that dimension). If
+// that narrowing leaves exactly one row, it is returned as the sole,
+// non-ambiguous match. If it leaves zero rows (no row matches every
+// canonical default the candidates collectively carry) or more than one
+// row (the suffix genuinely does not disambiguate them, e.g. RDS engine
+// variants), the *original, unfiltered* candidate set is returned with
+// ambiguous=true, so the caller sees every real candidate rather than an
+// arbitrarily-narrowed subset it can't make sense of.
+func resolveSKUCandidates(prices []models.NormalizedPrice) (chosen []models.NormalizedPrice, ambiguous bool) {
+	if len(prices) <= 1 {
+		return prices, false
+	}
+
+	var narrowed []models.NormalizedPrice
+	for _, p := range prices {
+		matchesAll := true
+		for key, want := range canonicalDefaultAttrs {
+			if got, ok := p.Attributes[key]; ok && got != want {
+				matchesAll = false
+				break
+			}
+		}
+		if matchesAll {
+			narrowed = append(narrowed, p)
+		}
+	}
+
+	if len(narrowed) == 1 {
+		return narrowed, false
+	}
+	return prices, true
+}
+
 // lookupSKUInRegion searches candidates (in order) for a product row whose
 // usage-type suffix equals suffix, in a single region. See
 // SKULookupRegionResult's docs for how Prices / NoMapping / Error are
@@ -597,7 +794,7 @@ func (p *Provider) lookupSKUInRegion(
 
 		if prices, ok := bySuffix[suffix]; ok && len(prices) > 0 {
 			rr.ServiceUsed = svc
-			rr.Prices = prices
+			rr.Prices, rr.Ambiguous = resolveSKUCandidates(prices)
 			if explicitHint != "" && !strings.EqualFold(svc, explicitHint) {
 				rr.ServiceMismatch = true
 			}

@@ -105,6 +105,51 @@
       }
     },
     {
+      "name": "get_price_by_sku",
+      "description": "\n        Resolve a raw AWS usage-type/SKU string — exactly as it appears in a Cost & Usage Report\n        (CUR) export, e.g. \"CAN1-BoxUsage:r5a.8xlarge\" — to a price, across one or more regions.\n\n        Use this instead of get_price/compare_prices when you have a raw billing export line item\n        (a \"UsageType\" or \"SKU\" column value) and need to reconcile it against current public\n        pricing, rather than starting from a known resource_type/domain spec. This tool strips the\n        region-prefix token from the usage-type string (e.g. \"CAN1-\", \"EU-\", or no prefix at all\n        for us-east-1) to get a region-independent suffix, then matches that suffix against each\n        target region's pricing catalog.\n\n        If service is omitted, the AWS servicecode is inferred from the usage-type pattern (e.g.\n        \"BoxUsage:\" implies AmazonEC2, \"LCUUsage\" implies AWSELB) — service_source in the response\n        indicates \"explicit\" or \"inferred\". If a supplied service hint finds no match but the\n        inferred servicecode does (real CUR data isn't always internally consistent — e.g. data-\n        transfer usage types sometimes appear against an \"AmazonEC2\" AWS Product column but are\n        actually billed under AWSDataTransfer), the tool falls back to the inferred match and flags\n        service_mismatch on that region's result rather than reporting no match.\n\n        Regions with no catalog entry for the resolved suffix are reported in no_mapping_in\n        (checked, not found) — this is distinct from errors_in (the catalog fetch itself failed).\n        Known limitation: compound inter-region/wavelength data-transfer SKUs with two region-\n        shaped tokens (e.g. \"USE1WL1ATL1-CAN1-AWS-Out-Bytes\") are not fully resolved by the\n        single-prefix-strip model; these produce a warning rather than a silently wrong match.\n\n        Args:\n            provider: Cloud provider — only \"aws\" is supported (raw usage-type SKUs are an AWS\n                      CUR concept with no GCP/Azure equivalent).\n            sku: The raw usage-type/SKU string exactly as it appears in the CUR export.\n            service: Optional AWS servicecode hint (e.g. \"AmazonEC2\", \"AWSELB\", \"AmazonRDS\",\n                     \"AmazonDynamoDB\", \"AmazonElastiCache\", \"AWSDataTransfer\"). If omitted, it is\n                     inferred from the usage-type pattern.\n            regions: List of AWS region codes to check, e.g. [\"us-east-1\", \"eu-west-1\"]. Required,\n                     max 30.\n            baseline_region: Optional region for delta comparison, e.g. \"us-east-1\".\n\n        Examples:\n            {\"sku\": \"CAN1-BoxUsage:r5a.8xlarge\", \"regions\": [\"ca-central-1\", \"us-east-1\"]}\n            {\"sku\": \"CAN1-AWS-Out-Bytes\", \"service\": \"AmazonEC2\", \"regions\": [\"ca-central-1\"]}\n        ",
+      "inputSchema": {
+        "properties": {
+          "provider": {
+            "default": "aws",
+            "title": "Provider",
+            "type": "string"
+          },
+          "sku": {
+            "title": "Sku",
+            "type": "string"
+          },
+          "service": {
+            "default": "",
+            "title": "Service",
+            "type": "string"
+          },
+          "regions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Regions",
+            "type": "array"
+          },
+          "baseline_region": {
+            "default": "",
+            "title": "Baseline Region",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sku",
+          "regions"
+        ],
+        "title": "get_price_by_skuArguments",
+        "type": "object"
+      },
+      "outputSchema": {
+        "additionalProperties": true,
+        "title": "get_price_by_skuDictOutput",
+        "type": "object"
+      }
+    },
+    {
       "name": "search_pricing",
       "description": "Deprecated helper that redirects to the correct tools. Use describe_catalog to browse available services by domain/provider, or get_price with a known spec.",
       "inputSchema": {
