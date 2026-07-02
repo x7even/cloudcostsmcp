@@ -143,8 +143,14 @@ func (p *Provider) getProductsBulk(
 
 	// rawProducts maps sku -> raw product JSON (only for matched SKUs).
 	rawProducts := make(map[string]json.RawMessage)
-	var rawOnDemand map[string]json.RawMessage
-	var rawReserved map[string]json.RawMessage
+	// rawOnDemand/rawReserved map sku -> (termKey -> raw term JSON). Keeping the
+	// SKU-level grouping that collectTermsForSKUs already produces (rather than
+	// flattening into one big map keyed by termKey) lets the assembly pass below
+	// do an O(1) per-SKU lookup instead of an O(M) linear scan per SKU, which
+	// matters for large offer files like AmazonEC2's (~120K products/terms) —
+	// see collectTermsForSKUs for details.
+	var rawOnDemand map[string]map[string]json.RawMessage
+	var rawReserved map[string]map[string]json.RawMessage
 
 	for dec.More() {
 		// Read the top-level key (e.g. "formatVersion", "disclaimer", "products", "terms").
@@ -255,25 +261,12 @@ func (p *Provider) getProductsBulk(
 	for sku, productRaw := range rawProducts {
 		terms := termsJSON{}
 
-		// Collect OnDemand terms for this SKU.
-		odTerms := make(map[string]json.RawMessage)
-		for termKey, termRaw := range rawOnDemand {
-			if strings.HasPrefix(termKey, sku+".") || termKey == sku {
-				odTerms[termKey] = termRaw
-			}
-		}
-		if len(odTerms) > 0 {
+		// Direct O(1) per-SKU lookup instead of scanning the whole term map —
+		// see the rawOnDemand/rawReserved comment above.
+		if odTerms := rawOnDemand[sku]; len(odTerms) > 0 {
 			terms.OnDemand = odTerms
 		}
-
-		// Collect Reserved terms for this SKU.
-		resTerms := make(map[string]json.RawMessage)
-		for termKey, termRaw := range rawReserved {
-			if strings.HasPrefix(termKey, sku+".") || termKey == sku {
-				resTerms[termKey] = termRaw
-			}
-		}
-		if len(resTerms) > 0 {
+		if resTerms := rawReserved[sku]; len(resTerms) > 0 {
 			terms.Reserved = resTerms
 		}
 
@@ -334,14 +327,20 @@ func matchesProduct(raw json.RawMessage, attrFilters []attrFilter) bool {
 //	  }
 //	}
 //
-// We unwrap the outer SKU level so the returned map has keys "SKU.termCode"
-// directly, matching the format expected by parsedSKU.Terms.OnDemand.
-func collectTermsForSKUs(dec *json.Decoder, skus map[string]json.RawMessage) (map[string]json.RawMessage, error) {
+// The returned map preserves this SKU-level grouping (sku -> termKey -> raw
+// term JSON) instead of flattening every SKU's terms into one map keyed by
+// "SKU.termCode". Flattening would force callers back to an O(M) linear
+// "strings.HasPrefix(termKey, sku+\".\")" scan per SKU to re-derive exactly
+// the grouping we already have here for free while walking the stream —
+// that O(P×M) rejoin is what caused get_price_by_sku's EC2/EBS timeouts
+// (~120K products/terms in the AmazonEC2 offer file). Keeping the grouping
+// lets callers do a direct O(1) map[sku] lookup instead.
+func collectTermsForSKUs(dec *json.Decoder, skus map[string]json.RawMessage) (map[string]map[string]json.RawMessage, error) {
 	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
 		return nil, fmt.Errorf("expected term-type object")
 	}
 
-	result := make(map[string]json.RawMessage)
+	result := make(map[string]map[string]json.RawMessage)
 	for dec.More() {
 		// Outer key = SKU (e.g. "DW64VZC89TS9M2P2").
 		outerKeyTok, err := dec.Token()
@@ -367,6 +366,7 @@ func collectTermsForSKUs(dec *json.Decoder, skus map[string]json.RawMessage) (ma
 		if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
 			return nil, fmt.Errorf("aws bulk: expected inner term object for sku %s", outerKey)
 		}
+		innerTerms := make(map[string]json.RawMessage)
 		for dec.More() {
 			innerKeyTok, err := dec.Token()
 			if err != nil {
@@ -380,10 +380,13 @@ func collectTermsForSKUs(dec *json.Decoder, skus map[string]json.RawMessage) (ma
 			if err := dec.Decode(&termRaw); err != nil {
 				return nil, fmt.Errorf("aws bulk: decoding term %s: %w", innerKey, err)
 			}
-			result[innerKey] = termRaw
+			innerTerms[innerKey] = termRaw
 		}
 		if _, err := dec.Token(); err != nil {
 			return nil, fmt.Errorf("aws bulk: closing inner term object for sku %s: %w", outerKey, err)
+		}
+		if len(innerTerms) > 0 {
+			result[outerKey] = innerTerms
 		}
 	}
 

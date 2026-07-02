@@ -133,6 +133,8 @@ pricing catalog.
 | `service` | string | | AWS servicecode hint, e.g. `"AmazonEC2"`, `"AWSELB"`, `"AmazonRDS"`, `"AmazonDynamoDB"`, `"AmazonElastiCache"`, `"AWSDataTransfer"`. Inferred from the usage-type pattern if omitted. |
 | `regions` | list[string] | ✓ | AWS region codes to check, e.g. `["ca-central-1", "us-east-1"]`. Max 30. |
 | `baseline_region` | string | | Region for delta comparison, e.g. `"us-east-1"` |
+| `operation` | string | | Optional disambiguating hint — the AWS product `operation` attribute (e.g. `"CreateDBInstance:0021"` identifies Aurora PostgreSQL among RDS engines on the same instance type), matched case-insensitively. Use when a region comes back in `ambiguous_in`. |
+| `product_family` | string | | Optional disambiguating hint — the AWS top-level `productFamily` (e.g. `"Load Balancer-Application"` for an ALB vs. NLB/GLB), matched case-insensitively. Use when a region comes back in `ambiguous_in`. |
 
 **Service inference and mismatch fallback.** If `service` is omitted, the AWS servicecode is inferred
 from the usage-type pattern (e.g. `BoxUsage:` → `AmazonEC2`, `LCUUsage` → `AWSELB`), and
@@ -142,24 +144,38 @@ sometimes appear against an `"AWS Product"` column of `"AmazonEC2"`. If an expli
 finds no match in a region but the inferred servicecode does, the tool falls back to the inferred
 match rather than reporting no result, and flags `service_mismatch: true` on that region's entry.
 
-**No-match vs. fetch-failure.** Regions where the catalog was fetched successfully but no row matches
-the resolved suffix are listed in `no_mapping_in` (checked, not modeled). Regions where the catalog
-fetch itself failed are listed separately in `errors_in`. This distinction lets callers tell
-"priced but not available here" apart from "we couldn't check."
+**No-match vs. fetch-failure vs. ambiguous.** Regions where the catalog was fetched successfully but
+no row matches the resolved suffix are listed in `no_mapping_in` (checked, not modeled). Regions
+where the catalog fetch itself failed are listed separately in `errors_in`. Regions that matched more
+than one distinct product row with no unambiguous resolution are listed in `ambiguous_in` (see
+below). This three-way distinction lets callers tell "priced but not available here", "we couldn't
+check", and "matched but needs a hint to disambiguate" apart.
 
 **Ambiguous multi-row matches.** A usage-type suffix does not always map to a single priced product
 row — e.g. an EC2 `BoxUsage:<instanceType>` suffix matches one row per
 operatingSystem/tenancy/preInstalledSw/capacitystatus combination (Linux, Windows, RHEL, Shared vs.
-Dedicated tenancy, etc.), all sharing the identical usage-type string. The tool first narrows these
-to the same canonical-default attributes (`operatingSystem=Linux`, `tenancy=Shared`,
-`preInstalledSw=NA`, `capacitystatus=Used`) the rest of this server uses; if that narrowing resolves
-to exactly one row, the match is returned normally. If it doesn't (the suffix genuinely doesn't
-disambiguate the rows — RDS `databaseEngine` variants are a common case, since no usage-type string
-encodes the engine), the region's entry is flagged `ambiguous: true`, `price_per_unit` is only the
-cheapest of the candidates (not a confirmed match), and every candidate row is listed in
-`alternate_matches` (with `alternate_match_count`) so the caller can pick the correct row via its
-`description`/`attributes`/`sku_id`. A top-level warning is also added whenever any region hit this
-case.
+Dedicated tenancy, etc.); ELB's `LCUUsage` suffix matches Application/Network/Gateway load balancer
+pricing alike (distinct products, not variants); RDS's `InstanceUsage:<type>` suffix matches every
+database engine on that instance type. Resolution is tried in order:
+
+1. If `operation` and/or `product_family` were supplied, candidates are filtered to rows matching
+   the hint(s) (case-insensitive). Exactly one match resolves the region (`hint_status:
+   "resolved_by_hint"`). Zero matches fails closed — the hint is never silently ignored, the region
+   stays ambiguous (`hint_status: "hint_no_match"`). More than one match falls through to step 2 on
+   the hint-filtered subset.
+2. Candidates are narrowed to the same canonical-default attributes (`operatingSystem=Linux`,
+   `tenancy=Shared`, `preInstalledSw=NA`, `capacitystatus=Used`) the rest of this server uses. If
+   that narrows to exactly one row, it resolves the region (`hint_status: "no_hint_supplied"` when no
+   hint was involved).
+
+**"Cheapest" is never used as a tie-breaker.** If neither step resolves to exactly one row, the
+region is *excluded* from `all_regions_sorted`/`cheapest_price`/`most_expensive_price`/baseline
+deltas and instead appears in its own top-level `ambiguous_in` bucket, with `alternate_match_count`
+and every remaining candidate row in `alternate_matches` (via `description`/`product_family`/
+`attributes`/`sku_id`) and no chosen price — the caller must pick the correct row and retry with
+`operation`/`product_family` set. If every requested region ends up in `ambiguous_in`/`no_mapping_in`/
+`errors_in`, `result: "no_prices_found"` is returned rather than a guessed price. A top-level warning
+is also added to `warnings` whenever any region hits this case.
 
 **Known limitation — compound/wavelength data-transfer SKUs.** Some `AWSDataTransfer` usage types
 carry *two* region-shaped tokens, e.g. `"USE1WL1ATL1-CAN1-AWS-Out-Bytes"` (inter-region or AWS
