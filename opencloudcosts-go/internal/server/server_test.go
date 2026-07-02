@@ -189,6 +189,7 @@ func TestHandlersReturnStructuredJSON(t *testing.T) {
 		{"get_price", map[string]any{"spec": map[string]any{"provider": "aws", "domain": "compute"}}},
 		{"get_prices_batch", map[string]any{"provider": "aws", "instance_types": []string{"m5.xlarge"}, "region": "us-east-1"}},
 		{"compare_prices", map[string]any{"spec": map[string]any{"provider": "aws"}, "regions": []string{"us-east-1"}}},
+		{"get_price_by_sku", map[string]any{"sku": "CAN1-BoxUsage:r5a.8xlarge", "regions": []string{"us-east-1"}}},
 		{"search_pricing", map[string]any{"provider": "aws", "query": "m5"}},
 		{"get_discount_summary", map[string]any{}},
 		{"get_spot_history", map[string]any{"spec": map[string]any{"provider": "aws", "domain": "compute"}}},

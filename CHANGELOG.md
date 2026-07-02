@@ -5,6 +5,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **get_price_by_sku** — new AWS-only tool that resolves a raw Cost & Usage Report (CUR)
+  usage-type/SKU string (e.g. `CAN1-BoxUsage:r5a.8xlarge`) to a price across one or more
+  regions, without requiring the caller to know the resource_type/domain spec. Strips the
+  region-prefix token by shape (no hardcoded region table), infers the AWS servicecode from
+  the usage-type pattern when not supplied, and falls back to the inferred servicecode with a
+  `service_mismatch` flag when an explicit `service` hint finds no match. Flags compound
+  inter-region/Wavelength `AWSDataTransfer` SKUs with a warning rather than guessing silently.
+
 ---
 
 ## [1.0.0] — 2026-06-27
