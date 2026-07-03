@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -429,6 +430,36 @@ func TestGetPrice_NotSupportedError(t *testing.T) {
 	})
 	if resp["error"] != "not_supported" {
 		t.Errorf("error: got %q, want %q", resp["error"], "not_supported")
+	}
+}
+
+// TestGetPrice_WrappedNotSupportedError verifies that a provider error which
+// *wraps* providers.ErrNotSupported (e.g. via fmt.Errorf("...: %w", ...), as
+// GCP's GetComputePrice does for unrecognized machine families) still
+// classifies as a clean not_supported response rather than a retryable
+// upstream_failure (RC3-013). Before the fix, lookup.go compared errors with
+// `err == providers.ErrNotSupported`, which is false for a wrapped error, so
+// this would have fallen through to upstream_failure/retryable:true.
+func TestGetPrice_WrappedNotSupportedError(t *testing.T) {
+	pvdr := &mockProvider{
+		name:          "gcp",
+		defaultRegion: "us-central1",
+		getPriceFunc: func(_ context.Context, _ models.PricingSpec) (*models.PricingResult, error) {
+			return nil, fmt.Errorf("gcp: machine family %q is not in the supported catalog: %w", "z9", providers.ErrNotSupported)
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"gcp": pvdr})
+	resp := callGetPrice(t, h, map[string]any{
+		"provider":      "gcp",
+		"domain":        "compute",
+		"resource_type": "z9-standard-4",
+		"region":        "us-central1",
+	})
+	if resp["error"] != "not_supported" {
+		t.Errorf("error: got %q, want %q", resp["error"], "not_supported")
+	}
+	if resp["retryable"] == true {
+		t.Errorf("retryable: got %v, want not true (not_supported is not retryable)", resp["retryable"])
 	}
 }
 

@@ -210,6 +210,135 @@ func TestGCPFamilySKUT2ANoCUDs(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// C4 / Z3 catalog coverage (RC3-003)
+// ---------------------------------------------------------------------------
+
+func TestParseInstanceTypeExactLookupC4Standard4(t *testing.T) {
+	// Source: https://docs.cloud.google.com/compute/docs/general-purpose-machines
+	vcpu, mem, ok := ParseInstanceType("c4-standard-4")
+	if !ok {
+		t.Fatal("expected ok")
+	}
+	if vcpu != 4 {
+		t.Errorf("vcpu: got %d want 4", vcpu)
+	}
+	if math.Abs(mem-15.0) > 1e-9 {
+		t.Errorf("mem: got %v want 15.0", mem)
+	}
+}
+
+func TestParseInstanceTypeExactLookupC4Highmem192(t *testing.T) {
+	// 192 vCPU * 7.75 GB/vCPU = 1488 GB.
+	vcpu, mem, ok := ParseInstanceType("c4-highmem-192")
+	if !ok {
+		t.Fatal("expected ok")
+	}
+	if vcpu != 192 {
+		t.Errorf("vcpu: got %d want 192", vcpu)
+	}
+	if math.Abs(mem-1488.0) > 1e-9 {
+		t.Errorf("mem: got %v want 1488.0", mem)
+	}
+}
+
+func TestParseInstanceTypeExactLookupC4Highcpu16(t *testing.T) {
+	// 16 vCPU * 2 GB/vCPU = 32 GB.
+	vcpu, mem, ok := ParseInstanceType("c4-highcpu-16")
+	if !ok {
+		t.Fatal("expected ok")
+	}
+	if vcpu != 16 {
+		t.Errorf("vcpu: got %d want 16", vcpu)
+	}
+	if math.Abs(mem-32.0) > 1e-9 {
+		t.Errorf("mem: got %v want 32.0", mem)
+	}
+}
+
+func TestParseInstanceTypeExactLookupZ3Highlssd(t *testing.T) {
+	// Z3 requires the local-SSD suffix in the full instance type name.
+	// Source: https://docs.cloud.google.com/compute/docs/storage-optimized-machines
+	vcpu, mem, ok := ParseInstanceType("z3-highmem-88-highlssd")
+	if !ok {
+		t.Fatal("expected ok")
+	}
+	if vcpu != 88 {
+		t.Errorf("vcpu: got %d want 88", vcpu)
+	}
+	if math.Abs(mem-704.0) > 1e-9 {
+		t.Errorf("mem: got %v want 704.0", mem)
+	}
+}
+
+func TestParseInstanceTypeExactLookupZ3Standardlssd(t *testing.T) {
+	vcpu, mem, ok := ParseInstanceType("z3-highmem-176-standardlssd")
+	if !ok {
+		t.Fatal("expected ok")
+	}
+	if vcpu != 176 {
+		t.Errorf("vcpu: got %d want 176", vcpu)
+	}
+	if math.Abs(mem-1406.0) > 1e-9 {
+		t.Errorf("mem: got %v want 1406.0", mem)
+	}
+}
+
+func TestGetMachineFamilyC4(t *testing.T) {
+	if f := GetMachineFamily("c4-standard-4"); f != "c4" {
+		t.Errorf("got %q want c4", f)
+	}
+}
+
+func TestGetMachineFamilyZ3(t *testing.T) {
+	// Family extraction must work even with the mandatory lssd suffix.
+	if f := GetMachineFamily("z3-highmem-88-highlssd"); f != "z3" {
+		t.Errorf("got %q want z3", f)
+	}
+}
+
+func TestGCPFamilySKUC4OnDemandAndSpot(t *testing.T) {
+	// Source: https://cloud.google.com/skus/sku-groups/c4-on-demand-vms and
+	// https://cloud.google.com/skus/sku-groups/c4-spot-preemptible-vms
+	sku, ok := GCPFamilySKU["c4"]
+	if !ok {
+		t.Fatal("c4 family not in GCPFamilySKU")
+	}
+	if sku.CPUDesc != "C4 Instance Core" {
+		t.Errorf("CPUDesc: got %q want %q", sku.CPUDesc, "C4 Instance Core")
+	}
+	if sku.RAMDesc != "C4 Instance Ram" {
+		t.Errorf("RAMDesc: got %q want %q", sku.RAMDesc, "C4 Instance Ram")
+	}
+	if sku.PreemptCPUDesc != "Spot Preemptible C4 Instance Core" {
+		t.Errorf("PreemptCPUDesc: got %q", sku.PreemptCPUDesc)
+	}
+	if sku.PreemptRAMDesc != "Spot Preemptible C4 Instance Ram" {
+		t.Errorf("PreemptRAMDesc: got %q", sku.PreemptRAMDesc)
+	}
+}
+
+func TestGCPFamilySKUZ3OnDemandAndSpot(t *testing.T) {
+	// Source: https://cloud.google.com/skus/sku-groups/z3-on-demand-vms and
+	// https://cloud.google.com/skus/sku-groups/z3-spot-preemptible-vms
+	sku, ok := GCPFamilySKU["z3"]
+	if !ok {
+		t.Fatal("z3 family not in GCPFamilySKU")
+	}
+	if sku.CPUDesc != "Z3 Instance Core" {
+		t.Errorf("CPUDesc: got %q want %q", sku.CPUDesc, "Z3 Instance Core")
+	}
+	if sku.RAMDesc != "Z3 Instance Ram" {
+		t.Errorf("RAMDesc: got %q want %q", sku.RAMDesc, "Z3 Instance Ram")
+	}
+	if sku.PreemptCPUDesc != "Spot Preemptible Z3 Instance Core" {
+		t.Errorf("PreemptCPUDesc: got %q", sku.PreemptCPUDesc)
+	}
+	if sku.PreemptRAMDesc != "Spot Preemptible Z3 Instance Ram" {
+		t.Errorf("PreemptRAMDesc: got %q", sku.PreemptRAMDesc)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // GCPMajorRegions
 // ---------------------------------------------------------------------------
 
