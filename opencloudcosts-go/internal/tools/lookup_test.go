@@ -7,12 +7,12 @@ import (
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	awsprovider "github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/providers/aws"
-	azureprovider "github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/providers/azure"
-	gcpprovider "github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/providers/gcp"
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/config"
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/models"
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/providers"
+	awsprovider "github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/providers/aws"
+	azureprovider "github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/providers/azure"
+	gcpprovider "github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/providers/gcp"
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/tools"
 )
 
@@ -750,6 +750,9 @@ func TestComparePrices_BaselineDelta(t *testing.T) {
 }
 
 func TestComparePrices_BaselineRegionNotFound(t *testing.T) {
+	// RC3-002: a baseline_region that is absent from the fetched entries must
+	// degrade gracefully — the partial payload is still returned (with a
+	// baseline_missing warning and null deltas), not replaced by a bare error.
 	pvdr := &mockProvider{
 		name:          "aws",
 		defaultRegion: "us-east-1",
@@ -763,8 +766,30 @@ func TestComparePrices_BaselineRegionNotFound(t *testing.T) {
 		Regions:        []string{"us-east-1"},
 		BaselineRegion: "ap-southeast-1", // not in regions
 	})
-	if resp["error"] == nil {
-		t.Errorf("expected error for missing baseline region, got: %v", resp)
+	if resp["error"] != nil {
+		t.Errorf("expected no top-level error, got: %v", resp["error"])
+	}
+	if resp["baseline_missing"] != true {
+		t.Errorf("baseline_missing: got %v, want true", resp["baseline_missing"])
+	}
+	if resp["cheapest_region"] != "us-east-1" {
+		t.Errorf("cheapest_region: got %v, want us-east-1 (partial payload should survive)", resp["cheapest_region"])
+	}
+	sorted, ok := resp["all_regions_sorted"].([]any)
+	if !ok || len(sorted) != 1 {
+		t.Fatalf("all_regions_sorted: expected 1 entry, got %v", resp["all_regions_sorted"])
+	}
+	e := sorted[0].(map[string]any)
+	// Delta fields must be present-and-null, not omitted — use comma-ok so an
+	// omitted key (pre-fix shape) is distinguished from an explicit null.
+	for _, key := range []string{"delta_per_hour", "delta_monthly", "delta_pct"} {
+		v, ok := e[key]
+		if !ok {
+			t.Errorf("entry missing key %q entirely (want present with null value)", key)
+		}
+		if v != nil {
+			t.Errorf("entry[%q]: got %v, want null", key, v)
+		}
 	}
 }
 
@@ -821,6 +846,123 @@ func TestComparePrices_ResponseFields(t *testing.T) {
 		if _, ok := resp[key]; !ok {
 			t.Errorf("response missing key %q", key)
 		}
+	}
+}
+
+// --------------------------------------------------------------------------
+// Tests: compare_prices / get_prices_batch — RC3-001 transient error classification
+// --------------------------------------------------------------------------
+
+// TestComparePrices_AllRegionsTransientError_ReturnsUpstreamFailure covers
+// RC3-001: when every region's pvdr.GetPrice call fails with a transport
+// error (not genuine no-data), the handler must return a retryable
+// upstream_failure — matching HandleGetPrice's contract — instead of a fake
+// no_prices_found with no indication the failure might resolve on retry.
+func TestComparePrices_AllRegionsTransientError_ReturnsUpstreamFailure(t *testing.T) {
+	pvdr := &mockProvider{
+		name:          "aws",
+		defaultRegion: "us-east-1",
+		getPriceFunc: func(_ context.Context, _ models.PricingSpec) (*models.PricingResult, error) {
+			return nil, errors.New("connection reset by peer")
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"aws": pvdr})
+	resp := callComparePrices(t, h, tools.ComparePricesInput{
+		Spec:    map[string]any{"provider": "aws", "domain": "compute", "resource_type": "m5.xlarge"},
+		Regions: []string{"us-east-1", "eu-west-1"},
+	})
+	if resp["result"] == "no_prices_found" {
+		t.Fatalf("expected upstream_failure, got no_prices_found: %v", resp)
+	}
+	if resp["error"] != "upstream_failure" {
+		t.Errorf("error: got %v, want upstream_failure", resp["error"])
+	}
+	if resp["retryable"] != true {
+		t.Errorf("retryable: got %v, want true", resp["retryable"])
+	}
+}
+
+// TestComparePrices_MixedNoDataAndTransientError_StaysNoPricesFound covers
+// the boundary of RC3-001: when at least one region is genuinely absent
+// (no_data) rather than all regions failing transiently, the response stays
+// no_prices_found (not every failure is retryable) but still surfaces which
+// regions hit a transient error for visibility.
+func TestComparePrices_MixedNoDataAndTransientError_StaysNoPricesFound(t *testing.T) {
+	pvdr := &mockProvider{
+		name:          "aws",
+		defaultRegion: "us-east-1",
+		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
+			if spec.GetRegion() == "eu-west-1" {
+				return nil, errors.New("timeout")
+			}
+			return makePriceResult(), nil // genuine no-data
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"aws": pvdr})
+	resp := callComparePrices(t, h, tools.ComparePricesInput{
+		Spec:    map[string]any{"provider": "aws", "domain": "compute", "resource_type": "m5.xlarge"},
+		Regions: []string{"us-east-1", "eu-west-1"},
+	})
+	if resp["result"] != "no_prices_found" {
+		t.Errorf("result: got %v, want no_prices_found", resp["result"])
+	}
+	transientErrs, ok := resp["transient_errors"].(map[string]any)
+	if !ok || transientErrs["eu-west-1"] == nil {
+		t.Errorf("transient_errors should contain eu-west-1, got: %v", resp["transient_errors"])
+	}
+}
+
+// TestGetPricesBatch_TransientErrorClassifiedRetryable covers RC3-001 for
+// get_prices_batch: an error map entry from a transport failure must be
+// classified retryable:true (status transient_error), distinct from a
+// genuine no-data entry which is retryable:false (status no_data).
+func TestGetPricesBatch_TransientErrorClassifiedRetryable(t *testing.T) {
+	pvdr := &mockProvider{
+		name:          "aws",
+		defaultRegion: "us-east-1",
+		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
+			cs, ok := spec.(*models.ComputePricingSpec)
+			if !ok || cs.ResourceType == "flaky.type" {
+				return nil, errors.New("503 service unavailable")
+			}
+			if cs.ResourceType == "bogus.type" {
+				return makePriceResult(), nil // genuine no-data
+			}
+			return makePriceResult(makePrice(spec.GetRegion(), 0.192)), nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"aws": pvdr})
+	resp := callGetPricesBatch(t, h, tools.GetPricesBatchInput{
+		Provider:      "aws",
+		InstanceTypes: []string{"m5.xlarge", "flaky.type", "bogus.type"},
+		Region:        "us-east-1",
+	})
+
+	errs, ok := resp["errors"].(map[string]any)
+	if !ok {
+		t.Fatalf("errors map missing: %v", resp)
+	}
+
+	flaky, ok := errs["flaky.type"].(map[string]any)
+	if !ok {
+		t.Fatalf("errors[flaky.type] missing or wrong shape: %v", errs["flaky.type"])
+	}
+	if flaky["status"] != "transient_error" {
+		t.Errorf("flaky.type status: got %v, want transient_error", flaky["status"])
+	}
+	if flaky["retryable"] != true {
+		t.Errorf("flaky.type retryable: got %v, want true", flaky["retryable"])
+	}
+
+	bogus, ok := errs["bogus.type"].(map[string]any)
+	if !ok {
+		t.Fatalf("errors[bogus.type] missing or wrong shape: %v", errs["bogus.type"])
+	}
+	if bogus["status"] != "no_data" {
+		t.Errorf("bogus.type status: got %v, want no_data", bogus["status"])
+	}
+	if bogus["retryable"] != false {
+		t.Errorf("bogus.type retryable: got %v, want false", bogus["retryable"])
 	}
 }
 

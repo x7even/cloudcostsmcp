@@ -19,6 +19,17 @@ import (
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/cache"
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/models"
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/providers"
+	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/utils"
+)
+
+// Per-region / per-item outcome classification for fan-out lookups
+// (compare_prices, get_prices_batch). Distinguishes a genuine "no pricing
+// data for this region/item" outcome from a transport/upstream failure that
+// may resolve on retry.
+const (
+	regionStatusOK        = "ok"
+	regionStatusTransient = "transient_error"
+	regionStatusNoData    = "no_data"
 )
 
 // Provider is an alias so callers of this package do not need to import providers directly.
@@ -292,7 +303,12 @@ func unmarshalSpec(specMap map[string]any) (models.PricingSpec, error) {
 
 // applyBaselineDeltas mutates entries in-place to add delta_per_hour,
 // delta_monthly, delta_pct fields vs the named baseline region.
-// Returns an error if baseline_region is not present in the entries.
+//
+// Returns an error if baseline_region is not present in the entries. Callers
+// that want to degrade gracefully (see HandleComparePrices / RC3-002) rather
+// than hard-fail the whole call may ignore the error: entries are still
+// mutated in that case, with delta_per_hour/delta_monthly/delta_pct set to an
+// explicit nil on every entry, so the partial payload remains well-formed.
 func applyBaselineDeltas(entries []map[string]any, baselineRegion string) error {
 	var baseHourly float64
 	var baseMonthly float64
@@ -319,6 +335,14 @@ func applyBaselineDeltas(entries []map[string]any, baselineRegion string) error 
 			if r, ok := e["region"].(string); ok {
 				available = append(available, r)
 			}
+		}
+		// Null out (not omit) the delta fields on every entry so a caller
+		// that chooses to return the partial payload anyway (RC3-002) gets a
+		// well-formed, self-explanatory shape rather than missing keys.
+		for _, e := range entries {
+			e["delta_per_hour"] = nil
+			e["delta_monthly"] = nil
+			e["delta_pct"] = nil
 		}
 		return fmt.Errorf("baseline region %q not found in results. Available: %v",
 			baselineRegion, available)
@@ -610,6 +634,7 @@ func (h *Handler) HandleGetPricesBatch(
 		itype  string
 		prices []models.NormalizedPrice
 		err    string
+		status string // transient_error | no_data; only meaningful when err != ""
 	}
 
 	// Fan-out concurrently.
@@ -629,16 +654,22 @@ func (h *Handler) HandleGetPricesBatch(
 			}
 			spec, err := unmarshalSpec(specMap)
 			if err != nil {
-				results[idx] = fetchResult{itype: it, err: err.Error()}
+				results[idx] = fetchResult{itype: it, err: err.Error(), status: regionStatusNoData}
 				return
 			}
 			r, err := pvdr.GetPrice(ctx, spec)
 			if err != nil {
-				results[idx] = fetchResult{itype: it, err: err.Error()}
+				// Classify: distinguish a transport/upstream failure (may
+				// resolve on retry) from a permanent/no-data error (RC3-001).
+				if err == providers.ErrNotSupported || !utils.IsTransient(err) {
+					results[idx] = fetchResult{itype: it, err: err.Error(), status: regionStatusNoData}
+					return
+				}
+				results[idx] = fetchResult{itype: it, err: err.Error(), status: regionStatusTransient}
 				return
 			}
 			if r == nil {
-				results[idx] = fetchResult{itype: it, prices: []models.NormalizedPrice{}}
+				results[idx] = fetchResult{itype: it, prices: []models.NormalizedPrice{}, status: regionStatusNoData}
 				return
 			}
 			results[idx] = fetchResult{itype: it, prices: r.PublicPrices}
@@ -659,15 +690,27 @@ func (h *Handler) HandleGetPricesBatch(
 	}
 
 	var entries []entry
-	errMap := make(map[string]string)
+	errMap := make(map[string]any)
 
 	for _, fr := range results {
 		if fr.err != "" {
-			errMap[fr.itype] = fr.err
+			status := fr.status
+			if status == "" {
+				status = regionStatusNoData
+			}
+			errMap[fr.itype] = map[string]any{
+				"message":   fr.err,
+				"status":    status,
+				"retryable": status == regionStatusTransient,
+			}
 			continue
 		}
 		if len(fr.prices) == 0 {
-			errMap[fr.itype] = "no pricing found"
+			errMap[fr.itype] = map[string]any{
+				"message":   "no pricing found",
+				"status":    regionStatusNoData,
+				"retryable": false,
+			}
 			continue
 		}
 		p := fr.prices[0]
@@ -779,6 +822,8 @@ func (h *Handler) HandleComparePrices(
 	type regionResult struct {
 		region string
 		prices []models.NormalizedPrice
+		status string // ok | transient_error | no_data
+		errMsg string // populated when status == transient_error
 	}
 
 	sem := make(chan struct{}, 10)
@@ -797,38 +842,64 @@ func (h *Handler) HandleComparePrices(
 			specMap["region"] = rgn
 			spec, err := unmarshalSpec(specMap)
 			if err != nil {
-				results[idx] = regionResult{region: rgn}
+				results[idx] = regionResult{region: rgn, status: regionStatusNoData}
 				return
 			}
 			r, err := pvdr.GetPrice(ctx, spec)
 			if err != nil {
-				results[idx] = regionResult{region: rgn}
+				// Classify: a transport/upstream error may resolve on retry and
+				// must not be silently collapsed into a genuine "no data" result
+				// (RC3-001). ErrNotSupported and non-transient (permanent) errors
+				// are treated as no-data for this region rather than retryable.
+				if err == providers.ErrNotSupported || !utils.IsTransient(err) {
+					results[idx] = regionResult{region: rgn, status: regionStatusNoData}
+					return
+				}
+				results[idx] = regionResult{region: rgn, status: regionStatusTransient, errMsg: err.Error()}
 				return
 			}
-			if r == nil {
-				results[idx] = regionResult{region: rgn}
+			if r == nil || len(r.PublicPrices) == 0 {
+				results[idx] = regionResult{region: rgn, status: regionStatusNoData}
 				return
 			}
-			results[idx] = regionResult{region: rgn, prices: r.PublicPrices}
+			results[idx] = regionResult{region: rgn, status: regionStatusOK, prices: r.PublicPrices}
 		}(i, region)
 	}
 	wg.Wait()
 
 	var allPrices []models.NormalizedPrice
 	var notAvailable []string
+	transientErrors := make(map[string]string)
 	for _, rr := range results {
-		if len(rr.prices) > 0 {
+		switch rr.status {
+		case regionStatusOK:
 			allPrices = append(allPrices, rr.prices...)
-		} else {
+		case regionStatusTransient:
+			transientErrors[rr.region] = rr.errMsg
+		default:
 			notAvailable = append(notAvailable, rr.region)
 		}
 	}
 
 	if len(allPrices) == 0 {
-		return jsonText(map[string]any{
+		// All regions failed via transport/upstream errors (none were genuine
+		// no-data) — surface this as a retryable upstream failure instead of a
+		// fake no_prices_found, matching HandleGetPrice's contract (RC3-001).
+		if len(transientErrors) > 0 && len(notAvailable) == 0 {
+			return errResult(map[string]any{
+				"error":     "upstream_failure",
+				"message":   "Pricing lookup failed for all requested regions. Try again shortly.",
+				"retryable": true,
+			}), nil, nil
+		}
+		out := map[string]any{
 			"result":  "no_prices_found",
 			"message": "No pricing found in any of the specified regions.",
-		}), nil, nil
+		}
+		if len(transientErrors) > 0 {
+			out["transient_errors"] = transientErrors
+		}
+		return jsonText(out), nil, nil
 	}
 
 	// Sort cheapest first.
@@ -853,9 +924,14 @@ func (h *Handler) HandleComparePrices(
 		entries = append(entries, e)
 	}
 
+	// If a baseline region was requested but is absent from the fetched
+	// entries, degrade gracefully: keep the successful partial payload (with
+	// delta fields explicitly nulled by applyBaselineDeltas) instead of
+	// discarding it for a bare top-level error (RC3-002).
+	var baselineMissing bool
 	if in.BaselineRegion != "" {
 		if err := applyBaselineDeltas(entries, in.BaselineRegion); err != nil {
-			return errResult(map[string]any{"error": err.Error()}), nil, nil
+			baselineMissing = true
 		}
 	}
 
@@ -882,8 +958,18 @@ func (h *Handler) HandleComparePrices(
 	if len(notAvailable) > 0 {
 		out["not_available_in"] = notAvailable
 	}
+	if len(transientErrors) > 0 {
+		out["transient_errors"] = transientErrors
+	}
 	if in.BaselineRegion != "" {
 		out["baseline_region"] = in.BaselineRegion
+	}
+	if baselineMissing {
+		out["baseline_missing"] = true
+		out["baseline_missing_message"] = fmt.Sprintf(
+			"baseline region %q was not found among the fetched regions; delta fields are null.",
+			in.BaselineRegion,
+		)
 	}
 	return jsonText(out), nil, nil
 }
