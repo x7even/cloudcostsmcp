@@ -305,32 +305,68 @@ func unmarshalSpec(specMap map[string]any) (models.PricingSpec, error) {
 // applyBaselineDeltas mutates entries in-place to add delta_per_hour,
 // delta_monthly, delta_pct fields vs the named baseline region.
 //
-// Returns an error if baseline_region is not present in the entries. Callers
-// that want to degrade gracefully (see HandleComparePrices / RC3-002) rather
-// than hard-fail the whole call may ignore the error: entries are still
-// mutated in that case, with delta_per_hour/delta_monthly/delta_pct set to an
-// explicit nil on every entry, so the partial payload remains well-formed.
-func applyBaselineDeltas(entries []map[string]any, baselineRegion string) error {
-	var baseHourly float64
-	var baseMonthly float64
-	found := false
+// groupKey, when non-empty, names a string-valued key present on each entry
+// (e.g. "sku_description") that discriminates entries covering different
+// SKUs/line-items for the same region. When set, deltas are computed
+// separately within each group against that group's own baseline-region
+// entry, so a multi-SKU result set (e.g. GCP Cloud CDN's cache-egress and
+// cache-fill SKUs) never computes a delta_pct by comparing one SKU's price
+// against a different SKU's baseline price (RC3-033 / #29). Pass "" to treat
+// all entries as a single group — the original, pre-RC3-033 behavior.
+//
+// Returns an error only if the baseline region is absent from every group.
+// Callers that want to degrade gracefully (see HandleComparePrices /
+// RC3-002) rather than hard-fail the whole call may ignore the error:
+// entries are still mutated in that case, with delta_per_hour/delta_monthly/
+// delta_pct set to an explicit nil on every entry whose own group has no
+// baseline, so the partial payload remains well-formed.
+func applyBaselineDeltas(entries []map[string]any, baselineRegion string, groupKey string) error {
+	type group struct {
+		baseHourly  float64
+		baseMonthly float64
+		found       bool
+		members     []map[string]any
+	}
+	groups := make(map[string]*group)
+	var order []string
 	for _, e := range entries {
-		if e["region"] == baselineRegion {
+		key := ""
+		if groupKey != "" {
+			if v, ok := e[groupKey].(string); ok {
+				key = v
+			}
+		}
+		g, ok := groups[key]
+		if !ok {
+			g = &group{}
+			groups[key] = g
+			order = append(order, key)
+		}
+		g.members = append(g.members, e)
+		if !g.found && e["region"] == baselineRegion {
 			if pd, ok := e["price_per_unit"].(map[string]any); ok {
 				if a, ok := pd["amount"].(float64); ok {
-					baseHourly = a
+					g.baseHourly = a
 				}
 			}
 			if md, ok := e["monthly_estimate"].(map[string]any); ok {
 				if a, ok := md["amount"].(float64); ok {
-					baseMonthly = a
+					g.baseMonthly = a
 				}
 			}
-			found = true
+			g.found = true
+		}
+	}
+
+	anyFound := false
+	for _, key := range order {
+		if groups[key].found {
+			anyFound = true
 			break
 		}
 	}
-	if !found {
+
+	if !anyFound {
 		available := make([]string, 0, len(entries))
 		for _, e := range entries {
 			if r, ok := e["region"].(string); ok {
@@ -349,28 +385,40 @@ func applyBaselineDeltas(entries []map[string]any, baselineRegion string) error 
 			baselineRegion, available)
 	}
 
-	for _, e := range entries {
-		var h float64
-		if pd, ok := e["price_per_unit"].(map[string]any); ok {
-			if a, ok := pd["amount"].(float64); ok {
-				h = a
+	for _, key := range order {
+		g := groups[key]
+		for _, e := range g.members {
+			if !g.found {
+				// This SKU group has no baseline-region entry of its own —
+				// null out rather than compute against a different group's
+				// baseline (RC3-033 / #29).
+				e["delta_per_hour"] = nil
+				e["delta_monthly"] = nil
+				e["delta_pct"] = nil
+				continue
 			}
-		}
-		var m float64
-		if md, ok := e["monthly_estimate"].(map[string]any); ok {
-			if a, ok := md["amount"].(float64); ok {
-				m = a
+			var h float64
+			if pd, ok := e["price_per_unit"].(map[string]any); ok {
+				if a, ok := pd["amount"].(float64); ok {
+					h = a
+				}
 			}
+			var m float64
+			if md, ok := e["monthly_estimate"].(map[string]any); ok {
+				if a, ok := md["amount"].(float64); ok {
+					m = a
+				}
+			}
+			dh := h - g.baseHourly
+			dm := m - g.baseMonthly
+			var pct float64
+			if g.baseHourly > 0 {
+				pct = (dh / g.baseHourly) * 100
+			}
+			e["delta_per_hour"] = fmt.Sprintf("$%+.6f", dh)
+			e["delta_monthly"] = fmt.Sprintf("$%+.2f/mo", dm)
+			e["delta_pct"] = fmt.Sprintf("%+.1f%%", pct)
 		}
-		dh := h - baseHourly
-		dm := m - baseMonthly
-		var pct float64
-		if baseHourly > 0 {
-			pct = (dh / baseHourly) * 100
-		}
-		e["delta_per_hour"] = fmt.Sprintf("$%+.6f", dh)
-		e["delta_monthly"] = fmt.Sprintf("$%+.2f/mo", dm)
-		e["delta_pct"] = fmt.Sprintf("%+.1f%%", pct)
 	}
 	return nil
 }
@@ -927,10 +975,58 @@ func (h *Handler) HandleComparePrices(
 		return jsonText(out), nil, nil
 	}
 
-	// Sort cheapest first.
-	sort.Slice(allPrices, func(i, j int) bool {
-		return allPrices[i].PricePerUnit < allPrices[j].PricePerUnit
+	// A spec can resolve to more than one SKU per region (e.g. GCP Cloud CDN
+	// returns both a cache-egress and a cache-fill NormalizedPrice for every
+	// region). Sorting allPrices purely by price would then interleave
+	// unrelated SKUs into a single cheapest-first ranking, so the top result
+	// could silently compare one SKU's price in region A against a different
+	// SKU's price in region B (RC3-033 / #29). To avoid that, group by SKU
+	// (using the region-independent Description text as the discriminator)
+	// and sort within each group before ranking groups against each other:
+	// entries for the same SKU always stay contiguous and cheapest-first
+	// within their own group.
+	skuKey := func(p models.NormalizedPrice) string {
+		if p.Description != "" {
+			return p.Description
+		}
+		return p.SKUID
+	}
+
+	type skuGroup struct {
+		key    string
+		prices []models.NormalizedPrice
+	}
+	groupsByKey := make(map[string]*skuGroup)
+	var groupOrder []string
+	for _, p := range allPrices {
+		key := skuKey(p)
+		g, ok := groupsByKey[key]
+		if !ok {
+			g = &skuGroup{key: key}
+			groupsByKey[key] = g
+			groupOrder = append(groupOrder, key)
+		}
+		g.prices = append(g.prices, p)
+	}
+	multiSKU := len(groupOrder) > 1
+
+	for _, key := range groupOrder {
+		g := groupsByKey[key]
+		sort.Slice(g.prices, func(i, j int) bool {
+			return g.prices[i].PricePerUnit < g.prices[j].PricePerUnit
+		})
+	}
+	// Rank groups by their own cheapest entry so the overall list still
+	// leads with the globally cheapest SKU+region, without ever mixing a
+	// different group's entries into the middle of it.
+	sort.Slice(groupOrder, func(i, j int) bool {
+		return groupsByKey[groupOrder[i]].prices[0].PricePerUnit < groupsByKey[groupOrder[j]].prices[0].PricePerUnit
 	})
+
+	allPrices = make([]models.NormalizedPrice, 0, len(allPrices))
+	for _, key := range groupOrder {
+		allPrices = append(allPrices, groupsByKey[key].prices...)
+	}
 
 	providerStr := string(baseSpec.GetProvider())
 	entries := make([]map[string]any, 0, len(allPrices))
@@ -946,6 +1042,13 @@ func (h *Handler) HandleComparePrices(
 		if p.Attributes["fallback"] == "true" {
 			e["fallback"] = "true"
 		}
+		// Explicit SKU discriminator on every entry (RC3-033 / #29): a spec
+		// that resolves to multiple SKUs (e.g. CDN cache egress vs. cache
+		// fill) must never leave the caller to infer which line item a row
+		// belongs to from price alone.
+		if multiSKU {
+			e["sku_description"] = p.Description
+		}
 		entries = append(entries, e)
 	}
 
@@ -955,13 +1058,29 @@ func (h *Handler) HandleComparePrices(
 	// discarding it for a bare top-level error (RC3-002).
 	var baselineMissing bool
 	if in.BaselineRegion != "" {
-		if err := applyBaselineDeltas(entries, in.BaselineRegion); err != nil {
+		// Group deltas by sku_description so a multi-SKU result never computes
+		// delta_pct for one SKU against a different SKU's baseline price
+		// (RC3-033 / #29). When only one SKU is present, sku_description is
+		// absent from every entry and applyBaselineDeltas falls back to
+		// treating all entries as a single group — unchanged prior behavior.
+		groupKey := ""
+		if multiSKU {
+			groupKey = "sku_description"
+		}
+		if err := applyBaselineDeltas(entries, in.BaselineRegion, groupKey); err != nil {
 			baselineMissing = true
 		}
 	}
 
 	cheapest := allPrices[0]
-	mostExp := allPrices[len(allPrices)-1]
+	// When multiple SKUs are present, restrict "most expensive" to the same
+	// SKU group as the global cheapest entry so price_delta_pct is always a
+	// same-SKU comparison, never a cross-SKU one (RC3-033 / #29).
+	mostExpCandidates := allPrices
+	if multiSKU {
+		mostExpCandidates = groupsByKey[skuKey(cheapest)].prices
+	}
+	mostExp := mostExpCandidates[len(mostExpCandidates)-1]
 
 	var priceDeltaPct any
 	if cheapest.PricePerUnit > 0 {
@@ -990,6 +1109,14 @@ func (h *Handler) HandleComparePrices(
 			"all results are fallback/static data; regional ranking may be unreliable",
 		}
 		out["ranking_low_confidence"] = true
+	}
+	if multiSKU {
+		out["multi_sku"] = true
+		out["sku_count"] = len(groupOrder)
+		out["multi_sku_message"] = "This spec resolves to multiple SKUs per region (see sku_description on " +
+			"each entry). all_regions_sorted groups entries by SKU and sorts within each group before " +
+			"ranking groups, so cheapest-first ordering never mixes SKUs. cheapest_region/most_expensive_region " +
+			"compare the same SKU."
 	}
 	if len(notAvailable) > 0 {
 		out["not_available_in"] = notAvailable

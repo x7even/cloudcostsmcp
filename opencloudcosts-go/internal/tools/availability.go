@@ -363,7 +363,7 @@ func (h *Handler) HandleFindCheapestRegion(
 
 	// Apply baseline deltas if requested.
 	if in.BaselineRegion != "" {
-		if err := applyBaselineDeltas(entries, in.BaselineRegion); err != nil {
+		if err := applyBaselineDeltas(entries, in.BaselineRegion, ""); err != nil {
 			return errResult(map[string]any{"error": err.Error()}), nil, nil
 		}
 	}
@@ -558,7 +558,7 @@ func (h *Handler) HandleFindAvailableRegions(
 
 	// Apply baseline deltas if requested.
 	if in.BaselineRegion != "" {
-		if err := applyBaselineDeltas(entries, in.BaselineRegion); err != nil {
+		if err := applyBaselineDeltas(entries, in.BaselineRegion, ""); err != nil {
 			return errResult(map[string]any{"error": err.Error()}), nil, nil
 		}
 	}
