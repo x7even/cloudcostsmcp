@@ -268,7 +268,7 @@ func (h *Handler) HandleGetPriceBySKU(
 	}
 
 	if in.BaselineRegion != "" {
-		if err := applyBaselineDeltas(entries, in.BaselineRegion); err != nil {
+		if err := applyBaselineDeltas(entries, in.BaselineRegion, ""); err != nil {
 			// entries is built from matched only, so a baseline_region that
 			// exists but is stuck in the ambiguous-unresolved bucket (rather
 			// than genuinely absent from every requested region) would

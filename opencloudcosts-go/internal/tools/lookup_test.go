@@ -1024,6 +1024,374 @@ func TestComparePrices_MixedFallbackAndLive_NoWarning(t *testing.T) {
 }
 
 // --------------------------------------------------------------------------
+// Tests: compare_prices — RC3-033 (#29): multi-SKU results must not be
+// interleaved by raw price and must never compute a baseline delta across
+// two different SKUs.
+// --------------------------------------------------------------------------
+
+// makeMultiSKUPrice constructs a two-SKU-per-region NormalizedPrice pair
+// mirroring GCP Cloud CDN's cache-egress + cache-fill shape: same region,
+// distinct region-independent Description text, distinct price.
+func makeMultiSKUPrice(region string, egressPrice, fillPrice float64) []models.NormalizedPrice {
+	return []models.NormalizedPrice{
+		{
+			Provider:      models.CloudProviderGCP,
+			Service:       "network",
+			SKUID:         fmt.Sprintf("gcp:cloud_cdn:%s:egress", region),
+			ProductFamily: "Cloud CDN",
+			Description:   "Cloud CDN cache egress per GB",
+			Region:        region,
+			PricingTerm:   models.PricingTermOnDemand,
+			PricePerUnit:  egressPrice,
+			Unit:          models.PriceUnitPerGB,
+			Currency:      "USD",
+		},
+		{
+			Provider:      models.CloudProviderGCP,
+			Service:       "network",
+			SKUID:         fmt.Sprintf("gcp:cloud_cdn:%s:cache_fill", region),
+			ProductFamily: "Cloud CDN",
+			Description:   "Cloud CDN cache fill per GB",
+			Region:        region,
+			PricingTerm:   models.PricingTermOnDemand,
+			PricePerUnit:  fillPrice,
+			Unit:          models.PriceUnitPerGB,
+			Currency:      "USD",
+		},
+	}
+}
+
+// TestComparePrices_MultiSKU_EntriesGroupedNotInterleaved covers RC3-033
+// (#29): a spec resolving to two SKUs per region (egress/cache-fill) must
+// come back grouped by SKU — every entry of one SKU contiguous before the
+// next SKU's entries — rather than interleaved by raw price across SKUs.
+// Pre-fix, sorting allPrices purely by price would put egress(r1) between
+// fill(r3) and fill(r2) below.
+func TestComparePrices_MultiSKU_EntriesGroupedNotInterleaved(t *testing.T) {
+	// fill: r1=0.01 (cheapest overall), r3=0.02, r2=0.30 (deliberately
+	// pricier than every egress row so a naive flat price sort would
+	// interleave it between the egress rows).
+	// egress: r1=0.05, r2=0.06, r3=0.07
+	prices := map[string][]models.NormalizedPrice{
+		"r1": makeMultiSKUPrice("r1", 0.05, 0.01),
+		"r2": makeMultiSKUPrice("r2", 0.06, 0.30),
+		"r3": makeMultiSKUPrice("r3", 0.07, 0.02),
+	}
+	pvdr := &mockProvider{
+		name:          "gcp",
+		defaultRegion: "r1",
+		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
+			return makePriceResult(prices[spec.GetRegion()]...), nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"gcp": pvdr})
+	resp := callComparePrices(t, h, tools.ComparePricesInput{
+		Spec:    map[string]any{"provider": "gcp", "domain": "network", "service": "cloud_cdn"},
+		Regions: []string{"r1", "r2", "r3"},
+	})
+
+	if resp["multi_sku"] != true {
+		t.Errorf("multi_sku: got %v, want true", resp["multi_sku"])
+	}
+
+	sorted, ok := resp["all_regions_sorted"].([]any)
+	if !ok || len(sorted) != 6 {
+		t.Fatalf("all_regions_sorted: expected 6 entries, got %v", resp["all_regions_sorted"])
+	}
+
+	// Every entry must carry an explicit SKU discriminator.
+	for i, entry := range sorted {
+		e := entry.(map[string]any)
+		if e["sku_description"] == nil || e["sku_description"] == "" {
+			t.Errorf("entry[%d] missing sku_description: %v", i, e)
+		}
+	}
+
+	// The three "cache fill" entries must be contiguous (grouped) rather
+	// than interleaved with "cache egress" entries. Collect the SKU sequence
+	// and confirm it is not intermixed: once a SKU boundary is crossed, that
+	// SKU must not reappear.
+	var seenBoundary bool
+	prevDesc := sorted[0].(map[string]any)["sku_description"]
+	for i := 1; i < len(sorted); i++ {
+		desc := sorted[i].(map[string]any)["sku_description"]
+		if desc != prevDesc {
+			if seenBoundary {
+				t.Fatalf("entries are interleaved across SKUs: entry[%d] sku_description=%v breaks contiguity", i, desc)
+			}
+			seenBoundary = true
+			prevDesc = desc
+		}
+	}
+	if !seenBoundary {
+		t.Fatalf("expected two distinct SKU groups in all_regions_sorted, saw only one")
+	}
+
+	// The globally cheapest entry (fill r1 @ 0.01) must lead, and its whole
+	// SKU group (fill) must be fully listed before any egress entry appears
+	// — i.e. entry[2] (third row) must still be a "fill" row, not egress.
+	if sorted[0].(map[string]any)["region"] != "r1" || sorted[0].(map[string]any)["sku_description"] != "Cloud CDN cache fill per GB" {
+		t.Errorf("sorted[0]: expected r1 cache-fill entry (cheapest overall), got %v", sorted[0])
+	}
+	if sorted[2].(map[string]any)["sku_description"] != "Cloud CDN cache fill per GB" {
+		t.Errorf("sorted[2]: expected a cache-fill entry (fill group must stay contiguous), got %v", sorted[2])
+	}
+}
+
+// TestComparePrices_MultiSKU_TopLevelDeltaStaysWithinSameSKU covers RC3-033
+// (#29): when multiple SKUs are present, price_delta_pct / most_expensive_*
+// must compare the cheapest entry against the most expensive entry within
+// the SAME SKU group, never against a different SKU's max price.
+func TestComparePrices_MultiSKU_TopLevelDeltaStaysWithinSameSKU(t *testing.T) {
+	// fill: r1=0.01 (global cheapest), r2=0.02, r3=0.03 (fill group max)
+	// egress: r1=0.05, r2=0.06, r3=0.50 (global max, but a DIFFERENT SKU
+	// than the global cheapest — pre-fix this leaked into price_delta_pct).
+	prices := map[string][]models.NormalizedPrice{
+		"r1": makeMultiSKUPrice("r1", 0.05, 0.01),
+		"r2": makeMultiSKUPrice("r2", 0.06, 0.02),
+		"r3": makeMultiSKUPrice("r3", 0.50, 0.03),
+	}
+	pvdr := &mockProvider{
+		name:          "gcp",
+		defaultRegion: "r1",
+		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
+			return makePriceResult(prices[spec.GetRegion()]...), nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"gcp": pvdr})
+	resp := callComparePrices(t, h, tools.ComparePricesInput{
+		Spec:    map[string]any{"provider": "gcp", "domain": "network", "service": "cloud_cdn"},
+		Regions: []string{"r1", "r2", "r3"},
+	})
+
+	if resp["cheapest_region"] != "r1" {
+		t.Errorf("cheapest_region: got %v, want r1", resp["cheapest_region"])
+	}
+	// Pre-fix this would be r3 (the egress row at 0.50, a different SKU).
+	if resp["most_expensive_region"] != "r3" {
+		t.Errorf("most_expensive_region: got %v, want r3 (must stay within the cheapest's own SKU group, i.e. cache-fill, not egress)", resp["most_expensive_region"])
+	}
+	mostExpPrice, ok := resp["most_expensive_price"].(map[string]any)
+	if !ok {
+		t.Fatalf("most_expensive_price missing or wrong type: %v", resp["most_expensive_price"])
+	}
+	if amt, _ := mostExpPrice["amount"].(float64); amt < 0.0299 || amt > 0.0301 {
+		// Pre-fix this would be 0.50 (the egress SKU's max), not 0.03 (the
+		// cache-fill SKU's own max).
+		t.Errorf("most_expensive_price.amount: got %v, want ~0.03 (same SKU as cheapest)", mostExpPrice["amount"])
+	}
+
+	// delta = (0.03-0.01)/0.01*100 = 200.0%, NOT (0.50-0.01)/0.01*100 = 4900.0%.
+	delta, ok := resp["price_delta_pct"].(float64)
+	if !ok {
+		t.Fatalf("price_delta_pct is not float64: %T %v", resp["price_delta_pct"], resp["price_delta_pct"])
+	}
+	if delta < 199.9 || delta > 200.1 {
+		t.Errorf("price_delta_pct: got %v, want ~200.0 (same-SKU delta, not the cross-SKU 4900.0)", delta)
+	}
+}
+
+// TestComparePrices_MultiSKU_BaselineDeltaPerSKUGroup covers RC3-033 (#29):
+// this is the exact bug scenario from the issue report — baseline deltas
+// must be computed within each SKU group against that group's OWN
+// baseline-region price, never against a different SKU's baseline price.
+// Pre-fix, applyBaselineDeltas found the first entry matching the baseline
+// region in the (flat, price-sorted) list — which for this data is the
+// cheaper "cache fill" SKU — and applied that single value as the baseline
+// for every entry, including "cache egress" entries.
+func TestComparePrices_MultiSKU_BaselineDeltaPerSKUGroup(t *testing.T) {
+	// fill: r1=0.01, r2=0.02 (baseline), r3=0.03
+	// egress: r1=0.05, r2=0.06 (baseline), r3=0.50
+	prices := map[string][]models.NormalizedPrice{
+		"r1": makeMultiSKUPrice("r1", 0.05, 0.01),
+		"r2": makeMultiSKUPrice("r2", 0.06, 0.02),
+		"r3": makeMultiSKUPrice("r3", 0.50, 0.03),
+	}
+	pvdr := &mockProvider{
+		name:          "gcp",
+		defaultRegion: "r1",
+		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
+			return makePriceResult(prices[spec.GetRegion()]...), nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"gcp": pvdr})
+	resp := callComparePrices(t, h, tools.ComparePricesInput{
+		Spec:           map[string]any{"provider": "gcp", "domain": "network", "service": "cloud_cdn"},
+		Regions:        []string{"r1", "r2", "r3"},
+		BaselineRegion: "r2",
+	})
+
+	sorted, ok := resp["all_regions_sorted"].([]any)
+	if !ok {
+		t.Fatalf("all_regions_sorted missing or wrong type: %v", resp["all_regions_sorted"])
+	}
+
+	var egressR1 map[string]any
+	for _, entry := range sorted {
+		e := entry.(map[string]any)
+		if e["region"] == "r1" && e["sku_description"] == "Cloud CDN cache egress per GB" {
+			egressR1 = e
+		}
+	}
+	if egressR1 == nil {
+		t.Fatalf("could not find r1 cache-egress entry in %v", sorted)
+	}
+
+	// Correct (same-SKU) baseline: egress r2 = 0.06.
+	// delta = (0.05-0.06)/0.06*100 = -16.666...% -> "-16.7%"
+	// Pre-fix (cross-SKU) baseline would have used cache-fill r2 = 0.02:
+	// delta = (0.05-0.02)/0.02*100 = +150.0%.
+	gotDelta, _ := egressR1["delta_pct"].(string)
+	if gotDelta != "-16.7%" {
+		t.Errorf("egress r1 delta_pct: got %q, want \"-16.7%%\" (same-SKU baseline); "+
+			"a cross-SKU baseline bug would instead produce \"+150.0%%\"", gotDelta)
+	}
+}
+
+// makeGCSStoragePrice constructs a single NormalizedPrice mirroring
+// gcp_compute.go's real getGCSStoragePrice shape: exactly one SKU per
+// region, but with Description AND SKUID built via fmt.Sprintf so the
+// region string is embedded directly in both (e.g. "GCS standard storage in
+// us-east1"), the same way Cloud SQL/Memorystore/GKE (gcp_database.go),
+// Vertex AI/BigQuery (gcp_ai.go), and AWS inter-region transfer
+// (aws_network.go) descriptions are built.
+func makeGCSStoragePrice(region string, price float64) models.NormalizedPrice {
+	return models.NormalizedPrice{
+		Provider:      models.CloudProviderGCP,
+		Service:       "storage",
+		SKUID:         fmt.Sprintf("gcp:gcs:standard:%s", region),
+		ProductFamily: "Cloud Storage",
+		Description:   fmt.Sprintf("GCS standard storage in %s", region),
+		Region:        region,
+		PricingTerm:   models.PricingTermOnDemand,
+		PricePerUnit:  price,
+		Unit:          models.PriceUnitPerGBMonth,
+		Currency:      "USD",
+	}
+}
+
+// TestComparePrices_RegionEmbeddedDescription_StaysSingleSKUGroup covers the
+// regression found in review of the RC3-033 (#29) fix: the grouping
+// discriminator must NOT be the raw Description string, because many
+// provider call sites embed the region directly in Description (GCS
+// storage, Cloud SQL/Memorystore/GKE, Vertex AI/BigQuery, AWS inter-region
+// transfer, etc). Using raw Description as the key would make the SAME SKU
+// priced across regions look like N distinct one-member "SKU groups" — this
+// is a single-SKU, multi-region comparison and must behave exactly like the
+// pre-#29 single-SKU path: multi_sku absent/false, and price_delta_pct /
+// most_expensive_region reflecting the real regional spread rather than
+// collapsing to 0 / cheapest_region.
+func TestComparePrices_RegionEmbeddedDescription_StaysSingleSKUGroup(t *testing.T) {
+	// Single GCS-storage-shaped SKU, price varies by region: r1=0.020
+	// (cheapest), r2=0.023, r3=0.026 (most expensive).
+	prices := map[string][]models.NormalizedPrice{
+		"r1": {makeGCSStoragePrice("r1", 0.020)},
+		"r2": {makeGCSStoragePrice("r2", 0.023)},
+		"r3": {makeGCSStoragePrice("r3", 0.026)},
+	}
+	pvdr := &mockProvider{
+		name:          "gcp",
+		defaultRegion: "r1",
+		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
+			return makePriceResult(prices[spec.GetRegion()]...), nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"gcp": pvdr})
+	resp := callComparePrices(t, h, tools.ComparePricesInput{
+		Spec:    map[string]any{"provider": "gcp", "domain": "storage", "service": "gcs_storage"},
+		Regions: []string{"r1", "r2", "r3"},
+	})
+
+	// Pre-fix (raw-Description grouping): each region's Description differs
+	// ("GCS standard storage in r1" vs "...r2" vs "...r3"), so this would
+	// incorrectly produce three one-member SKU groups and multi_sku=true.
+	if v, present := resp["multi_sku"]; present && v == true {
+		t.Errorf("multi_sku: got %v, want absent/false — this is a single SKU priced across regions, "+
+			"not multiple SKUs (region must not leak into the grouping key)", v)
+	}
+
+	if resp["cheapest_region"] != "r1" {
+		t.Errorf("cheapest_region: got %v, want r1", resp["cheapest_region"])
+	}
+	// Pre-fix, most_expensive_region collapses to equal cheapest_region
+	// because the "same SKU group as cheapest" candidate slice has exactly
+	// one member (the cheapest region's own singleton group).
+	if resp["most_expensive_region"] != "r3" {
+		t.Errorf("most_expensive_region: got %v, want r3 (real regional spread); "+
+			"a region-leaking grouping bug would instead collapse this to r1 (== cheapest_region)", resp["most_expensive_region"])
+	}
+
+	// delta = (0.026-0.020)/0.020*100 = 30.0%. Pre-fix this collapses to 0.0
+	// because cheapest and "most expensive" would be the same singleton entry.
+	delta, ok := resp["price_delta_pct"].(float64)
+	if !ok {
+		t.Fatalf("price_delta_pct is not float64: %T %v", resp["price_delta_pct"], resp["price_delta_pct"])
+	}
+	if delta < 29.9 || delta > 30.1 {
+		t.Errorf("price_delta_pct: got %v, want ~30.0 (real regional spread); "+
+			"a region-leaking grouping bug would instead produce 0.0", delta)
+	}
+}
+
+// TestComparePrices_RegionEmbeddedDescription_BaselineDeltaNotNulled covers
+// the same regression with baseline_region set: pre-fix, every non-baseline
+// region's own singleton "SKU group" has no baseline-region member of its
+// own, so applyBaselineDeltas nulls out delta_per_hour/delta_monthly/
+// delta_pct for every entry except the baseline region itself — silently
+// breaking the baseline-delta feature for any domain whose Description
+// embeds the region.
+func TestComparePrices_RegionEmbeddedDescription_BaselineDeltaNotNulled(t *testing.T) {
+	prices := map[string][]models.NormalizedPrice{
+		"r1": {makeGCSStoragePrice("r1", 0.020)},
+		"r2": {makeGCSStoragePrice("r2", 0.023)}, // baseline
+		"r3": {makeGCSStoragePrice("r3", 0.026)},
+	}
+	pvdr := &mockProvider{
+		name:          "gcp",
+		defaultRegion: "r1",
+		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
+			return makePriceResult(prices[spec.GetRegion()]...), nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"gcp": pvdr})
+	resp := callComparePrices(t, h, tools.ComparePricesInput{
+		Spec:           map[string]any{"provider": "gcp", "domain": "storage", "service": "gcs_storage"},
+		Regions:        []string{"r1", "r2", "r3"},
+		BaselineRegion: "r2",
+	})
+
+	sorted, ok := resp["all_regions_sorted"].([]any)
+	if !ok {
+		t.Fatalf("all_regions_sorted missing or wrong type: %v", resp["all_regions_sorted"])
+	}
+
+	var r1Entry, r3Entry map[string]any
+	for _, entry := range sorted {
+		e := entry.(map[string]any)
+		switch e["region"] {
+		case "r1":
+			r1Entry = e
+		case "r3":
+			r3Entry = e
+		}
+	}
+	if r1Entry == nil || r3Entry == nil {
+		t.Fatalf("could not find r1/r3 entries in %v", sorted)
+	}
+
+	// delta(r1) = (0.020-0.023)/0.023*100 = -13.04...% -> "-13.0%"
+	if got, _ := r1Entry["delta_pct"].(string); got != "-13.0%" {
+		t.Errorf("r1 delta_pct: got %q, want \"-13.0%%\"; "+
+			"a region-leaking grouping bug would instead null this out entirely", got)
+	}
+	// delta(r3) = (0.026-0.023)/0.023*100 = 13.04...% -> "+13.0%"
+	if got, _ := r3Entry["delta_pct"].(string); got != "+13.0%" {
+		t.Errorf("r3 delta_pct: got %q, want \"+13.0%%\"; "+
+			"a region-leaking grouping bug would instead null this out entirely", got)
+	}
+}
+
+// --------------------------------------------------------------------------
 // Tests: compare_prices / get_prices_batch — RC3-001 transient error classification
 // --------------------------------------------------------------------------
 
