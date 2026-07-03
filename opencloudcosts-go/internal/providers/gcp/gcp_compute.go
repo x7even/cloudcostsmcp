@@ -278,8 +278,12 @@ func (p *Provider) GetComputePrice(
 
 	fsku, hasFSKU := utils.GCPFamilySKU[family]
 	if !hasFSKU {
-		return nil, fmt.Errorf("gcp: machine family %q is not supported; supported: %v",
-			family, sortedFamilyKeys())
+		// Wrap providers.ErrNotSupported (rather than a bare fmt.Errorf) so the
+		// caller (lookup.go) classifies this as a clean not_supported response
+		// instead of a retryable upstream_failure -- there is nothing to retry,
+		// this machine family is simply absent from the local catalog.
+		return nil, fmt.Errorf("gcp: machine family %q is not in the supported catalog (supported: %v): %w",
+			family, sortedFamilyKeys(), providers.ErrNotSupported)
 	}
 
 	// SUD is computed from on-demand rates + published tier schedule, not from catalog SKUs.
@@ -462,8 +466,12 @@ func (p *Provider) gcpSUDPrice(
 
 	fsku, hasFSKU := utils.GCPFamilySKU[family]
 	if !hasFSKU {
-		return nil, fmt.Errorf("gcp: machine family %q is not supported; supported: %v",
-			family, sortedFamilyKeys())
+		// Wrap providers.ErrNotSupported (rather than a bare fmt.Errorf) so the
+		// caller (lookup.go) classifies this as a clean not_supported response
+		// instead of a retryable upstream_failure -- there is nothing to retry,
+		// this machine family is simply absent from the local catalog.
+		return nil, fmt.Errorf("gcp: machine family %q is not in the supported catalog (supported: %v): %w",
+			family, sortedFamilyKeys(), providers.ErrNotSupported)
 	}
 
 	// Get on-demand CPU/RAM description strings for this family.

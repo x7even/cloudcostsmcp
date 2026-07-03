@@ -2,6 +2,13 @@
 // This file ports gcp_specs.py: GCP instance family → SKU mapping data.
 package utils
 
+// Catalog freshness: instance family coverage last reviewed 2026-07 against
+// https://docs.cloud.google.com/compute/docs/general-purpose-machines (C4) and
+// https://docs.cloud.google.com/compute/docs/storage-optimized-machines (Z3).
+// When GCP GAs a new machine family, add it here (GCPInstanceSpecs +
+// GCPFamilySKU) -- GetComputePrice fetches live prices from
+// cloudbilling.googleapis.com, but only for families this catalog recognizes.
+
 import (
 	"strconv"
 	"strings"
@@ -218,6 +225,55 @@ var GCPInstanceSpecs = map[string]InstanceSpec{
 	"g2-standard-96": {96, 384.0},
 	// ---- A3 (GPU, H100 80GB) ----
 	"a3-highgpu-8g": {208, 1872.0},
+	// ---- C4 standard (3.75 GB/vCPU) ----
+	// Source: https://docs.cloud.google.com/compute/docs/general-purpose-machines (C4 section)
+	// cross-checked against https://instances.vantage.sh/gcp/c4-standard-8 (2026-07).
+	"c4-standard-2":   {2, 7.0},
+	"c4-standard-4":   {4, 15.0},
+	"c4-standard-8":   {8, 30.0},
+	"c4-standard-16":  {16, 60.0},
+	"c4-standard-24":  {24, 90.0},
+	"c4-standard-32":  {32, 120.0},
+	"c4-standard-48":  {48, 180.0},
+	"c4-standard-96":  {96, 360.0},
+	"c4-standard-144": {144, 540.0},
+	"c4-standard-192": {192, 720.0},
+	"c4-standard-288": {288, 1080.0},
+	// ---- C4 highcpu (2 GB/vCPU) ----
+	"c4-highcpu-2":   {2, 4.0},
+	"c4-highcpu-4":   {4, 8.0},
+	"c4-highcpu-8":   {8, 16.0},
+	"c4-highcpu-16":  {16, 32.0},
+	"c4-highcpu-32":  {32, 64.0},
+	"c4-highcpu-48":  {48, 96.0},
+	"c4-highcpu-96":  {96, 192.0},
+	"c4-highcpu-192": {192, 384.0},
+	// ---- C4 highmem (7.75 GB/vCPU) ----
+	"c4-highmem-2":   {2, 15.0},
+	"c4-highmem-4":   {4, 31.0},
+	"c4-highmem-8":   {8, 62.0},
+	"c4-highmem-16":  {16, 124.0},
+	"c4-highmem-32":  {32, 248.0},
+	"c4-highmem-48":  {48, 372.0},
+	"c4-highmem-96":  {96, 744.0},
+	"c4-highmem-192": {192, 1488.0},
+	// ---- Z3 storage-optimized (8 GB/vCPU, mandatory local-SSD suffix) ----
+	// Z3 has no bare "z3-highmem-N" name -- every shape requires a "-standardlssd"
+	// or "-highlssd"[-metal] suffix that selects the attached local-SSD size.
+	// Source: https://docs.cloud.google.com/compute/docs/storage-optimized-machines
+	// (Z3 standardlssd / highlssd tables), verified 2026-07.
+	"z3-highmem-14-standardlssd":    {14, 112.0},
+	"z3-highmem-22-standardlssd":    {22, 176.0},
+	"z3-highmem-44-standardlssd":    {44, 352.0},
+	"z3-highmem-88-standardlssd":    {88, 704.0},
+	"z3-highmem-176-standardlssd":   {176, 1406.0},
+	"z3-highmem-8-highlssd":         {8, 64.0},
+	"z3-highmem-16-highlssd":        {16, 128.0},
+	"z3-highmem-22-highlssd":        {22, 176.0},
+	"z3-highmem-32-highlssd":        {32, 256.0},
+	"z3-highmem-44-highlssd":        {44, 352.0},
+	"z3-highmem-88-highlssd":        {88, 704.0},
+	"z3-highmem-192-highlssd-metal": {192, 1536.0},
 }
 
 // seriesRamRatio is GB/vCPU by series name.
@@ -458,6 +514,45 @@ var GCPFamilySKU = map[string]FamilySKU{
 		FlexCUDRAMDesc: "",
 		// A3 GPU info (H100 80GB) is in GCPInstanceGPU; GPUDesc is intentionally empty here.
 		GPUDesc: "",
+	},
+	// C4: general-purpose, Intel Granite Rapids/Emerald Rapids. On-demand and
+	// Spot SKU description prefixes confirmed against
+	// https://cloud.google.com/skus/sku-groups/c4-on-demand-vms and
+	// https://cloud.google.com/skus/sku-groups/c4-spot-preemptible-vms (2026-07).
+	// No public SKU-groups page confirming resource-based (Commitment v1) CUD
+	// description text for C4 was found, so CUDCPUDesc/CUDRAMDesc are left
+	// empty (cud_1yr/cud_3yr terms return an empty price list for C4, same as
+	// the existing pattern for T2A) rather than guessing the SKU text. Flex CUD
+	// and SUD eligibility (sudEligibleFamilies / flexCUDEligibleFamilies) are
+	// separate, pre-existing gates this change intentionally does not touch --
+	// out of scope for RC3-003, which only fixes on-demand/spot family
+	// recognition.
+	"c4": {
+		CPUDesc:        "C4 Instance Core",
+		RAMDesc:        "C4 Instance Ram",
+		PreemptCPUDesc: "Spot Preemptible C4 Instance Core",
+		PreemptRAMDesc: "Spot Preemptible C4 Instance Ram",
+		CUDCPUDesc:     "",
+		CUDRAMDesc:     "",
+		FlexCUDCPUDesc: "", // unused; Flex CUD is computed from on-demand rates
+		FlexCUDRAMDesc: "",
+	},
+	// Z3: storage-optimized, local-SSD attached (every instance type name carries
+	// a mandatory "-standardlssd"/"-highlssd" suffix; see GCPInstanceSpecs). SKU
+	// description prefixes confirmed against
+	// https://cloud.google.com/skus/sku-groups/z3-on-demand-vms and
+	// https://cloud.google.com/skus/sku-groups/z3-spot-preemptible-vms (2026-07).
+	// No public resource-based (Commitment v1) CUD SKU-groups page was found for
+	// Z3, so CUDCPUDesc/CUDRAMDesc are left empty rather than guessing.
+	"z3": {
+		CPUDesc:        "Z3 Instance Core",
+		RAMDesc:        "Z3 Instance Ram",
+		PreemptCPUDesc: "Spot Preemptible Z3 Instance Core",
+		PreemptRAMDesc: "Spot Preemptible Z3 Instance Ram",
+		CUDCPUDesc:     "",
+		CUDRAMDesc:     "",
+		FlexCUDCPUDesc: "", // unused; Flex CUD is computed from on-demand rates
+		FlexCUDRAMDesc: "",
 	},
 }
 

@@ -9,6 +9,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -546,7 +547,7 @@ func (h *Handler) HandleGetPrice(
 
 	result, err := pvdr.GetPrice(ctx, spec)
 	if err != nil {
-		if err == providers.ErrNotSupported {
+		if errors.Is(err, providers.ErrNotSupported) {
 			return errResult(map[string]any{
 				"error":    "not_supported",
 				"provider": string(spec.GetProvider()),
@@ -661,7 +662,7 @@ func (h *Handler) HandleGetPricesBatch(
 			if err != nil {
 				// Classify: distinguish a transport/upstream failure (may
 				// resolve on retry) from a permanent/no-data error (RC3-001).
-				if err == providers.ErrNotSupported || !utils.IsTransient(err) {
+				if errors.Is(err, providers.ErrNotSupported) || !utils.IsTransient(err) {
 					results[idx] = fetchResult{itype: it, err: err.Error(), status: regionStatusNoData}
 					return
 				}
@@ -851,7 +852,7 @@ func (h *Handler) HandleComparePrices(
 				// must not be silently collapsed into a genuine "no data" result
 				// (RC3-001). ErrNotSupported and non-transient (permanent) errors
 				// are treated as no-data for this region rather than retryable.
-				if err == providers.ErrNotSupported || !utils.IsTransient(err) {
+				if errors.Is(err, providers.ErrNotSupported) || !utils.IsTransient(err) {
 					results[idx] = regionResult{region: rgn, status: regionStatusNoData}
 					return
 				}
@@ -1261,7 +1262,7 @@ func (h *Handler) HandleGetSpotHistory(
 
 	result, err := pvdr.GetSpotHistory(ctx, spec, in.Hours, in.AvailabilityZone)
 	if err != nil {
-		if err == providers.ErrNotSupported {
+		if errors.Is(err, providers.ErrNotSupported) {
 			return errResult(map[string]any{
 				"error":    "not_supported",
 				"provider": string(spec.GetProvider()),

@@ -4,6 +4,7 @@ package gcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,7 @@ import (
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/cache"
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/config"
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/models"
+	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/providers"
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/utils"
 )
 
@@ -493,6 +495,117 @@ func TestGetComputePrice_UnknownInstanceType(t *testing.T) {
 	_, err := p.GetComputePrice(context.Background(), "not-a-real-type", "us-central1", "Linux", models.PricingTermOnDemand)
 	if err == nil {
 		t.Error("expected error for unknown instance type")
+	}
+}
+
+// TestGetComputePrice_UnsupportedFamily_ReturnsErrNotSupported verifies that a
+// machine family absent from the local catalog (parseable by naming convention,
+// but with no GCPFamilySKU entry) returns an error that wraps
+// providers.ErrNotSupported — not a bare error — so the MCP layer (lookup.go)
+// can classify it as a clean not_supported response instead of a retryable
+// upstream_failure (RC3-013). Before the fix, GetComputePrice returned a plain
+// fmt.Errorf here and this assertion failed.
+func TestGetComputePrice_UnsupportedFamily_ReturnsErrNotSupported(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("no HTTP call should be made for an unsupported family")
+	}))
+	defer ts.Close()
+	p := newTestProvider(t, ts)
+
+	// "z9-standard-4" parses fine via the naming-convention fallback (family=z9,
+	// series=standard, vcpus=4) but "z9" has no GCPFamilySKU entry.
+	_, err := p.GetComputePrice(context.Background(), "z9-standard-4", "us-central1", "Linux", models.PricingTermOnDemand)
+	if err == nil {
+		t.Fatal("expected error for unsupported family")
+	}
+	if !errors.Is(err, providers.ErrNotSupported) {
+		t.Errorf("expected error to wrap providers.ErrNotSupported, got: %v", err)
+	}
+}
+
+// TestGetComputePrice_C4Standard_OnDemand verifies that the C4 general-purpose
+// family (added in RC3-003) resolves through the live SKU catalog once the
+// family is present in GCPFamilySKU. SKU description prefixes match
+// https://cloud.google.com/skus/sku-groups/c4-on-demand-vms.
+func TestGetComputePrice_C4Standard_OnDemand(t *testing.T) {
+	// c4-standard-4: 4 vCPU, 15 GB RAM (see gcp_specs.go).
+	skus := []map[string]any{
+		makeSKU("C4 Instance Core running in Americas", "OnDemand", "us-central1", "0", 30_000_000),
+		makeSKU("C4 Instance Ram running in Americas", "OnDemand", "us-central1", "0", 3_500_000),
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(skuResponse(skus))
+	}))
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	prices, err := p.GetComputePrice(context.Background(), "c4-standard-4", "us-central1", "Linux", models.PricingTermOnDemand)
+	if err != nil {
+		t.Fatalf("GetComputePrice: %v", err)
+	}
+	if len(prices) != 1 {
+		t.Fatalf("expected 1 price, got %d", len(prices))
+	}
+	want := 4*0.03 + 15*0.0035
+	if abs(prices[0].PricePerUnit-want) > 1e-6 {
+		t.Errorf("PricePerUnit = %.6f, want %.6f", prices[0].PricePerUnit, want)
+	}
+}
+
+// TestGetComputePrice_Z3Highlssd_OnDemand verifies the Z3 storage-optimized
+// family (added in RC3-003), including its mandatory local-SSD suffix naming.
+// SKU description prefixes match
+// https://cloud.google.com/skus/sku-groups/z3-on-demand-vms.
+func TestGetComputePrice_Z3Highlssd_OnDemand(t *testing.T) {
+	// z3-highmem-8-highlssd: 8 vCPU, 64 GB RAM (see gcp_specs.go).
+	skus := []map[string]any{
+		makeSKU("Z3 Instance Core running in Americas", "OnDemand", "us-central1", "0", 40_000_000),
+		makeSKU("Z3 Instance Ram running in Americas", "OnDemand", "us-central1", "0", 5_000_000),
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(skuResponse(skus))
+	}))
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	prices, err := p.GetComputePrice(context.Background(), "z3-highmem-8-highlssd", "us-central1", "Linux", models.PricingTermOnDemand)
+	if err != nil {
+		t.Fatalf("GetComputePrice: %v", err)
+	}
+	if len(prices) != 1 {
+		t.Fatalf("expected 1 price, got %d", len(prices))
+	}
+	want := 8*0.04 + 64*0.005
+	if abs(prices[0].PricePerUnit-want) > 1e-6 {
+		t.Errorf("PricePerUnit = %.6f, want %.6f", prices[0].PricePerUnit, want)
+	}
+}
+
+// TestListInstanceTypes_IncludesC4AndZ3 verifies that list_instance_types now
+// surfaces C4 and Z3 shapes (RC3-003) — before the fix these families were
+// entirely absent from GCPInstanceSpecs, so filtering by family="c4" or "z3"
+// returned zero results.
+func TestListInstanceTypes_IncludesC4AndZ3(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer ts.Close()
+	p := newTestProvider(t, ts)
+
+	c4Types, err := p.ListInstanceTypes(context.Background(), "us-central1", "c4", 0, 0, false)
+	if err != nil {
+		t.Fatalf("ListInstanceTypes(c4): %v", err)
+	}
+	if len(c4Types) == 0 {
+		t.Error("expected at least one c4 instance type, got 0")
+	}
+
+	z3Types, err := p.ListInstanceTypes(context.Background(), "us-central1", "z3", 0, 0, false)
+	if err != nil {
+		t.Fatalf("ListInstanceTypes(z3): %v", err)
+	}
+	if len(z3Types) == 0 {
+		t.Error("expected at least one z3 instance type, got 0")
 	}
 }
 
