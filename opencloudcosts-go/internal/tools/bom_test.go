@@ -868,6 +868,55 @@ func TestBOMMonthlyCostMath(t *testing.T) {
 	}
 }
 
+// TestEstimateBOM_FractionalQuantityNotTruncated verifies that a fractional
+// "quantity" (e.g. 2.9) is honored exactly rather than silently truncated to
+// an int. Prior to the fix, processBOMItems extracted quantity via int(n),
+// so 2.9 became 2 — both the reported "quantity" field and the computed
+// monthly_cost were wrong with no error or warning surfaced to the caller.
+func TestEstimateBOM_FractionalQuantityNotTruncated(t *testing.T) {
+	pvdr := &mockProvider{
+		name:          "aws",
+		defaultRegion: "us-east-1",
+		supportsFunc:  func(_ models.PricingDomain, _ string) bool { return true },
+		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
+			price := makeComputePrice("aws", spec.GetRegion(), "m5.xlarge", 0.192)
+			return &models.PricingResult{PublicPrices: []models.NormalizedPrice{price}}, nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"aws": pvdr})
+
+	item := map[string]any{
+		"provider":      "aws",
+		"domain":        "compute",
+		"resource_type": "m5.xlarge",
+		"region":        "us-east-1",
+		"quantity":      2.9,
+	}
+	resp := callEstimateBOM(t, h, []map[string]any{item})
+
+	if _, ok := resp["error"]; ok {
+		t.Fatalf("expected success: %v", resp)
+	}
+	lineItems, _ := resp["line_items"].([]any)
+	if len(lineItems) != 1 {
+		t.Fatalf("expected 1 line item, got: %v", resp["line_items"])
+	}
+	li := lineItems[0].(map[string]any)
+
+	gotQty, _ := li["quantity"].(float64)
+	if gotQty != 2.9 {
+		t.Errorf("expected quantity == 2.9 (not truncated to 2), got %v", gotQty)
+	}
+
+	mc := li["monthly_cost"].(map[string]any)
+	amount, _ := mc["amount"].(float64)
+	// 2.9 x $0.192/hr x 730hr = $406.65. Truncation to 2 would give ~$280.32.
+	want := 0.192 * 730 * 2.9
+	if amount < want-0.01 || amount > want+0.01 {
+		t.Errorf("expected monthly_cost ~%.4f (fractional quantity honored), got %.4f", want, amount)
+	}
+}
+
 // --------------------------------------------------------------------------
 // estimate_bom — not_included_action wording regression
 // --------------------------------------------------------------------------

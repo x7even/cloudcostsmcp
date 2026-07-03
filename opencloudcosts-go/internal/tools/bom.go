@@ -50,16 +50,16 @@ type GetDiscountSummaryInput struct {
 //	PER_GB_MONTH → price * size_gb * quantity
 //	PER_MONTH   → price * quantity
 //	else        → price * quantity
-func bomMonthlyCost(price models.NormalizedPrice, quantity int, hoursPerMonth, sizeGB float64) float64 {
+func bomMonthlyCost(price models.NormalizedPrice, quantity float64, hoursPerMonth, sizeGB float64) float64 {
 	switch price.Unit { //nolint:exhaustive // unlisted units (per_gb, per_request, etc.) use the default per-unit scaling
 	case models.PriceUnitPerHour:
-		return price.PricePerUnit * hoursPerMonth * float64(quantity)
+		return price.PricePerUnit * hoursPerMonth * quantity
 	case models.PriceUnitPerGBMonth:
-		return price.PricePerUnit * sizeGB * float64(quantity)
+		return price.PricePerUnit * sizeGB * quantity
 	case models.PriceUnitPerMonth:
-		return price.PricePerUnit * float64(quantity)
+		return price.PricePerUnit * quantity
 	default:
-		return price.PricePerUnit * float64(quantity)
+		return price.PricePerUnit * quantity
 	}
 }
 
@@ -137,7 +137,7 @@ type bomLineItem struct {
 	provider    string
 	service     string
 	region      string
-	quantity    int
+	quantity    float64
 	unitPrice   models.NormalizedPrice
 	monthlyCost float64
 	annualCost  float64
@@ -177,15 +177,15 @@ func processBOMItems(
 		label := fmt.Sprintf("Item %d", idx+1)
 
 		// Extract BoM-only fields.
-		quantity := 1
+		quantity := 1.0
 		if v, ok := item["quantity"]; ok {
 			switch n := v.(type) {
 			case float64:
-				quantity = int(n)
-			case int:
 				quantity = n
+			case int:
+				quantity = float64(n)
 			case int64:
-				quantity = int(n)
+				quantity = float64(n)
 			}
 		}
 		hoursPerMonth := 730.0
@@ -283,7 +283,7 @@ func processBOMItems(
 			switch price.Unit {
 			case models.PriceUnitPerIOPSMonth:
 				// Multiply by provisioned IOPS count, not by storage size.
-				monthly = price.PricePerUnit * float64(iopsCount) * float64(quantity)
+				monthly = price.PricePerUnit * float64(iopsCount) * quantity
 			default:
 				monthly = bomMonthlyCost(price, quantity, hoursPerMonth, sizeGB)
 			}

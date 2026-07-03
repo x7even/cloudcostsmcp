@@ -3,6 +3,7 @@ package tools_test
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -332,5 +333,86 @@ func TestCompareBOM_NotePresent(t *testing.T) {
 	note, _ := resp["note"].(string)
 	if note == "" {
 		t.Error("expected non-empty 'note' field disclosing instance type approximation")
+	}
+}
+
+// --------------------------------------------------------------------------
+// Test 7: fractional quantity in workload.
+// --------------------------------------------------------------------------
+
+// TestCompareBOMInput_FractionalQuantityUnmarshal verifies that JSON input
+// with a fractional "quantity" (e.g. 2.7) decodes into CompareBOMInput
+// without error. Prior to the fix, WorkloadItem.Quantity was declared int,
+// so decoding this exact payload failed with:
+//
+//	json: cannot unmarshal "2.7" into Go struct field WorkloadItem.quantity of type int
+//
+// even though the tool's advertised JSON schema declares quantity as
+// "type":"number" (schemas/tools-snapshot.json).
+func TestCompareBOMInput_FractionalQuantityUnmarshal(t *testing.T) {
+	raw := []byte(`{
+		"providers": ["aws"],
+		"workload": {
+			"web": {"type": "compute", "vcpus": 4, "memory_gb": 16, "quantity": 2.7}
+		},
+		"terms": ["on_demand"]
+	}`)
+
+	var in tools.CompareBOMInput
+	if err := json.Unmarshal(raw, &in); err != nil {
+		t.Fatalf("expected fractional quantity to unmarshal cleanly, got error: %v", err)
+	}
+
+	got := in.Workload["web"].Quantity
+	if got != 2.7 {
+		t.Errorf("expected Quantity == 2.7, got %v", got)
+	}
+}
+
+// TestCompareBOM_FractionalQuantityCost verifies that a fractional workload
+// quantity is used exactly (not truncated) when computing the monthly cost.
+func TestCompareBOM_FractionalQuantityCost(t *testing.T) {
+	pvdr := &mockProvider{
+		name:          "aws",
+		defaultRegion: "us-east-1",
+		supportsFunc:  func(_ models.PricingDomain, _ string) bool { return true },
+		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
+			price := makeComputePrice("aws", spec.GetRegion(), "m5.xlarge", 0.192)
+			return &models.PricingResult{PublicPrices: []models.NormalizedPrice{price}}, nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"aws": pvdr})
+
+	resp := callCompareBOM(t, h, tools.CompareBOMInput{
+		Providers: []string{"aws"},
+		Workload: map[string]tools.WorkloadItem{
+			"web": {Type: "compute", VCPUs: 4, MemoryGB: 16, Quantity: 2.7},
+		},
+		Terms: []string{"on_demand"},
+	})
+
+	if _, ok := resp["error"]; ok {
+		t.Fatalf("expected success, got: %v", resp["error"])
+	}
+
+	cmp, ok := resp["comparison"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected comparison map, got %T", resp["comparison"])
+	}
+	awsData, ok := cmp["aws"].(map[string]any)
+	if !ok {
+		t.Fatal("expected 'aws' in comparison")
+	}
+	odData, ok := awsData["on_demand"].(map[string]any)
+	if !ok {
+		t.Fatal("expected on_demand data for aws")
+	}
+
+	// 2.7 x $0.192/hr x 730hr = $378.43. If quantity were truncated to 2,
+	// this would come out to ~$280.32 instead.
+	want := 0.192 * 730 * 2.7
+	totalMonthly, _ := odData["total_monthly"].(float64)
+	if diff := totalMonthly - want; diff > 0.01 || diff < -0.01 {
+		t.Errorf("expected total_monthly ~%.2f (fractional quantity honored), got %.2f", want, totalMonthly)
 	}
 }
