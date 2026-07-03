@@ -613,8 +613,8 @@ func TestLookupSKUAcrossRegions_ServiceUndeterminable(t *testing.T) {
 // direct regression test for RC3-008: previously,
 // get_price_by_sku(sku="CAN1-TimedStorage-ByteHrs", regions=[us-east-1])
 // with no service hint silently returned a single confidently-priced
-// AmazonDynamoDB "Database Storage" row (/bin/bash.25/GB-month) when the usage
-// type is equally consistent with S3 Standard storage (/bin/bash.023/GB-month) --
+// AmazonDynamoDB "Database Storage" row ($0.25/GB-month) when the usage
+// type is equally consistent with S3 Standard storage ($0.023/GB-month) --
 // an ~11x pricing error with no forced signal to the caller. It must now
 // come back as a structured SKUErrServiceUndeterminable error instead of a
 // confident (and possibly wrong) single-service answer.
