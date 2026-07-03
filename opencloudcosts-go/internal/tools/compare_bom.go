@@ -38,8 +38,9 @@ type WorkloadItem struct {
 	VCPUs float64 `json:"vcpus"`
 	// MemoryGB is the memory in GB (compute / database / cache).
 	MemoryGB float64 `json:"memory_gb"`
-	// Quantity is the number of instances (default 1).
-	Quantity int `json:"quantity"`
+	// Quantity is the number of instances (default 1). Fractional values are
+	// supported (e.g. partial-month averages, fractional replica counts).
+	Quantity float64 `json:"quantity"`
 	// Engine is the database/cache engine (default "mysql").
 	Engine string `json:"engine"`
 	// StorageGB is the storage size in GB (storage / database).
@@ -705,7 +706,7 @@ func (h *Handler) HandleCompareBOM(
 					var componentCost float64
 					switch price.Unit {
 					case models.PriceUnitPerIOPSMonth:
-						componentCost = price.PricePerUnit * float64(iopsCount) * float64(qty)
+						componentCost = price.PricePerUnit * float64(iopsCount) * qty
 					default:
 						componentCost = bomMonthlyCost(price, qty, 730.0, sizeGB)
 					}
