@@ -551,9 +551,18 @@ func (p *Provider) GetNATPrice(ctx context.Context, region string) ([]models.Nor
 // GetALBPrice — AWS Application Load Balancer pricing
 // --------------------------------------------------------------------------
 
-// GetALBPrice returns AWS Application Load Balancer pricing.
-// ALB uses LCU-based billing ($0.008/LCU-hour) plus an hourly base charge.
-// Source: https://aws.amazon.com/elasticloadbalancing/pricing/
+// GetALBPrice returns AWS Application Load Balancer pricing: an hourly base
+// charge plus an LCU-hour charge, both of which vary by region. It queries
+// the AWSELB service (via the live AWS Pricing API, or its public bulk-
+// catalog mirror when no credentials are configured — see GetProducts),
+// filtered to productFamily="Load Balancer-Application" and
+// operation="LoadBalancing:Application", the same servicecode/attribute
+// combination get_price_by_sku resolves ELB LCU SKUs against (e.g.
+// "CAN1-LCUUsage" -> $0.0088 in ca-central-1 vs $0.0080 in eu-west-1).
+// Falls back to the last known static us-east-1 published rates — tagged
+// Attributes["fallback"]="true" — only if the live/bulk fetch yields no
+// usable price for the region.
+// Fallback source: https://aws.amazon.com/elasticloadbalancing/pricing/
 func (p *Provider) GetALBPrice(ctx context.Context, region string) ([]models.NormalizedPrice, error) {
 	cacheKey := fmt.Sprintf("aws:alb:%s", region)
 	if cached, ok := p.cache.Get(cacheKey); ok {
@@ -562,35 +571,119 @@ func (p *Provider) GetALBPrice(ctx context.Context, region string) ([]models.Nor
 			return prices, nil
 		}
 	}
+
 	now := time.Now()
-	srcURL := "https://aws.amazon.com/elasticloadbalancing/pricing/"
-	prices := []models.NormalizedPrice{
-		{
+	location, err := regionToLocation(region)
+	if err != nil {
+		return nil, err
+	}
+
+	filters := []pricingtypes.Filter{
+		mkFilter("location", location),
+		mkFilter("productFamily", "Load Balancer-Application"),
+		mkFilter("operation", "LoadBalancing:Application"),
+		mkFilter("locationType", "AWS Region"),
+	}
+
+	var hourlyPrice, lcuPrice float64
+	rawItems, apiErr := p.GetProducts(ctx, "AWSELB", filters, 20)
+	if apiErr == nil {
+		for _, raw := range rawItems {
+			var sku parsedSKU
+			if err2 := json.Unmarshal([]byte(raw), &sku); err2 != nil {
+				continue
+			}
+			usagetype := sku.Product.Attributes["usagetype"]
+			// productFamily+operation alone still admits Reserved-capacity and
+			// Trust Store (mutual TLS) rows, which bill a different dimension
+			// than the standard on-demand hourly/LCU charges; Outposts rows
+			// are already excluded by the locationType filter above.
+			if strings.Contains(usagetype, "Reserved") || strings.Contains(usagetype, "TS-") {
+				continue
+			}
+			priceVal, _ := extractOnDemandPrice(sku)
+			if priceVal == 0 {
+				continue
+			}
+			switch {
+			case hourlyPrice == 0 && strings.HasSuffix(usagetype, "LoadBalancerUsage"):
+				hourlyPrice = priceVal
+			case lcuPrice == 0 && strings.HasSuffix(usagetype, "LCUUsage"):
+				lcuPrice = priceVal
+			}
+		}
+	}
+
+	var prices []models.NormalizedPrice
+	if hourlyPrice > 0 {
+		prices = append(prices, models.NormalizedPrice{
 			Provider: models.CloudProviderAWS, Service: "lb",
 			SKUID:         fmt.Sprintf("aws:alb:%s:hourly", region),
-			ProductFamily: "Load Balancer", Description: "Application Load Balancer hourly charge",
+			ProductFamily: "Load Balancer-Application", Description: "Application Load Balancer hourly charge",
 			Region:     region,
 			Attributes: map[string]string{"lb_type": "application", "billing_dimension": "hourly"},
+			PricingTerm:  models.PricingTermOnDemand,
+			PricePerUnit: hourlyPrice, Unit: models.PriceUnitPerHour,
+			Currency: "USD", FetchedAt: &now, SourceURL: sourceURL,
+		})
+	}
+	if lcuPrice > 0 {
+		prices = append(prices, models.NormalizedPrice{
+			Provider: models.CloudProviderAWS, Service: "lb",
+			SKUID:         fmt.Sprintf("aws:alb:%s:lcu", region),
+			ProductFamily: "Load Balancer-Application", Description: "Application Load Balancer LCU-hour",
+			Region:     region,
+			Attributes: map[string]string{"lb_type": "application", "billing_dimension": "lcu_hour"},
+			PricingTerm:  models.PricingTermOnDemand,
+			PricePerUnit: lcuPrice, Unit: models.PriceUnitPerHour,
+			Currency: "USD", FetchedAt: &now, SourceURL: sourceURL,
+		})
+	}
+
+	if len(prices) > 0 {
+		// Only cache real, region-specific prices — never the static
+		// fallback below, so a transient fetch failure doesn't pin callers
+		// to stale us-east-1 rates for the full cache TTL (mirrors
+		// GetElastiCachePrice's fallback-is-never-cached behavior).
+		if data, err := json.Marshal(prices); err == nil {
+			ttl := time.Duration(p.cfg.CacheTTLHours) * time.Hour
+			p.cache.Set(cacheKey, data, ttl)
+		}
+		return prices, nil
+	}
+
+	// Live/bulk fetch failed or returned nothing usable for this region —
+	// fall back to the last known published on-demand rates (us-east-1),
+	// explicitly flagged so callers know these are not region-specific.
+	srcURL := "https://aws.amazon.com/elasticloadbalancing/pricing/"
+	return []models.NormalizedPrice{
+		{
+			Provider: models.CloudProviderAWS, Service: "lb",
+			SKUID:         fmt.Sprintf("aws:alb:%s:hourly:fallback", region),
+			ProductFamily: "Load Balancer-Application", Description: "Application Load Balancer hourly charge (static fallback)",
+			Region: region,
+			Attributes: map[string]string{
+				"lb_type": "application", "billing_dimension": "hourly",
+				"fallback": "true", "note": "static us-east-1 published rate; may vary by region",
+			},
 			PricingTerm:  models.PricingTermOnDemand,
 			PricePerUnit: 0.0225, Unit: models.PriceUnitPerHour,
 			Currency: "USD", FetchedAt: &now, SourceURL: srcURL,
 		},
 		{
 			Provider: models.CloudProviderAWS, Service: "lb",
-			SKUID:         fmt.Sprintf("aws:alb:%s:lcu", region),
-			ProductFamily: "Load Balancer", Description: "Application Load Balancer LCU-hour",
-			Region:     region,
-			Attributes: map[string]string{"lb_type": "application", "billing_dimension": "lcu_hour"},
+			SKUID:         fmt.Sprintf("aws:alb:%s:lcu:fallback", region),
+			ProductFamily: "Load Balancer-Application", Description: "Application Load Balancer LCU-hour (static fallback)",
+			Region: region,
+			Attributes: map[string]string{
+				"lb_type": "application", "billing_dimension": "lcu_hour",
+				"fallback": "true", "note": "static us-east-1 published rate; may vary by region",
+			},
 			PricingTerm:  models.PricingTermOnDemand,
 			PricePerUnit: 0.008, Unit: models.PriceUnitPerHour,
 			Currency: "USD", FetchedAt: &now, SourceURL: srcURL,
 		},
-	}
-	if data, err := json.Marshal(prices); err == nil {
-		ttl := time.Duration(p.cfg.CacheTTLHours) * time.Hour
-		p.cache.Set(cacheKey, data, ttl)
-	}
-	return prices, nil
+	}, nil
 }
 
 // --------------------------------------------------------------------------
