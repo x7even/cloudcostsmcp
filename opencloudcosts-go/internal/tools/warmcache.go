@@ -66,8 +66,8 @@ func resolveServiceExample(catalog *models.ProviderCatalog, requested string) (d
 	// keys like "compute" and compound keys like "compute/csp").
 	if ex, found := catalog.ExampleInvocations[req]; found {
 		d, s := req, ""
-		if idx := strings.Index(req, "/"); idx >= 0 {
-			d, s = req[:idx], req[idx+1:]
+		if before, after, found := strings.Cut(req, "/"); found {
+			d, s = before, after
 		}
 		return d, s, ex, true
 	}
