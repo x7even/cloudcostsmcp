@@ -13,6 +13,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the usage-type pattern when not supplied, and falls back to the inferred servicecode with a
   `service_mismatch` flag when an explicit `service` hint finds no match. Flags compound
   inter-region/Wavelength `AWSDataTransfer` SKUs with a warning rather than guessing silently.
+- **get_prices_by_sku** — batch form of `get_price_by_sku` for resolving many raw AWS
+  usage-type/SKU strings (e.g. every distinct line item in a CUR export) against the same set
+  of target regions in one call, up to 25 SKUs per batch. Fans out across SKUs with bounded
+  concurrency, reusing the same per-SKU resolution logic and process-lifetime catalog cache as
+  `get_price_by_sku` so repeated `(service, region)` fetches across SKUs in a batch are paid
+  once. Successful SKUs land in `results` in input order (not price-sorted, since distinct SKUs
+  commonly price in incomparable units); SKUs that fail outright are reported in a top-level
+  `errors` map keyed by SKU, mirroring `get_prices_batch`'s per-item error shape.
 
 ### Fixed
 

@@ -162,6 +162,44 @@
       }
     },
     {
+      "name": "get_prices_by_sku",
+      "description": "\n        Batch form of get_price_by_sku: resolve many raw AWS usage-type/SKU strings — each exactly\n        as it appears in a Cost & Usage Report (CUR) export — against the same set of target\n        regions in one call.\n\n        Use this to reconcile many CUR line items at once (e.g. every distinct usage-type/SKU in a\n        monthly export) instead of issuing one get_price_by_sku call per SKU. Each sku is resolved\n        independently via the same logic get_price_by_sku uses, so per-region ambiguous_in/\n        no_mapping_in/errors_in bucketing and baseline_region deltas all apply per sku exactly as\n        they would in a standalone get_price_by_sku call — this tool only adds the batching and\n        aggregation layer on top.\n\n        service/operation/product_family hints are not supported here (they are inherently\n        per-sku, and different SKUs in a batch usually resolve to different services) — the AWS\n        servicecode is inferred per sku from its usage-type pattern. If a particular sku needs a\n        hint to resolve an ambiguous_in entry, follow up with a single get_price_by_sku call for\n        that sku, passing operation/product_family.\n\n        Each successfully-processed sku appears in \"results\", in the same order as the input skus\n        list (NOT re-sorted by price — distinct SKUs commonly price in different units, e.g.\n        per-hour vs per-GB vs per-request, that are not meaningfully comparable). A sku that fails\n        outright (e.g. an empty string, or a usage-type pattern no service could be inferred for)\n        is instead reported in the top-level \"errors\" map, keyed by that sku string, with\n        message/status/retryable fields mirroring get_prices_batch's per-item error shape.\n\n        Args:\n            provider: Cloud provider — only \"aws\" is supported (raw usage-type SKUs are an AWS\n                      CUR concept with no GCP/Azure equivalent).\n            skus: List of raw usage-type/SKU strings, each exactly as it appears in the CUR\n                  export. Required, max 25.\n            regions: List of AWS region codes to check, e.g. [\"us-east-1\", \"eu-west-1\"]. Required,\n                     max 30 (applies to every sku).\n            baseline_region: Optional region for delta comparison, applied to every sku,\n                             e.g. \"us-east-1\".\n\n        Examples:\n            {\"skus\": [\"CAN1-BoxUsage:r5a.8xlarge\", \"USW2-BoxUsage:m5.large\"], \"regions\": [\"us-east-1\", \"ca-central-1\"]}\n        ",
+      "inputSchema": {
+        "properties": {
+          "provider": {
+            "default": "aws",
+            "title": "Provider",
+            "type": "string"
+          },
+          "skus": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Skus",
+            "type": "array"
+          },
+          "regions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Regions",
+            "type": "array"
+          },
+          "baseline_region": {
+            "default": "",
+            "title": "Baseline Region",
+            "type": "string"
+          }
+        },
+        "required": [
+          "skus",
+          "regions"
+        ],
+        "title": "get_prices_by_skuArguments",
+        "type": "object"
+      }
+    },
+    {
       "name": "search_pricing",
       "description": "Deprecated helper that redirects to the correct tools. Use describe_catalog to browse available services by domain/provider, or get_price with a known spec.",
       "inputSchema": {

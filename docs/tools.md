@@ -186,6 +186,41 @@ empty match.
 
 ---
 
+### `get_prices_by_sku`
+
+Batch form of `get_price_by_sku`: resolve many raw AWS usage-type/SKU strings — each exactly as it
+appears in a Cost & Usage Report (CUR) export — against the same set of target regions in one call.
+**AWS only.**
+
+Use this to reconcile many CUR line items at once (e.g. every distinct usage-type/SKU in a monthly
+export) instead of issuing one `get_price_by_sku` call per SKU. Each `sku` is resolved independently
+via the same logic `get_price_by_sku` uses, so per-region `ambiguous_in`/`no_mapping_in`/`errors_in`
+bucketing and `baseline_region` deltas all apply per SKU exactly as they would in a standalone
+`get_price_by_sku` call. Repeated `(service, region)` catalog fetches across SKUs in the same batch
+are memoized, so a batch of SKUs that share a service/region only pays the catalog-fetch cost once.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `provider` | string | | `"aws"` (default and only supported value) |
+| `skus` | list[string] | ✓ | Raw usage-type/SKU strings, each exactly as it appears in the CUR export. Max 25. |
+| `regions` | list[string] | ✓ | AWS region codes to check, e.g. `["ca-central-1", "us-east-1"]`. Max 30, applies to every SKU. |
+| `baseline_region` | string | | Region for delta comparison, applied to every SKU, e.g. `"us-east-1"` |
+
+**No per-SKU `service`/`operation`/`product_family` hints.** Unlike `get_price_by_sku`, these hints
+are not accepted here — they are inherently per-SKU, and different SKUs in a batch usually resolve to
+different services. The AWS servicecode is inferred per SKU from its usage-type pattern. If a
+particular SKU needs a hint to resolve an `ambiguous_in` entry, follow up with a single
+`get_price_by_sku` call for that SKU, passing `operation`/`product_family`.
+
+**Result ordering and per-SKU failures.** Each successfully-processed SKU appears in `results`, in the
+same order as the input `skus` list — NOT re-sorted by price, since distinct SKUs commonly price in
+different units (per-hour, per-GB, per-request, ...) that aren't meaningfully comparable. A SKU that
+fails outright (e.g. an empty string, or a usage-type pattern no service could be inferred for) is
+instead reported in the top-level `errors` map, keyed by that SKU string, with `message`/`status`/
+`retryable` fields mirroring `get_prices_batch`'s per-item error shape.
+
+---
+
 ### `search_pricing`
 
 Free-text search across the pricing catalog. Useful when you don't know the exact SKU or service name.
