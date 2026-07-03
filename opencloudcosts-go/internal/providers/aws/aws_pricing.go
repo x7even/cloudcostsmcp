@@ -641,15 +641,15 @@ func (p *Provider) GetStoragePrice(
 		}
 		return prices, nil
 	}
+	// gp2/gp3/st1/sc1/standard: unlike io1/io2 above, these resolve with a
+	// single-filter match against the AmazonEC2 bulk file, and the same
+	// getProductsBulk streaming fetch already proved fast enough for
+	// get_price_by_sku's EC2/EBS lookups (RC2's O(1) per-SKU fix). So try the
+	// live per-region path first here too. The static rate below is kept only
+	// as a graceful degrade if the live fetch errors (e.g. context deadline
+	// exceeded) or returns no match, so a slow network never turns into a
+	// hard failure for this call.
 	gbFallbackTypes := map[string]bool{"gp2": true, "gp3": true, "st1": true, "sc1": true, "standard": true}
-	if p.bulkFallback && gbFallbackTypes[stLower] {
-		prices := []models.NormalizedPrice{ebsGBStaticFallback(stLower, region)}
-		if data, err := json.Marshal(prices); err == nil {
-			ttl := time.Duration(p.cfg.CacheTTLHours) * time.Hour
-			p.cache.Set(cacheKey, data, ttl)
-		}
-		return prices, nil
-	}
 
 	var rawItems []string
 	if ebsTypes[strings.ToLower(storageType)] {
@@ -660,6 +660,14 @@ func (p *Provider) GetStoragePrice(
 			filters = append(filters, mkFilter("volumeApiName", strings.ToLower(storageType)))
 		}
 		rawItems, err = p.GetProducts(ctx, "AmazonEC2", filters, 5)
+		if p.bulkFallback && gbFallbackTypes[stLower] && (err != nil || len(rawItems) == 0) {
+			prices := []models.NormalizedPrice{ebsGBStaticFallback(stLower, region)}
+			if data, err := json.Marshal(prices); err == nil {
+				ttl := time.Duration(p.cfg.CacheTTLHours) * time.Hour
+				p.cache.Set(cacheKey, data, ttl)
+			}
+			return prices, nil
+		}
 	} else {
 		// S3 standard storage fallback
 		filters := []pricingtypes.Filter{

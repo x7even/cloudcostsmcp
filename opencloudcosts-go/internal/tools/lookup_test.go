@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -214,6 +215,15 @@ func makePriceResult(prices ...models.NormalizedPrice) *models.PricingResult {
 	}
 }
 
+// makeFallbackPrice is makePrice with Attributes["fallback"] set to "true",
+// mirroring how AWS provider static-fallback paths (e.g. ebsGBStaticFallback,
+// ebsIOPSStaticFallback) tag their results.
+func makeFallbackPrice(region string, pricePerUnit float64) models.NormalizedPrice {
+	p := makePrice(region, pricePerUnit)
+	p.Attributes["fallback"] = "true"
+	return p
+}
+
 // --------------------------------------------------------------------------
 // Tests: get_price
 // --------------------------------------------------------------------------
@@ -410,6 +420,68 @@ func TestGetPrice_PublicPricesSummaryShape(t *testing.T) {
 
 	if resp["auth_available"] != false {
 		t.Errorf("auth_available: got %v, want false", resp["auth_available"])
+	}
+}
+
+// --------------------------------------------------------------------------
+// Tests: get_price / compare_prices — RC3-010 top-level fallback warning
+// --------------------------------------------------------------------------
+
+// TestGetPrice_AllFallback_SurfacesWarning covers RC3-010 for get_price:
+// when every price in public_prices is static/fallback data, the response
+// must carry a top-level "warnings" entry saying so, rather than presenting
+// the fallback price with no indication it might be stale/inaccurate.
+func TestGetPrice_AllFallback_SurfacesWarning(t *testing.T) {
+	pvdr := &mockProvider{
+		name:          "aws",
+		defaultRegion: "us-east-1",
+		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
+			return makePriceResult(makeFallbackPrice(spec.GetRegion(), 0.08)), nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"aws": pvdr})
+	resp := callGetPrice(t, h, map[string]any{
+		"provider":      "aws",
+		"domain":        "storage",
+		"resource_type": "gp3",
+		"region":        "eu-central-2",
+	})
+
+	warnings, ok := resp["warnings"].([]any)
+	if !ok || len(warnings) == 0 {
+		t.Fatalf("expected non-empty warnings for all-fallback result, got: %v", resp["warnings"])
+	}
+	found := false
+	for _, w := range warnings {
+		if s, ok := w.(string); ok && strings.Contains(s, "fallback") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("warnings do not mention fallback/static data: %v", warnings)
+	}
+}
+
+// TestGetPrice_NotFallback_NoWarning is the negative counterpart: a live
+// (non-fallback) price must not trigger the RC3-010 warning.
+func TestGetPrice_NotFallback_NoWarning(t *testing.T) {
+	pvdr := &mockProvider{
+		name:          "aws",
+		defaultRegion: "us-east-1",
+		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
+			return makePriceResult(makePrice(spec.GetRegion(), 0.192)), nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"aws": pvdr})
+	resp := callGetPrice(t, h, map[string]any{
+		"provider":      "aws",
+		"domain":        "compute",
+		"resource_type": "m5.xlarge",
+		"region":        "us-east-1",
+	})
+
+	if _, ok := resp["warnings"]; ok {
+		t.Errorf("expected no warnings key for a live (non-fallback) price, got: %v", resp["warnings"])
 	}
 }
 
@@ -877,6 +949,77 @@ func TestComparePrices_ResponseFields(t *testing.T) {
 		if _, ok := resp[key]; !ok {
 			t.Errorf("response missing key %q", key)
 		}
+	}
+}
+
+// TestComparePrices_AllFallback_SurfacesWarning covers RC3-010: when every
+// region resolves to fallback/static data (the reported case — compare_prices
+// on EBS gp3 across regions all returning $0.08 with fallback="true"),
+// cheapest_region/price_delta_pct are still returned (backward compatible)
+// but a top-level warnings entry and ranking_low_confidence flag must be
+// added so callers don't treat the ranking as a real regional comparison.
+func TestComparePrices_AllFallback_SurfacesWarning(t *testing.T) {
+	pvdr := &mockProvider{
+		name:          "aws",
+		defaultRegion: "us-east-1",
+		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
+			return makePriceResult(makeFallbackPrice(spec.GetRegion(), 0.08)), nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"aws": pvdr})
+	resp := callComparePrices(t, h, tools.ComparePricesInput{
+		Spec:    map[string]any{"provider": "aws", "domain": "storage", "resource_type": "gp3"},
+		Regions: []string{"us-east-1", "eu-central-1", "eu-central-2", "eu-north-1"},
+	})
+
+	warnings, ok := resp["warnings"].([]any)
+	if !ok || len(warnings) == 0 {
+		t.Fatalf("expected non-empty warnings when all regions are fallback data, got: %v", resp["warnings"])
+	}
+	found := false
+	for _, w := range warnings {
+		if s, ok := w.(string); ok && strings.Contains(s, "fallback") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("warnings do not mention fallback/static data: %v", warnings)
+	}
+	if resp["ranking_low_confidence"] != true {
+		t.Errorf("ranking_low_confidence: got %v, want true", resp["ranking_low_confidence"])
+	}
+	// cheapest_region/price_delta_pct must still be present (not suppressed).
+	if resp["cheapest_region"] != "us-east-1" {
+		t.Errorf("cheapest_region: got %v, want us-east-1 (still present, just low-confidence)", resp["cheapest_region"])
+	}
+}
+
+// TestComparePrices_MixedFallbackAndLive_NoWarning is the negative
+// counterpart: when at least one region returns live (non-fallback) data,
+// the RC3-010 all-fallback warning must not fire.
+func TestComparePrices_MixedFallbackAndLive_NoWarning(t *testing.T) {
+	pvdr := &mockProvider{
+		name:          "aws",
+		defaultRegion: "us-east-1",
+		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
+			rgn := spec.GetRegion()
+			if rgn == "us-east-1" {
+				return makePriceResult(makePrice(rgn, 0.192)), nil
+			}
+			return makePriceResult(makeFallbackPrice(rgn, 0.08)), nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"aws": pvdr})
+	resp := callComparePrices(t, h, tools.ComparePricesInput{
+		Spec:    map[string]any{"provider": "aws", "domain": "storage", "resource_type": "gp3"},
+		Regions: []string{"us-east-1", "eu-central-2"},
+	})
+
+	if _, ok := resp["warnings"]; ok {
+		t.Errorf("expected no warnings key when not all regions are fallback, got: %v", resp["warnings"])
+	}
+	if _, ok := resp["ranking_low_confidence"]; ok {
+		t.Errorf("expected no ranking_low_confidence key when not all regions are fallback, got: %v", resp["ranking_low_confidence"])
 	}
 }
 

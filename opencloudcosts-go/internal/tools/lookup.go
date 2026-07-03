@@ -434,6 +434,25 @@ func normalizedPriceSummary(p models.NormalizedPrice) map[string]any {
 	return result
 }
 
+// allFallback reports whether every price in prices carries
+// Attributes["fallback"] == "true" (returns false for an empty slice — there
+// is nothing to warn about with zero results). Used to decide whether a
+// top-level warning is warranted that an entire result set is static/
+// fallback data rather than live pricing, so a ranking or single-price
+// answer built entirely from it isn't presented with unwarranted confidence
+// (RC3-010).
+func allFallback(prices []models.NormalizedPrice) bool {
+	if len(prices) == 0 {
+		return false
+	}
+	for _, p := range prices {
+		if p.Attributes["fallback"] != "true" {
+			return false
+		}
+	}
+	return true
+}
+
 // pricingResultSummary builds the LLM-readable summary dict for a PricingResult.
 // Mirrors PricingResult.summary() in Python's models.py.
 func pricingResultSummary(r *models.PricingResult) map[string]any {
@@ -460,6 +479,11 @@ func pricingResultSummary(r *models.PricingResult) map[string]any {
 	}
 	if r.Note != "" {
 		out["note"] = r.Note
+	}
+	if allFallback(r.PublicPrices) {
+		out["warnings"] = []string{
+			"all results are fallback/static data; prices may not reflect current live rates",
+		}
 	}
 	return out
 }
@@ -955,6 +979,17 @@ func (h *Handler) HandleComparePrices(
 		"most_expensive_price":  priceDict(mostExp.PricePerUnit, string(mostExp.Unit)),
 		"price_delta_pct":       priceDeltaPct,
 		"all_regions_sorted":    entries,
+	}
+	if allFallback(allPrices) {
+		// Every region resolved to fallback/static data (identical price,
+		// no real regional variation) — cheapest_region/price_delta_pct are
+		// still returned for backward compatibility, but flagged low
+		// confidence so callers don't treat the ranking as a real regional
+		// comparison (RC3-010).
+		out["warnings"] = []string{
+			"all results are fallback/static data; regional ranking may be unreliable",
+		}
+		out["ranking_low_confidence"] = true
 	}
 	if len(notAvailable) > 0 {
 		out["not_available_in"] = notAvailable
