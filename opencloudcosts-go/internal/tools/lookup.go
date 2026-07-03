@@ -981,15 +981,37 @@ func (h *Handler) HandleComparePrices(
 	// unrelated SKUs into a single cheapest-first ranking, so the top result
 	// could silently compare one SKU's price in region A against a different
 	// SKU's price in region B (RC3-033 / #29). To avoid that, group by SKU
-	// (using the region-independent Description text as the discriminator)
 	// and sort within each group before ranking groups against each other:
 	// entries for the same SKU always stay contiguous and cheapest-first
 	// within their own group.
+	//
+	// The discriminator is NOT the raw Description text: many provider call
+	// sites (internal/providers/gcp/gcp_compute.go GCS storage, gcp_database.go
+	// Cloud SQL/Memorystore/GKE fees, gcp_ai.go Vertex AI/BigQuery,
+	// aws_network.go inter-region transfer, etc.) build Description with
+	// fmt.Sprintf(..., region), embedding the very region string that varies
+	// across this fan-out. Using raw Description as the key would then treat
+	// the SAME SKU priced in different regions as N separate one-member "SKU
+	// groups", which defeats multi-region comparison entirely (every region
+	// becomes its own group, multi_sku spuriously flips true, and
+	// price_delta_pct/baseline deltas collapse to 0/null). Every
+	// NormalizedPrice already carries the exact region string it was priced
+	// for in its own Region field, and provider code consistently reuses that
+	// same variable for both Region and any region token embedded in
+	// Description — so stripping that one substring out of Description (or
+	// SKUID, when Description is empty) yields a region-invariant key while
+	// still separating genuinely distinct SKUs (e.g. CDN cache-egress vs.
+	// cache-fill, or Vertex AI vCPU vs. RAM), whose descriptions differ by
+	// more than just the region token.
 	skuKey := func(p models.NormalizedPrice) string {
-		if p.Description != "" {
-			return p.Description
+		base := p.Description
+		if base == "" {
+			base = p.SKUID
 		}
-		return p.SKUID
+		if p.Region != "" {
+			base = strings.ReplaceAll(base, p.Region, "")
+		}
+		return base
 	}
 
 	type skuGroup struct {

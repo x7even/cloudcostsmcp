@@ -1248,6 +1248,149 @@ func TestComparePrices_MultiSKU_BaselineDeltaPerSKUGroup(t *testing.T) {
 	}
 }
 
+// makeGCSStoragePrice constructs a single NormalizedPrice mirroring
+// gcp_compute.go's real getGCSStoragePrice shape: exactly one SKU per
+// region, but with Description AND SKUID built via fmt.Sprintf so the
+// region string is embedded directly in both (e.g. "GCS standard storage in
+// us-east1"), the same way Cloud SQL/Memorystore/GKE (gcp_database.go),
+// Vertex AI/BigQuery (gcp_ai.go), and AWS inter-region transfer
+// (aws_network.go) descriptions are built.
+func makeGCSStoragePrice(region string, price float64) models.NormalizedPrice {
+	return models.NormalizedPrice{
+		Provider:      models.CloudProviderGCP,
+		Service:       "storage",
+		SKUID:         fmt.Sprintf("gcp:gcs:standard:%s", region),
+		ProductFamily: "Cloud Storage",
+		Description:   fmt.Sprintf("GCS standard storage in %s", region),
+		Region:        region,
+		PricingTerm:   models.PricingTermOnDemand,
+		PricePerUnit:  price,
+		Unit:          models.PriceUnitPerGBMonth,
+		Currency:      "USD",
+	}
+}
+
+// TestComparePrices_RegionEmbeddedDescription_StaysSingleSKUGroup covers the
+// regression found in review of the RC3-033 (#29) fix: the grouping
+// discriminator must NOT be the raw Description string, because many
+// provider call sites embed the region directly in Description (GCS
+// storage, Cloud SQL/Memorystore/GKE, Vertex AI/BigQuery, AWS inter-region
+// transfer, etc). Using raw Description as the key would make the SAME SKU
+// priced across regions look like N distinct one-member "SKU groups" — this
+// is a single-SKU, multi-region comparison and must behave exactly like the
+// pre-#29 single-SKU path: multi_sku absent/false, and price_delta_pct /
+// most_expensive_region reflecting the real regional spread rather than
+// collapsing to 0 / cheapest_region.
+func TestComparePrices_RegionEmbeddedDescription_StaysSingleSKUGroup(t *testing.T) {
+	// Single GCS-storage-shaped SKU, price varies by region: r1=0.020
+	// (cheapest), r2=0.023, r3=0.026 (most expensive).
+	prices := map[string][]models.NormalizedPrice{
+		"r1": {makeGCSStoragePrice("r1", 0.020)},
+		"r2": {makeGCSStoragePrice("r2", 0.023)},
+		"r3": {makeGCSStoragePrice("r3", 0.026)},
+	}
+	pvdr := &mockProvider{
+		name:          "gcp",
+		defaultRegion: "r1",
+		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
+			return makePriceResult(prices[spec.GetRegion()]...), nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"gcp": pvdr})
+	resp := callComparePrices(t, h, tools.ComparePricesInput{
+		Spec:    map[string]any{"provider": "gcp", "domain": "storage", "service": "gcs_storage"},
+		Regions: []string{"r1", "r2", "r3"},
+	})
+
+	// Pre-fix (raw-Description grouping): each region's Description differs
+	// ("GCS standard storage in r1" vs "...r2" vs "...r3"), so this would
+	// incorrectly produce three one-member SKU groups and multi_sku=true.
+	if v, present := resp["multi_sku"]; present && v == true {
+		t.Errorf("multi_sku: got %v, want absent/false — this is a single SKU priced across regions, "+
+			"not multiple SKUs (region must not leak into the grouping key)", v)
+	}
+
+	if resp["cheapest_region"] != "r1" {
+		t.Errorf("cheapest_region: got %v, want r1", resp["cheapest_region"])
+	}
+	// Pre-fix, most_expensive_region collapses to equal cheapest_region
+	// because the "same SKU group as cheapest" candidate slice has exactly
+	// one member (the cheapest region's own singleton group).
+	if resp["most_expensive_region"] != "r3" {
+		t.Errorf("most_expensive_region: got %v, want r3 (real regional spread); "+
+			"a region-leaking grouping bug would instead collapse this to r1 (== cheapest_region)", resp["most_expensive_region"])
+	}
+
+	// delta = (0.026-0.020)/0.020*100 = 30.0%. Pre-fix this collapses to 0.0
+	// because cheapest and "most expensive" would be the same singleton entry.
+	delta, ok := resp["price_delta_pct"].(float64)
+	if !ok {
+		t.Fatalf("price_delta_pct is not float64: %T %v", resp["price_delta_pct"], resp["price_delta_pct"])
+	}
+	if delta < 29.9 || delta > 30.1 {
+		t.Errorf("price_delta_pct: got %v, want ~30.0 (real regional spread); "+
+			"a region-leaking grouping bug would instead produce 0.0", delta)
+	}
+}
+
+// TestComparePrices_RegionEmbeddedDescription_BaselineDeltaNotNulled covers
+// the same regression with baseline_region set: pre-fix, every non-baseline
+// region's own singleton "SKU group" has no baseline-region member of its
+// own, so applyBaselineDeltas nulls out delta_per_hour/delta_monthly/
+// delta_pct for every entry except the baseline region itself — silently
+// breaking the baseline-delta feature for any domain whose Description
+// embeds the region.
+func TestComparePrices_RegionEmbeddedDescription_BaselineDeltaNotNulled(t *testing.T) {
+	prices := map[string][]models.NormalizedPrice{
+		"r1": {makeGCSStoragePrice("r1", 0.020)},
+		"r2": {makeGCSStoragePrice("r2", 0.023)}, // baseline
+		"r3": {makeGCSStoragePrice("r3", 0.026)},
+	}
+	pvdr := &mockProvider{
+		name:          "gcp",
+		defaultRegion: "r1",
+		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
+			return makePriceResult(prices[spec.GetRegion()]...), nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"gcp": pvdr})
+	resp := callComparePrices(t, h, tools.ComparePricesInput{
+		Spec:           map[string]any{"provider": "gcp", "domain": "storage", "service": "gcs_storage"},
+		Regions:        []string{"r1", "r2", "r3"},
+		BaselineRegion: "r2",
+	})
+
+	sorted, ok := resp["all_regions_sorted"].([]any)
+	if !ok {
+		t.Fatalf("all_regions_sorted missing or wrong type: %v", resp["all_regions_sorted"])
+	}
+
+	var r1Entry, r3Entry map[string]any
+	for _, entry := range sorted {
+		e := entry.(map[string]any)
+		switch e["region"] {
+		case "r1":
+			r1Entry = e
+		case "r3":
+			r3Entry = e
+		}
+	}
+	if r1Entry == nil || r3Entry == nil {
+		t.Fatalf("could not find r1/r3 entries in %v", sorted)
+	}
+
+	// delta(r1) = (0.020-0.023)/0.023*100 = -13.04...% -> "-13.0%"
+	if got, _ := r1Entry["delta_pct"].(string); got != "-13.0%" {
+		t.Errorf("r1 delta_pct: got %q, want \"-13.0%%\"; "+
+			"a region-leaking grouping bug would instead null this out entirely", got)
+	}
+	// delta(r3) = (0.026-0.023)/0.023*100 = 13.04...% -> "+13.0%"
+	if got, _ := r3Entry["delta_pct"].(string); got != "+13.0%" {
+		t.Errorf("r3 delta_pct: got %q, want \"+13.0%%\"; "+
+			"a region-leaking grouping bug would instead null this out entirely", got)
+	}
+}
+
 // --------------------------------------------------------------------------
 // Tests: compare_prices / get_prices_batch — RC3-001 transient error classification
 // --------------------------------------------------------------------------
