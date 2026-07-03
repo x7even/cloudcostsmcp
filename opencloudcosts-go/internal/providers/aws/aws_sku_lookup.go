@@ -818,9 +818,14 @@ const (
 // reintroducing a silent-wrong-price failure mode for the single-row case.
 //
 // When operationHint and/or productFamilyHint are non-empty, prices is first
-// filtered to rows where (operationHint == "" || matches
-// Attributes["operation"] case-insensitively) AND (productFamilyHint == ""
-// || matches ProductFamily case-insensitively):
+// filtered to rows where (operationHint == "" || Attributes["operation"] ==
+// "" || matches Attributes["operation"] case-insensitively) AND
+// (productFamilyHint == "" || matches ProductFamily case-insensitively). A
+// row with a stored-empty operation attribute (true for services like S3,
+// CloudWatch, and Lambda, which don't carry that dimension) is never
+// excluded by operationHint — an empty stored value cannot conflict with a
+// supplied hint, mirroring how narrowByCanonicalDefaults treats a missing
+// key as non-exclusionary:
 //   - Exactly one match: resolved by hint — returned immediately as the sole,
 //     non-ambiguous match. Canonical-default narrowing is not applied to it.
 //   - Zero matches: fails closed. A supplied-but-nonmatching hint must never
@@ -855,7 +860,7 @@ func resolveSKUCandidates(
 	if hasHint {
 		var hintFiltered []models.NormalizedPrice
 		for _, p := range prices {
-			if operationHint != "" && !strings.EqualFold(p.Attributes["operation"], operationHint) {
+			if operationHint != "" && p.Attributes["operation"] != "" && !strings.EqualFold(p.Attributes["operation"], operationHint) {
 				continue
 			}
 			if productFamilyHint != "" && !strings.EqualFold(p.ProductFamily, productFamilyHint) {

@@ -1100,6 +1100,31 @@ func TestResolveSKUCandidates_TableDriven(t *testing.T) {
 			wantChosenCount: 1,
 			wantChosenSKUID: "SKU-GWLB",
 		},
+		// --- RC3-007: a row with a stored-empty operation attribute (true
+		// for services like S3, CloudWatch, and Lambda, which don't carry
+		// that dimension) must NOT be treated as conflicting with a supplied
+		// operationHint. Before the fix, EqualFold("", "StandardStorage")
+		// was false, so this row was wrongly excluded and the hint failed
+		// closed as if it contradicted the sole candidate — reproducing the
+		// live get_price_by_sku("CAN1-TimedStorage-ByteHrs", "AmazonS3",
+		// "StandardStorage") => hint_no_match/no_prices_found regression.
+		{
+			name: "operation hint against stored-empty-operation row is not a mismatch",
+			prices: []models.NormalizedPrice{
+				{
+					Service: "AmazonS3", ProductFamily: "Storage", PricePerUnit: 0.023,
+					Attributes: map[string]string{},
+					SKUID:      "SKU-S3-STANDARD",
+				},
+			},
+			operationHint:     "StandardStorage",
+			wantAmbiguous:     false,
+			wantHintStatus:    HintStatusResolved,
+			wantChosenCount:   1,
+			wantChosenSKUID:   "SKU-S3-STANDARD",
+			checkChosenPrice:  true,
+			wantChosenPriceIs: 0.023,
+		},
 	}
 
 	for _, tc := range tests {
