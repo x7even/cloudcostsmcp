@@ -1037,9 +1037,9 @@ func TestEstimateBOM_FallbackFlagSurfaced(t *testing.T) {
 		t.Fatalf("line item is not a map: %T", lineItems[0])
 	}
 
-	fallback, ok := li["fallback"].(bool)
-	if !ok || !fallback {
-		t.Errorf("expected line_items[0][\"fallback\"] == true, got %v (present=%v)", li["fallback"], ok)
+	fallback, ok := li["fallback"].(string)
+	if !ok || fallback != "true" {
+		t.Errorf("expected line_items[0][\"fallback\"] == \"true\", got %v (present=%v)", li["fallback"], ok)
 	}
 	note, _ := li["fallback_note"].(string)
 	if note == "" {
