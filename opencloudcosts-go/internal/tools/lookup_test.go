@@ -681,6 +681,64 @@ func TestGetPricesBatch_PartialErrors(t *testing.T) {
 	}
 }
 
+// TestGetPricesBatch_NotAvailableIn verifies that instance types with no
+// pricing data (as opposed to transient/retryable failures) are surfaced in
+// a top-level not_available_in list, using the same field name/shape as the
+// other fan-out lookup tools (compare_prices, find_cheapest_region,
+// find_available_regions), alongside the existing per-item errors map
+// (RC3-018 / #37).
+func TestGetPricesBatch_NotAvailableIn(t *testing.T) {
+	pvdr := &mockProvider{
+		name:          "aws",
+		defaultRegion: "us-east-1",
+		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
+			cs, ok := spec.(*models.ComputePricingSpec)
+			if !ok || cs.ResourceType == "no.such.type" {
+				return nil, nil // provider found nothing — genuine no-data
+			}
+			return makePriceResult(makePrice(spec.GetRegion(), 0.192)), nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"aws": pvdr})
+	resp := callGetPricesBatch(t, h, tools.GetPricesBatchInput{
+		Provider:      "aws",
+		InstanceTypes: []string{"m5.xlarge", "no.such.type"},
+		Region:        "us-east-1",
+	})
+
+	if resp["count"] != float64(1) {
+		t.Errorf("count: got %v, want 1", resp["count"])
+	}
+	notAvail, ok := resp["not_available_in"].([]any)
+	if !ok || len(notAvail) != 1 {
+		t.Fatalf("not_available_in missing or wrong shape: %v", resp["not_available_in"])
+	}
+	if notAvail[0] != "no.such.type" {
+		t.Errorf("not_available_in[0]: got %v, want no.such.type", notAvail[0])
+	}
+}
+
+// TestGetPricesBatch_AllOK_NoNotAvailableIn verifies that not_available_in
+// is absent when every requested instance type resolves successfully.
+func TestGetPricesBatch_AllOK_NoNotAvailableIn(t *testing.T) {
+	pvdr := &mockProvider{
+		name:          "aws",
+		defaultRegion: "us-east-1",
+		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
+			return makePriceResult(makePrice(spec.GetRegion(), 0.192)), nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"aws": pvdr})
+	resp := callGetPricesBatch(t, h, tools.GetPricesBatchInput{
+		Provider:      "aws",
+		InstanceTypes: []string{"m5.xlarge", "c5.xlarge"},
+		Region:        "us-east-1",
+	})
+	if _, present := resp["not_available_in"]; present {
+		t.Errorf("not_available_in should be absent when all types resolve, got: %v", resp["not_available_in"])
+	}
+}
+
 func TestGetPricesBatch_DefaultOSAndTerm(t *testing.T) {
 	var capturedOS, capturedTerm string
 	pvdr := &mockProvider{
@@ -2297,6 +2355,65 @@ func TestGetPrice_EmptyPublicPrices_NoResultsHint(t *testing.T) {
 	}
 	if resp["provider"] != "aws" {
 		t.Errorf("provider: got %v, want aws", resp["provider"])
+	}
+}
+
+// TestGetPrice_NoResults_NotAvailableIn verifies that get_price's no_results
+// response carries a not_available_in list naming the queried region, using
+// the same field name/shape as the fan-out lookup tools (compare_prices,
+// find_cheapest_region, find_available_regions), so callers can check for
+// coverage gaps generically across tools (RC3-018 / #37).
+func TestGetPrice_NoResults_NotAvailableIn(t *testing.T) {
+	pvdr := &mockProvider{
+		name:          "aws",
+		defaultRegion: "us-east-1",
+		getPriceFunc: func(_ context.Context, _ models.PricingSpec) (*models.PricingResult, error) {
+			return nil, nil // provider returned nothing
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"aws": pvdr})
+	resp := callGetPrice(t, h, map[string]any{
+		"provider":      "aws",
+		"domain":        "compute",
+		"resource_type": "m5.xlarge",
+		"region":        "us-west-2",
+	})
+
+	if resp["result"] != "no_results" {
+		t.Fatalf("result: got %v, want no_results", resp["result"])
+	}
+	notAvail, ok := resp["not_available_in"].([]any)
+	if !ok || len(notAvail) != 1 {
+		t.Fatalf("not_available_in missing or wrong shape: %v", resp["not_available_in"])
+	}
+	if notAvail[0] != "us-west-2" {
+		t.Errorf("not_available_in[0]: got %v, want us-west-2", notAvail[0])
+	}
+}
+
+// TestGetPrice_Success_NoNotAvailableIn verifies that a successful get_price
+// response does not carry a not_available_in field — the key is only
+// present when there is an actual coverage gap to disclose.
+func TestGetPrice_Success_NoNotAvailableIn(t *testing.T) {
+	pvdr := &mockProvider{
+		name:          "aws",
+		defaultRegion: "us-east-1",
+		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
+			return makePriceResult(makePrice(spec.GetRegion(), 0.192)), nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"aws": pvdr})
+	resp := callGetPrice(t, h, map[string]any{
+		"provider":      "aws",
+		"domain":        "compute",
+		"resource_type": "m5.xlarge",
+		"region":        "us-east-1",
+	})
+	if _, ok := resp["error"]; ok {
+		t.Fatalf("unexpected error: %v", resp)
+	}
+	if _, present := resp["not_available_in"]; present {
+		t.Errorf("not_available_in should be absent on success, got: %v", resp["not_available_in"])
 	}
 }
 
