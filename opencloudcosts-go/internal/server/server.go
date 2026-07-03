@@ -1,5 +1,5 @@
 // Package server wires the modelcontextprotocol/go-sdk MCP server, registers
-// all 17 tools, and exposes RunStdio / RunHTTP transports.
+// all 18 tools, and exposes RunStdio / RunHTTP transports.
 //
 // Tool InputSchemas are taken verbatim from schemas/tools-snapshot.json (the
 // Phase 0 Python snapshot) rather than being auto-generated from Go struct
@@ -159,7 +159,7 @@ func (s *AppServer) callTool(
 	return result, extra, err
 }
 
-// buildMCPServer constructs the mcp.Server with all 17 tools registered.
+// buildMCPServer constructs the mcp.Server with all 18 tools registered.
 func (s *AppServer) buildMCPServer() *mcp.Server {
 	mcpSrv := mcp.NewServer(&mcp.Implementation{
 		Name:    "OpenCloudCosts MCP",
@@ -526,6 +526,25 @@ const (
 		"type": "object"
 	}`
 
+	schemaWarmCache = `{
+		"properties": {
+			"provider": {"title": "Provider", "type": "string"},
+			"regions": {
+				"items": {"type": "string"},
+				"title": "Regions",
+				"type": "array"
+			},
+			"services": {
+				"items": {"type": "string"},
+				"title": "Services",
+				"type": "array"
+			}
+		},
+		"required": ["provider", "regions"],
+		"title": "warm_cacheArguments",
+		"type": "object"
+	}`
+
 	schemaEstimateBOM = `{
 		"properties": {
 			"items": {
@@ -661,7 +680,9 @@ const (
 
 	descFindAvailableRegions = "\n        Find all regions where a specific service/instance type is available, cheapest first.\n\n        Args:\n            spec: PricingSpec dict (same as get_price). The region field is overridden\n                  per comparison — pass any region in the spec.\n            regions: Region codes to check. Omit for major regions.\n                     Pass [\"all\"] to search every available region.\n            baseline_region: Optional region for delta comparison.\n        "
 
-	descCacheStats = "Return statistics about the local pricing cache (entry counts, DB size)."
+	descCacheStats = "Return statistics about the local pricing cache (entry counts, DB size), including a per-provider/service breakdown and as_of age of the most recent write."
+
+	descWarmCache = "\n        Pre-populate the pricing cache for a provider before a large sweep (e.g. a\n        multi-region compare_prices or get_prices_batch call), so that sweep hits a warm\n        cache instead of paying fetch latency on every combination.\n\n        Resolves each requested service to its catalog example_invocation (the same data\n        describe_catalog returns) and fans the resulting spec x region combinations out\n        concurrently, mirroring the compare_prices/get_prices_batch fan-out pattern.\n\n        Args:\n            provider: Cloud provider — \"aws\", \"gcp\", or \"azure\"\n            regions: List of region codes to warm, e.g. [\"us-east-1\", \"eu-west-1\"]\n            services: Optional list of service names or describe_catalog keys, e.g.\n                      [\"ec2\", \"rds\", \"compute/fargate\"]. Omit to warm every service the\n                      provider's catalog has an example invocation for.\n        "
 
 	descEstimateBOM = "\n        Use this tool for total infrastructure cost, TCO, monthly spend for a multi-resource\n        stack, or cost comparison between architectures.\n\n        Handles compute + storage + database + AI together in a single call — do NOT call\n        get_price individually for multi-resource questions; use this tool instead.\n\n        Returns per-item and total monthly/annual costs with real public pricing data,\n        plus a not_included list of supplementary costs (egress, load balancers, monitoring).\n        These are SUPPLEMENTARY — only price them if the user asked for TCO; for most\n        questions just note 'additional costs may apply'.\n\n        Each item should be a PricingSpec dict PLUS a quantity field:\n          - provider: \"aws\" | \"gcp\" | \"azure\"\n          - domain: \"compute\" | \"storage\" | \"database\" | \"ai\" | ...\n          - region: region code\n          - quantity: number of units (default 1)\n          - hours_per_month: hours/month for compute (default 730 = always-on)\n          - description: optional label for this line item\n          Plus domain-specific fields (see get_price or describe_catalog for details).\n\n        Examples:\n          Compute + database + storage on AWS:\n          [\n            {\"provider\": \"aws\", \"domain\": \"compute\", \"resource_type\": \"m5.xlarge\",   \"region\": \"us-east-1\", \"quantity\": 3},\n            {\"provider\": \"aws\", \"domain\": \"database\", \"service\": \"rds\", \"resource_type\": \"db.r6g.large\", \"engine\": \"MySQL\", \"deployment\": \"single-az\", \"region\": \"us-east-1\"},\n            {\"provider\": \"aws\", \"domain\": \"storage\",  \"storage_type\": \"gp3\", \"size_gb\": 500, \"region\": \"us-east-1\"}\n          ]\n\n          Mixed cloud:\n          [\n            {\"provider\": \"gcp\",   \"domain\": \"compute\", \"resource_type\": \"n1-standard-4\", \"region\": \"us-central1\", \"quantity\": 2},\n            {\"provider\": \"azure\", \"domain\": \"compute\", \"resource_type\": \"Standard_D4s_v3\", \"region\": \"eastus\", \"quantity\": 1}\n          ]\n        "
 
@@ -846,6 +867,16 @@ func (s *AppServer) registerTools(srv *mcp.Server) {
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in tools.CacheStatsInput) (*mcp.CallToolResult, any, error) {
 		return s.callTool(ctx, "cache_stats", func(ctx context.Context) (*mcp.CallToolResult, any, error) {
 			return h.HandleCacheStats(ctx, req, in)
+		})
+	})
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "warm_cache",
+		Description: descWarmCache,
+		InputSchema: rawSchema(schemaWarmCache),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in tools.WarmCacheInput) (*mcp.CallToolResult, any, error) {
+		return s.callTool(ctx, "warm_cache", func(ctx context.Context) (*mcp.CallToolResult, any, error) {
+			return h.HandleWarmCache(ctx, req, in)
 		})
 	})
 

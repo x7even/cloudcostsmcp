@@ -481,7 +481,7 @@
     },
     {
       "name": "cache_stats",
-      "description": "Return statistics about the local pricing cache (entry counts, DB size).",
+      "description": "Return statistics about the local pricing cache (entry counts, DB size), including a per-provider/service breakdown and as_of age of the most recent write.",
       "inputSchema": {
         "properties": {},
         "title": "cache_statsArguments",
@@ -490,6 +490,43 @@
       "outputSchema": {
         "additionalProperties": true,
         "title": "cache_statsDictOutput",
+        "type": "object"
+      }
+    },
+    {
+      "name": "warm_cache",
+      "description": "\n        Pre-populate the pricing cache for a provider before a large sweep (e.g. a\n        multi-region compare_prices or get_prices_batch call), so that sweep hits a warm\n        cache instead of paying fetch latency on every combination.\n\n        Resolves each requested service to its catalog example_invocation (the same data\n        describe_catalog returns) and fans the resulting spec x region combinations out\n        concurrently, mirroring the compare_prices/get_prices_batch fan-out pattern.\n\n        Args:\n            provider: Cloud provider — \"aws\", \"gcp\", or \"azure\"\n            regions: List of region codes to warm, e.g. [\"us-east-1\", \"eu-west-1\"]\n            services: Optional list of service names or describe_catalog keys, e.g.\n                      [\"ec2\", \"rds\", \"compute/fargate\"]. Omit to warm every service the\n                      provider's catalog has an example invocation for.\n        ",
+      "inputSchema": {
+        "properties": {
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "regions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Regions",
+            "type": "array"
+          },
+          "services": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Services",
+            "type": "array"
+          }
+        },
+        "required": [
+          "provider",
+          "regions"
+        ],
+        "title": "warm_cacheArguments",
+        "type": "object"
+      },
+      "outputSchema": {
+        "additionalProperties": true,
+        "title": "warm_cacheDictOutput",
         "type": "object"
       }
     },

@@ -10,8 +10,10 @@ package tools
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/cache"
 )
 
 // --------------------------------------------------------------------------
@@ -93,12 +95,36 @@ func (h *Handler) HandleCacheStats(
 	}
 
 	stats := h.cm.Stats()
-	return jsonText(map[string]any{
+	out := map[string]any{
 		"price_entries":    stats.EntryCount,
 		"metadata_entries": 0,
 		"db_size_mb":       roundToTwoDecimal(float64(stats.FileSizeBytes) / (1024 * 1024)),
 		"db_path":          stats.FilePath,
-	}), nil, nil
+		"by_provider":      byProviderBreakdown(stats),
+	}
+	if !stats.AsOf.IsZero() {
+		out["as_of"] = stats.AsOf.Format(time.RFC3339)
+		out["as_of_age_seconds"] = int(time.Since(stats.AsOf).Seconds())
+	}
+	return jsonText(out), nil, nil
+}
+
+// byProviderBreakdown converts CacheStats.ByProvider into a JSON-friendly
+// nested map: provider -> service -> {entry_count, last_write_at, age_seconds}.
+func byProviderBreakdown(stats cache.CacheStats) map[string]any {
+	out := make(map[string]any, len(stats.ByProvider))
+	for provider, svcMap := range stats.ByProvider {
+		svcOut := make(map[string]any, len(svcMap))
+		for service, bucket := range svcMap {
+			svcOut[service] = map[string]any{
+				"entry_count":   bucket.EntryCount,
+				"last_write_at": bucket.LastWriteAt.Format(time.RFC3339),
+				"age_seconds":   int(time.Since(bucket.LastWriteAt).Seconds()),
+			}
+		}
+		out[provider] = svcOut
+	}
+	return out
 }
 
 // --------------------------------------------------------------------------
