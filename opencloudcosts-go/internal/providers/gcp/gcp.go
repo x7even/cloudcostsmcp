@@ -114,29 +114,40 @@ func (p *Provider) fetchSKUs(ctx context.Context, serviceID string) ([]map[strin
 			url += "&key=" + p.cfg.GCPAPIKey
 		}
 
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-		if err != nil {
-			return nil, fmt.Errorf("gcp: build SKU request: %w", err)
-		}
-
-		// Bearer auth when no API key is configured.
-		if p.cfg.GCPAPIKey == "" {
-			if err := p.auth.addBearerHeader(ctx, req); err != nil {
-				return nil, fmt.Errorf("gcp: auth: %w", err)
+		var body []byte
+		err := utils.DoWithRetry(ctx, func(ctx context.Context) error {
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+			if err != nil {
+				return fmt.Errorf("gcp: build SKU request: %w", err)
 			}
-		}
 
-		resp, err := p.httpClient.Do(req)
+			// Bearer auth when no API key is configured.
+			if p.cfg.GCPAPIKey == "" {
+				if err := p.auth.addBearerHeader(ctx, req); err != nil {
+					return fmt.Errorf("gcp: auth: %w", err)
+				}
+			}
+
+			resp, err := p.httpClient.Do(req)
+			if err != nil {
+				return fmt.Errorf("gcp: SKU fetch: %w", err)
+			}
+			respBody, err := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			if err != nil {
+				return fmt.Errorf("gcp: SKU read body: %w", err)
+			}
+			if resp.StatusCode != http.StatusOK {
+				return &utils.HTTPStatusError{
+					StatusCode: resp.StatusCode,
+					Message:    fmt.Sprintf("gcp: SKU catalog HTTP %d: %s", resp.StatusCode, truncate(string(respBody), 200)),
+				}
+			}
+			body = respBody
+			return nil
+		})
 		if err != nil {
-			return nil, fmt.Errorf("gcp: SKU fetch: %w", err)
-		}
-		body, err := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
-		if err != nil {
-			return nil, fmt.Errorf("gcp: SKU read body: %w", err)
-		}
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("gcp: SKU catalog HTTP %d: %s", resp.StatusCode, truncate(string(body), 200))
+			return nil, err
 		}
 
 		var page struct {
