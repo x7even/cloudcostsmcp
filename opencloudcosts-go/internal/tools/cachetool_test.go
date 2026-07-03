@@ -106,6 +106,64 @@ func TestCacheStats_RequiredFields(t *testing.T) {
 	}
 }
 
+// TestCacheStats_ByProviderBreakdown verifies that cache_stats includes a
+// per-provider/service breakdown and an as_of age for the most recent write
+// (RC3-017).
+func TestCacheStats_ByProviderBreakdown(t *testing.T) {
+	cm, cleanup := newTestCache(t)
+	defer cleanup()
+
+	cm.Set("aws:compute:us-east-1:m5.xlarge", []byte(`{"test":true}`), 24*time.Hour)
+	cm.Set("aws:compute:eu-west-1:m5.xlarge", []byte(`{"test":true}`), 24*time.Hour)
+	cm.Set("gcp:storage:us-central1:pd-ssd", []byte(`{"test":true}`), 24*time.Hour)
+
+	h := newHandlerWithCache(cm)
+	resp := callCacheStats(t, h)
+
+	byProvider, ok := resp["by_provider"].(map[string]any)
+	if !ok {
+		t.Fatalf("cache_stats missing 'by_provider' map, got %v (%T)", resp["by_provider"], resp["by_provider"])
+	}
+
+	aws, ok := byProvider["aws"].(map[string]any)
+	if !ok {
+		t.Fatalf("by_provider missing 'aws' bucket, got %v", byProvider)
+	}
+	awsCompute, ok := aws["compute"].(map[string]any)
+	if !ok {
+		t.Fatalf("by_provider.aws missing 'compute' bucket, got %v", aws)
+	}
+	if count, _ := awsCompute["entry_count"].(float64); count != 2 {
+		t.Errorf("by_provider.aws.compute.entry_count = %v, want 2", awsCompute["entry_count"])
+	}
+	if _, ok := awsCompute["last_write_at"]; !ok {
+		t.Error("by_provider.aws.compute missing 'last_write_at'")
+	}
+	if _, ok := awsCompute["age_seconds"]; !ok {
+		t.Error("by_provider.aws.compute missing 'age_seconds'")
+	}
+
+	gcp, ok := byProvider["gcp"].(map[string]any)
+	if !ok {
+		t.Fatalf("by_provider missing 'gcp' bucket, got %v", byProvider)
+	}
+	gcpStorage, ok := gcp["storage"].(map[string]any)
+	if !ok {
+		t.Fatalf("by_provider.gcp missing 'storage' bucket, got %v", gcp)
+	}
+	if count, _ := gcpStorage["entry_count"].(float64); count != 1 {
+		t.Errorf("by_provider.gcp.storage.entry_count = %v, want 1", gcpStorage["entry_count"])
+	}
+
+	// Top-level as_of must be present once the cache has entries.
+	if _, ok := resp["as_of"]; !ok {
+		t.Error("cache_stats missing top-level 'as_of' field once cache is non-empty")
+	}
+	if _, ok := resp["as_of_age_seconds"]; !ok {
+		t.Error("cache_stats missing top-level 'as_of_age_seconds' field once cache is non-empty")
+	}
+}
+
 // TestCacheStats_EmptyCache verifies that cache_stats works on an empty cache.
 func TestCacheStats_EmptyCache(t *testing.T) {
 	cm, cleanup := newTestCache(t)

@@ -200,6 +200,7 @@ func TestHandlersReturnStructuredJSON(t *testing.T) {
 		{"find_cheapest_region", map[string]any{"spec": map[string]any{"provider": "aws"}}},
 		{"find_available_regions", map[string]any{"spec": map[string]any{"provider": "aws"}}},
 		{"cache_stats", map[string]any{}},
+		{"warm_cache", map[string]any{"provider": "aws", "regions": []string{"us-east-1"}}},
 		{"estimate_bom", map[string]any{"items": []any{}}},
 		{"estimate_unit_economics", map[string]any{"items": []any{}, "units_per_month": 100.0}},
 	}

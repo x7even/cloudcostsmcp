@@ -48,11 +48,49 @@ type persistedMap struct {
 	Entries map[string]cacheEntry `json:"entries"`
 }
 
+// ProviderServiceStats holds the entry count and most recent write time for
+// one provider/service bucket, as surfaced in CacheStats.ByProvider.
+type ProviderServiceStats struct {
+	EntryCount  int       `json:"entry_count"`
+	LastWriteAt time.Time `json:"last_write_at"`
+}
+
 // CacheStats is returned by Stats().
 type CacheStats struct {
 	EntryCount    int    `json:"entry_count"`
 	FilePath      string `json:"file_path"`
 	FileSizeBytes int64  `json:"file_size_bytes"`
+
+	// AsOf is the most recent FetchedAt across every entry in the cache
+	// (the zero time if the cache is empty). Callers can derive an age by
+	// comparing against time.Now().
+	AsOf time.Time
+
+	// ByProvider breaks entry counts and last-write timestamps down by
+	// provider, then by service. The service key is the second colon-
+	// separated segment of the cache key (e.g. "aws:compute:..." buckets
+	// under provider "aws", service "compute"); keys that do not follow
+	// this convention bucket under service "unknown".
+	ByProvider map[string]map[string]ProviderServiceStats
+}
+
+// splitCacheKey extracts the provider and service buckets from a cache key.
+// Every cache key written by the provider packages follows the convention
+// "<provider>:<service>:...", e.g. "aws:compute:us-east-1:m5.xlarge:Linux:on_demand"
+// or "azure:sql:eastus:tier=GeneralPurpose". Keys that do not have at least
+// two colon-separated segments fall back to "unknown" for the missing part(s)
+// so Stats() never panics or drops an entry on an unexpected key shape.
+func splitCacheKey(key string) (provider, service string) {
+	parts := strings.SplitN(key, ":", 3)
+	provider = "unknown"
+	service = "unknown"
+	if len(parts) > 0 && parts[0] != "" {
+		provider = parts[0]
+	}
+	if len(parts) > 1 && parts[1] != "" {
+		service = parts[1]
+	}
+	return provider, service
 }
 
 // CacheManager is an in-memory key/value store with TTL and JSON persistence.
@@ -231,10 +269,30 @@ func (cm *CacheManager) ClearProvider(provider string) int {
 	return deleted
 }
 
-// Stats returns a snapshot of cache metrics.
+// Stats returns a snapshot of cache metrics, including a per-provider/service
+// breakdown of entry counts and last-write timestamps.
 func (cm *CacheManager) Stats() CacheStats {
 	cm.mu.RLock()
 	count := len(cm.entries)
+	byProvider := make(map[string]map[string]ProviderServiceStats)
+	var asOf time.Time
+	for k, e := range cm.entries {
+		provider, service := splitCacheKey(k)
+		svcMap, ok := byProvider[provider]
+		if !ok {
+			svcMap = make(map[string]ProviderServiceStats)
+			byProvider[provider] = svcMap
+		}
+		bucket := svcMap[service]
+		bucket.EntryCount++
+		if e.FetchedAt.After(bucket.LastWriteAt) {
+			bucket.LastWriteAt = e.FetchedAt
+		}
+		svcMap[service] = bucket
+		if e.FetchedAt.After(asOf) {
+			asOf = e.FetchedAt
+		}
+	}
 	cm.mu.RUnlock()
 
 	var fileSize int64
@@ -246,6 +304,8 @@ func (cm *CacheManager) Stats() CacheStats {
 		EntryCount:    count,
 		FilePath:      cm.filePath,
 		FileSizeBytes: fileSize,
+		AsOf:          asOf,
+		ByProvider:    byProvider,
 	}
 }
 

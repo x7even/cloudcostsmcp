@@ -171,6 +171,88 @@ func TestStats(t *testing.T) {
 	}
 }
 
+// TestStatsByProviderBreakdown verifies that Stats() buckets entries by
+// provider then service (the second colon-separated key segment) with
+// correct per-bucket counts, and that AsOf reflects the most recent write
+// across the whole cache.
+func TestStatsByProviderBreakdown(t *testing.T) {
+	cm := newTestCache(t)
+
+	// Empty cache: no buckets, zero AsOf.
+	stats := cm.Stats()
+	if len(stats.ByProvider) != 0 {
+		t.Errorf("Stats().ByProvider on empty cache = %v, want empty", stats.ByProvider)
+	}
+	if !stats.AsOf.IsZero() {
+		t.Errorf("Stats().AsOf on empty cache = %v, want zero time", stats.AsOf)
+	}
+
+	cm.Set("aws:compute:us-east-1:m5.xlarge", jsonBytes(t, "v1"), DefaultPriceTTL)
+	cm.Set("aws:compute:eu-west-1:m5.xlarge", jsonBytes(t, "v2"), DefaultPriceTTL)
+	cm.Set("aws:storage:us-east-1:gp3", jsonBytes(t, "v3"), DefaultPriceTTL)
+	cm.Set("gcp:compute:us-central1:n1-standard-4", jsonBytes(t, "v4"), DefaultPriceTTL)
+
+	stats = cm.Stats()
+	if stats.EntryCount != 4 {
+		t.Fatalf("Stats().EntryCount = %d, want 4", stats.EntryCount)
+	}
+
+	awsCompute, ok := stats.ByProvider["aws"]["compute"]
+	if !ok {
+		t.Fatal(`Stats().ByProvider["aws"]["compute"] missing`)
+	}
+	if awsCompute.EntryCount != 2 {
+		t.Errorf(`Stats().ByProvider["aws"]["compute"].EntryCount = %d, want 2`, awsCompute.EntryCount)
+	}
+	if awsCompute.LastWriteAt.IsZero() {
+		t.Error(`Stats().ByProvider["aws"]["compute"].LastWriteAt is zero, want non-zero`)
+	}
+
+	awsStorage, ok := stats.ByProvider["aws"]["storage"]
+	if !ok {
+		t.Fatal(`Stats().ByProvider["aws"]["storage"] missing`)
+	}
+	if awsStorage.EntryCount != 1 {
+		t.Errorf(`Stats().ByProvider["aws"]["storage"].EntryCount = %d, want 1`, awsStorage.EntryCount)
+	}
+
+	gcpCompute, ok := stats.ByProvider["gcp"]["compute"]
+	if !ok {
+		t.Fatal(`Stats().ByProvider["gcp"]["compute"] missing`)
+	}
+	if gcpCompute.EntryCount != 1 {
+		t.Errorf(`Stats().ByProvider["gcp"]["compute"].EntryCount = %d, want 1`, gcpCompute.EntryCount)
+	}
+
+	// AsOf must reflect the most recent write and must not be in the future.
+	if stats.AsOf.IsZero() {
+		t.Fatal("Stats().AsOf is zero after writes, want non-zero")
+	}
+	if stats.AsOf.After(time.Now()) {
+		t.Errorf("Stats().AsOf = %v is in the future", stats.AsOf)
+	}
+}
+
+// TestStatsByProviderBreakdownUnknownKeyShape verifies that a cache key
+// without a "provider:service:..." shape still buckets safely under
+// "unknown" instead of panicking or being dropped from EntryCount.
+func TestStatsByProviderBreakdownUnknownKeyShape(t *testing.T) {
+	cm := newTestCache(t)
+	cm.Set("nocolon", jsonBytes(t, "v"), DefaultPriceTTL)
+
+	stats := cm.Stats()
+	if stats.EntryCount != 1 {
+		t.Fatalf("Stats().EntryCount = %d, want 1", stats.EntryCount)
+	}
+	bucket, ok := stats.ByProvider["nocolon"]["unknown"]
+	if !ok {
+		t.Fatalf(`Stats().ByProvider["nocolon"]["unknown"] missing; got %v`, stats.ByProvider)
+	}
+	if bucket.EntryCount != 1 {
+		t.Errorf(`bucket.EntryCount = %d, want 1`, bucket.EntryCount)
+	}
+}
+
 // TestConcurrentReads verifies that multiple goroutines calling Get
 // simultaneously do not trigger the race detector.
 func TestConcurrentReads(t *testing.T) {
