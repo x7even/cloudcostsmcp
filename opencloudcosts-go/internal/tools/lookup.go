@@ -662,6 +662,17 @@ func (h *Handler) HandleGetPrice(
 				provName,
 			),
 		}
+		// not_available_in mirrors the coverage-disclosure field used by the
+		// fan-out lookup tools (compare_prices, find_cheapest_region,
+		// find_available_regions, get_prices_batch). get_price only ever
+		// queries a single region, so this is always a single-element list
+		// naming that region — but keeping the same field name/shape lets
+		// callers check for coverage gaps generically across tools instead
+		// of parsing get_price's no_results/message shape separately
+		// (RC3-018 / #37).
+		if region != "" {
+			out["not_available_in"] = []string{region}
+		}
 		return jsonText(out), nil, nil
 	}
 	return jsonText(pricingResultSummary(result)), nil, nil
@@ -764,6 +775,7 @@ func (h *Handler) HandleGetPricesBatch(
 
 	var entries []entry
 	errMap := make(map[string]any)
+	var notAvailable []string
 
 	for _, fr := range results {
 		if fr.err != "" {
@@ -776,6 +788,9 @@ func (h *Handler) HandleGetPricesBatch(
 				"status":    status,
 				"retryable": status == regionStatusTransient,
 			}
+			if status == regionStatusNoData {
+				notAvailable = append(notAvailable, fr.itype)
+			}
 			continue
 		}
 		if len(fr.prices) == 0 {
@@ -784,6 +799,7 @@ func (h *Handler) HandleGetPricesBatch(
 				"status":    regionStatusNoData,
 				"retryable": false,
 			}
+			notAvailable = append(notAvailable, fr.itype)
 			continue
 		}
 		p := fr.prices[0]
@@ -849,6 +865,17 @@ func (h *Handler) HandleGetPricesBatch(
 	}
 	if len(errMap) > 0 {
 		out["errors"] = errMap
+	}
+	// not_available_in mirrors the coverage-disclosure field used by the
+	// other fan-out lookup tools (compare_prices, find_cheapest_region,
+	// find_available_regions). get_prices_batch fans out across
+	// instance_types rather than regions, so the entries here are the
+	// instance types that had no pricing data (a subset of errMap's keys,
+	// excluding transient/retryable failures) — kept as its own top-level
+	// list so callers can check for coverage gaps generically, without
+	// having to inspect per-item status inside errMap (RC3-018 / #37).
+	if len(notAvailable) > 0 {
+		out["not_available_in"] = notAvailable
 	}
 	return jsonText(out), nil, nil
 }
