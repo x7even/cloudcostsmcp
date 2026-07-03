@@ -165,6 +165,14 @@ func TestInferServiceFromUsageType(t *testing.T) {
 		{"RDS InstanceUsage:db.", "CAN1-InstanceUsage:db.r8g.2xl", "AmazonRDS", true},
 		{"RDS InstanceUsageIOOptimized:db.", "CAN1-InstanceUsageIOOptimized:db.r5.xl", "AmazonRDS", true},
 		{"DynamoDB WriteRequestUnits", "CAN1-WriteRequestUnits", "AmazonDynamoDB", true},
+		{"DynamoDB ReadCapacityUnit-Hrs", "CAN1-ReadCapacityUnit-Hrs", "AmazonDynamoDB", true},
+		// Regression for RC3-008: TimedStorage-ByteHrs is NOT unique to
+		// DynamoDB storage -- S3 storage usage types share the identical
+		// literal suffix (e.g. "CAN1-TimedStorage-ByteHrs" for S3 Standard
+		// storage in ca-central-1), and the two services' storage prices
+		// differ by ~11x. This suffix alone must not resolve to any single
+		// confident service inference.
+		{"ambiguous TimedStorage-ByteHrs (S3 vs DynamoDB)", "CAN1-TimedStorage-ByteHrs", "", false},
 		{"ElastiCache NodeUsage:cache.", "CAN1-NodeUsage:cache.m6g.2xlarge", "AmazonElastiCache", true},
 		{"DataTransfer AWS-Out-Bytes", "CAN1-AWS-Out-Bytes", "AWSDataTransfer", true},
 		{"unrecognizable usage-type cannot be inferred", "CAN1-SomeMadeUpUsageTypeXYZ123", "", false},
@@ -589,6 +597,33 @@ func TestLookupSKUAcrossRegions_ServiceUndeterminable(t *testing.T) {
 
 	p := &Provider{}
 	_, err := p.LookupSKUAcrossRegions(context.Background(), "aws", "SomeMadeUpUsageTypeXYZ123", "", []string{"us-east-1"}, "", "")
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+	skuErr, ok := err.(*SKULookupError)
+	if !ok {
+		t.Fatalf("expected *SKULookupError, got %T: %v", err, err)
+	}
+	if skuErr.Code != SKUErrServiceUndeterminable {
+		t.Errorf("expected code %q, got %q", SKUErrServiceUndeterminable, skuErr.Code)
+	}
+}
+
+// TestLookupSKUAcrossRegions_TimedStorageByteHrsIsUndeterminable is the
+// direct regression test for RC3-008: previously,
+// get_price_by_sku(sku="CAN1-TimedStorage-ByteHrs", regions=[us-east-1])
+// with no service hint silently returned a single confidently-priced
+// AmazonDynamoDB "Database Storage" row ($0.25/GB-month) when the usage
+// type is equally consistent with S3 Standard storage ($0.023/GB-month) --
+// an ~11x pricing error with no forced signal to the caller. It must now
+// come back as a structured SKUErrServiceUndeterminable error instead of a
+// confident (and possibly wrong) single-service answer.
+func TestLookupSKUAcrossRegions_TimedStorageByteHrsIsUndeterminable(t *testing.T) {
+	resetSKUCatalogCache(t)
+	overrideBulkBaseURL(t, "http://127.0.0.1:1/unreachable")
+
+	p := &Provider{}
+	_, err := p.LookupSKUAcrossRegions(context.Background(), "aws", "CAN1-TimedStorage-ByteHrs", "", []string{"us-east-1"}, "", "")
 	if err == nil {
 		t.Fatal("expected an error, got nil")
 	}
