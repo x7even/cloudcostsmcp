@@ -126,9 +126,19 @@ func inferServiceFromUsageType(usageType string) (service string, inferred bool)
 
 	case strings.Contains(usageType, "ReadRequestUnits") ||
 		strings.Contains(usageType, "WriteRequestUnits") ||
-		strings.Contains(usageType, "ReadCapacityUnit-Hrs") ||
-		strings.Contains(usageType, "TimedStorage-ByteHrs"):
+		strings.Contains(usageType, "ReadCapacityUnit-Hrs"):
 		return "AmazonDynamoDB", true
+
+	// NOTE: "TimedStorage-ByteHrs" is intentionally NOT bucketed here even
+	// though DynamoDB storage usage types do carry that literal suffix -- S3
+	// standard/other-tier storage usage types (e.g. "TimedStorage-ByteHrs",
+	// "TimedStorage-INT-FA-ByteHrs") use the identical suffix, and DynamoDB
+	// storage pricing ($0.25/GB-month) differs from S3 Standard storage
+	// pricing ($0.023/GB-month) by ~11x. Confidently inferring either service
+	// from this suffix alone would silently return a wrong-product price for
+	// the other; callers must pass service= explicitly for storage usage
+	// types with this suffix (falls through to SKUErrServiceUndeterminable
+	// when no hint is given -- see LookupSKUAcrossRegions).
 
 	case strings.Contains(usageType, "NodeUsage:cache."):
 		return "AmazonElastiCache", true
