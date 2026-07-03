@@ -144,7 +144,7 @@ type bomLineItem struct {
 }
 
 func (li bomLineItem) toMap() map[string]any {
-	return map[string]any{
+	m := map[string]any{
 		"description": li.description,
 		"provider":    li.provider,
 		"service":     li.service,
@@ -158,6 +158,21 @@ func (li bomLineItem) toMap() map[string]any {
 			"amount": li.monthlyCost,
 		},
 	}
+
+	// Surface the provider's fallback flag (mirrors compare_prices in
+	// lookup.go, which encodes this as the string "true" rather than a
+	// bool — matched here so callers can treat the "fallback" key
+	// identically across tool outputs) so callers can tell a
+	// static/published rate — which may not reflect the requested region
+	// — from a live catalog lookup.
+	if li.unitPrice.Attributes["fallback"] == "true" {
+		m["fallback"] = "true"
+		if note := li.unitPrice.Attributes["fallback_note"]; note != "" {
+			m["fallback_note"] = note
+		}
+	}
+
+	return m
 }
 
 // --------------------------------------------------------------------------

@@ -987,3 +987,109 @@ func TestEstimateBOM_NotIncludedAction_NoREQUIRED(t *testing.T) {
 		t.Errorf("not_included must be a non-empty slice, got: %v", notIncluded)
 	}
 }
+
+// --------------------------------------------------------------------------
+// RC3-006: fallback flag passthrough
+// --------------------------------------------------------------------------
+
+// TestEstimateBOM_FallbackFlagSurfaced reproduces the issue #32 scenario: a
+// storage price returned with Attributes["fallback"]="true" (e.g. AWS's
+// us-east-1 static EBS rate served for an unsupported region such as
+// eu-central-2) must have that flag — and the accompanying fallback_note —
+// surfaced on the estimate_bom line item, not silently dropped.
+func TestEstimateBOM_FallbackFlagSurfaced(t *testing.T) {
+	pvdr := &mockProvider{
+		name:          "aws",
+		defaultRegion: "us-east-1",
+		supportsFunc:  func(_ models.PricingDomain, _ string) bool { return true },
+		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
+			price := makeStoragePrice("aws", spec.GetRegion(), 0.08)
+			price.Attributes = map[string]string{
+				"fallback":      "true",
+				"fallback_note": "static published rate — verify at https://aws.amazon.com/ebs/pricing/",
+			}
+			return &models.PricingResult{PublicPrices: []models.NormalizedPrice{price}}, nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"aws": pvdr})
+
+	items := []map[string]any{
+		{
+			"provider":     "aws",
+			"domain":       "storage",
+			"storage_type": "gp3",
+			"size_gb":      float64(500),
+			"region":       "eu-central-2",
+		},
+	}
+	resp := callEstimateBOM(t, h, items)
+
+	if _, ok := resp["error"]; ok {
+		t.Fatalf("expected success, got error: %v", resp["error"])
+	}
+
+	lineItems, ok := resp["line_items"].([]any)
+	if !ok || len(lineItems) != 1 {
+		t.Fatalf("expected 1 line item, got %v", resp["line_items"])
+	}
+	li, ok := lineItems[0].(map[string]any)
+	if !ok {
+		t.Fatalf("line item is not a map: %T", lineItems[0])
+	}
+
+	fallback, ok := li["fallback"].(string)
+	if !ok || fallback != "true" {
+		t.Errorf("expected line_items[0][\"fallback\"] == \"true\", got %v (present=%v)", li["fallback"], ok)
+	}
+	note, _ := li["fallback_note"].(string)
+	if note == "" {
+		t.Errorf("expected non-empty line_items[0][\"fallback_note\"], got %q", note)
+	}
+}
+
+// TestEstimateBOM_NoFallbackFlagWhenLive is the control case: a price with no
+// "fallback" attribute (a normal live catalog lookup) must NOT have a
+// "fallback" key injected into the line item.
+func TestEstimateBOM_NoFallbackFlagWhenLive(t *testing.T) {
+	pvdr := &mockProvider{
+		name:          "aws",
+		defaultRegion: "us-east-1",
+		supportsFunc:  func(_ models.PricingDomain, _ string) bool { return true },
+		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
+			price := makeStoragePrice("aws", spec.GetRegion(), 0.1142)
+			return &models.PricingResult{PublicPrices: []models.NormalizedPrice{price}}, nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"aws": pvdr})
+
+	items := []map[string]any{
+		{
+			"provider":     "aws",
+			"domain":       "storage",
+			"storage_type": "gp3",
+			"size_gb":      float64(500),
+			"region":       "eu-central-2",
+		},
+	}
+	resp := callEstimateBOM(t, h, items)
+
+	if _, ok := resp["error"]; ok {
+		t.Fatalf("expected success, got error: %v", resp["error"])
+	}
+
+	lineItems, ok := resp["line_items"].([]any)
+	if !ok || len(lineItems) != 1 {
+		t.Fatalf("expected 1 line item, got %v", resp["line_items"])
+	}
+	li, ok := lineItems[0].(map[string]any)
+	if !ok {
+		t.Fatalf("line item is not a map: %T", lineItems[0])
+	}
+
+	if _, present := li["fallback"]; present {
+		t.Errorf("expected no \"fallback\" key on a live-priced line item, got %v", li["fallback"])
+	}
+	if _, present := li["fallback_note"]; present {
+		t.Errorf("expected no \"fallback_note\" key on a live-priced line item, got %v", li["fallback_note"])
+	}
+}
