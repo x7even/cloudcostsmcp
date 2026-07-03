@@ -17,6 +17,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/models"
@@ -110,12 +111,28 @@ func (h *Handler) HandleGetPriceBySKU(
 	// unsupported provider (e.g. "gcp") produces the core function's honest,
 	// structured "unsupported_provider" error rather than a generic "not
 	// configured" message.
+	awsP, errOut := h.resolveAWSSKUProvider(providerName, "get_price_by_sku")
+	if errOut != nil {
+		return errResult(errOut), nil, nil
+	}
+
+	return jsonText(h.resolveSKUPriceEntry(ctx, awsP, providerName, in)), nil, nil
+}
+
+// resolveAWSSKUProvider resolves and type-asserts the AWS provider for
+// providerName, shared by get_price_by_sku and get_prices_by_sku (both
+// AWS-only — raw usage-type/SKU strings are an AWS CUR concept with no GCP/
+// Azure equivalent). toolName is interpolated into the error message so each
+// caller's error reads as coming from itself. Returns a non-nil errOut (and
+// a nil *awsprovider.Provider) when resolution fails; callers must check
+// errOut before using the returned provider.
+func (h *Handler) resolveAWSSKUProvider(providerName, toolName string) (awsP *awsprovider.Provider, errOut map[string]any) {
 	pvdr := h.provider(strings.ToLower(providerName))
 	if pvdr == nil {
-		return errResult(map[string]any{
+		return nil, map[string]any{
 			"error":   "unsupported_provider",
-			"message": fmt.Sprintf("get_price_by_sku only supports provider=\"aws\" (got %q).", providerName),
-		}), nil, nil
+			"message": fmt.Sprintf("%s only supports provider=\"aws\" (got %q).", toolName, providerName),
+		}
 	}
 
 	awsP, ok := pvdr.(*awsprovider.Provider)
@@ -123,26 +140,48 @@ func (h *Handler) HandleGetPriceBySKU(
 		// Should not be reachable in practice (only "aws" resolves to an AWS
 		// provider instance), but guards against a future provider map key
 		// aliasing collision.
-		return errResult(map[string]any{
+		return nil, map[string]any{
 			"error":   "unsupported_provider",
-			"message": fmt.Sprintf("get_price_by_sku only supports provider=\"aws\" (got %q).", providerName),
-		}), nil, nil
+			"message": fmt.Sprintf("%s only supports provider=\"aws\" (got %q).", toolName, providerName),
+		}
 	}
+	return awsP, nil
+}
 
+// resolveSKUPriceEntry resolves a single SKU against awsP/regions and shapes
+// the response. This is the shared core of get_price_by_sku (a single SKU)
+// and get_prices_by_sku (a batch of SKUs) — the disambiguation/sorting/
+// baseline-delta shaping logic below is intricate (see the ambiguous_in/
+// no_mapping_in/errors_in bucketing) and deliberately lives in exactly one
+// place rather than being duplicated per caller.
+//
+// The returned map is exactly what HandleGetPriceBySKU wraps in a
+// CallToolResult, whether it represents a successful lookup (no "error" key
+// — even the "no unambiguous price found in any region" case, which sets
+// "result": "no_prices_found" instead) or a structured error (an "error" key
+// is always present). Callers that need to distinguish the two — e.g. the
+// batch handler, sorting failed SKUs into a separate errors map — check for
+// that "error" key.
+func (h *Handler) resolveSKUPriceEntry(
+	ctx context.Context,
+	awsP *awsprovider.Provider,
+	providerName string,
+	in GetPriceBySKUInput,
+) map[string]any {
 	result, err := awsP.LookupSKUAcrossRegions(ctx, providerName, in.SKU, in.Service, in.Regions, in.Operation, in.ProductFamily)
 	if err != nil {
 		var skuErr *awsprovider.SKULookupError
 		if errors.As(err, &skuErr) {
-			return errResult(map[string]any{
+			return map[string]any{
 				"error":   skuErr.Code,
 				"message": skuErr.Message,
-			}), nil, nil
+			}
 		}
-		return errResult(map[string]any{
+		return map[string]any{
 			"error":     "upstream_failure",
 			"message":   "SKU lookup failed. Try again shortly.",
 			"retryable": true,
-		}), nil, nil
+		}
 	}
 
 	// matchedRegion pairs a region's single resolved price with the
@@ -278,7 +317,7 @@ func (h *Handler) HandleGetPriceBySKU(
 			// omission of the delta fields.
 			for _, ar := range ambiguousRegions {
 				if ar["region"] == in.BaselineRegion {
-					return errResult(map[string]any{
+					return map[string]any{
 						"error": "baseline_region_ambiguous",
 						"message": fmt.Sprintf(
 							"baseline_region %q is ambiguous and unresolved for this SKU (see ambiguous_in) "+
@@ -286,10 +325,10 @@ func (h *Handler) HandleGetPriceBySKU(
 								"resolve it, or choose a different baseline_region.",
 							in.BaselineRegion,
 						),
-					}), nil, nil
+					}
 				}
 			}
-			return errResult(map[string]any{"error": err.Error()}), nil, nil
+			return map[string]any{"error": err.Error()}
 		}
 	}
 
@@ -352,5 +391,158 @@ func (h *Handler) HandleGetPriceBySKU(
 			"(checked, not modeled), and errors_in (fetch failed) for details."
 	}
 
+	return out
+}
+
+// --------------------------------------------------------------------------
+// GetPricesBySKU — batch form of get_price_by_sku
+// --------------------------------------------------------------------------
+
+// maxSKUsPerBatch caps the skus list. Each SKU triggers its own fan-out
+// across regions (LookupSKUAcrossRegions), and while the process-lifetime
+// skuCatalogCache (aws_sku_lookup.go) collapses duplicate (service, region)
+// catalog fetches across SKUs that resolve to the same service, a batch of
+// SKUs that all resolve to distinct services still pays that fetch cost
+// once each — an unbounded skus list is a resource-exhaustion vector for the
+// same reason aws.maxSKULookupRegions bounds the regions list, so it is
+// rejected up front.
+const maxSKUsPerBatch = 25
+
+// skuBatchFanoutLimit bounds how many SKUs are resolved concurrently. Each
+// SKU lookup already fans out across its own regions internally (semaphore
+// of 10, see LookupSKUAcrossRegions), so an unbounded outer fan-out here
+// could multiply that by len(skus) simultaneous multi-hundred-MB catalog
+// fetches in the worst case (all SKUs resolving to distinct services). The
+// shared skuCatalogCache still collapses duplicate fetches for SKUs that
+// share a (service, region), so this only throttles that worst case.
+const skuBatchFanoutLimit = 4
+
+// GetPricesBySKUInput is the typed input for the get_prices_by_sku tool.
+type GetPricesBySKUInput struct {
+	Provider       string   `json:"provider"`
+	SKUs           []string `json:"skus"`
+	Regions        []string `json:"regions"`
+	BaselineRegion string   `json:"baseline_region"`
+}
+
+// HandleGetPricesBySKU implements the get_prices_by_sku tool: a batch form
+// of get_price_by_sku for resolving many raw AWS usage-type/SKU strings
+// (e.g. every distinct line item in a CUR export) against the same set of
+// target regions in one call. It reuses resolveSKUPriceEntry — the exact
+// same per-SKU resolution and response-shaping logic get_price_by_sku uses
+// — for each sku, fanned out concurrently (bounded by skuBatchFanoutLimit)
+// so repeated (service, region) catalog fetches across SKUs benefit from the
+// process-lifetime skuCatalogCache memoization.
+//
+// Each entry in "results" has exactly the shape a standalone get_price_by_sku
+// call for that sku would return (including its own ambiguous_in/
+// no_mapping_in/errors_in/baseline delta fields) — unlike get_prices_batch,
+// results are NOT re-sorted by price, since distinct SKUs commonly price in
+// different units (per-hour, per-GB, per-request, ...) that are not
+// meaningfully comparable; they are returned in the same order as the input
+// skus list. A sku whose lookup fails outright (e.g. empty string, or a
+// usage-type pattern get_price_by_sku cannot infer a service for) is instead
+// reported in the top-level "errors" map, keyed by that sku string, mirroring
+// get_prices_batch's per-item error shape.
+func (h *Handler) HandleGetPricesBySKU(
+	ctx context.Context,
+	_ *mcp.CallToolRequest,
+	in GetPricesBySKUInput,
+) (*mcp.CallToolResult, any, error) {
+	defer recoverToResult(ctx, "get_prices_by_sku")
+
+	// See HandleGetPriceBySKU's identical coalesce for why: the go-sdk does
+	// not apply JSON-Schema defaults to the bound Go struct.
+	providerName := in.Provider
+	if providerName == "" {
+		providerName = "aws"
+	}
+
+	awsP, errOut := h.resolveAWSSKUProvider(providerName, "get_prices_by_sku")
+	if errOut != nil {
+		return errResult(errOut), nil, nil
+	}
+
+	if len(in.SKUs) == 0 {
+		return errResult(map[string]any{
+			"error":   "skus_required",
+			"message": "skus must contain at least one raw AWS usage-type/SKU string",
+		}), nil, nil
+	}
+	if len(in.SKUs) > maxSKUsPerBatch {
+		return errResult(map[string]any{
+			"error": "too_many_skus",
+			"message": fmt.Sprintf(
+				"skus must contain at most %d entries (got %d) — call get_prices_by_sku in smaller "+
+					"batches, or use get_price_by_sku for one-off lookups.",
+				maxSKUsPerBatch, len(in.SKUs),
+			),
+		}), nil, nil
+	}
+	if len(in.Regions) == 0 {
+		return errResult(map[string]any{
+			"error":   "regions_required",
+			"message": "regions must contain at least one AWS region code",
+		}), nil, nil
+	}
+
+	// Fan out across SKUs, each resolved via the exact same per-SKU logic
+	// get_price_by_sku uses (resolveSKUPriceEntry), bounded by
+	// skuBatchFanoutLimit.
+	outs := make([]map[string]any, len(in.SKUs))
+	sem := make(chan struct{}, skuBatchFanoutLimit)
+	var wg sync.WaitGroup
+	for i, sku := range in.SKUs {
+		wg.Add(1)
+		go func(idx int, s string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			outs[idx] = h.resolveSKUPriceEntry(ctx, awsP, providerName, GetPriceBySKUInput{
+				SKU:            s,
+				Regions:        in.Regions,
+				BaselineRegion: in.BaselineRegion,
+			})
+		}(i, sku)
+	}
+	wg.Wait()
+
+	results := make([]map[string]any, 0, len(outs))
+	errMap := make(map[string]any, len(outs))
+	for i, o := range outs {
+		sku := in.SKUs[i]
+		if errVal, isErr := o["error"]; isErr {
+			msg, _ := o["message"].(string)
+			if msg == "" {
+				msg = fmt.Sprintf("%v", errVal)
+			}
+			retryable, _ := o["retryable"].(bool)
+			status := regionStatusNoData
+			if retryable {
+				status = regionStatusTransient
+			}
+			errMap[sku] = map[string]any{
+				"message":   msg,
+				"status":    status,
+				"retryable": retryable,
+			}
+			continue
+		}
+		results = append(results, o)
+	}
+
+	out := map[string]any{
+		"provider": providerName,
+		"skus":     in.SKUs,
+		"regions":  in.Regions,
+		"count":    len(results),
+		"results":  results,
+	}
+	if in.BaselineRegion != "" {
+		out["baseline_region"] = in.BaselineRegion
+	}
+	if len(errMap) > 0 {
+		out["errors"] = errMap
+	}
 	return jsonText(out), nil, nil
 }

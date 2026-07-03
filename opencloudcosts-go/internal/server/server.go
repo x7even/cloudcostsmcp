@@ -372,6 +372,30 @@ const (
 		"type": "object"
 	}`
 
+	schemaGetPricesBySKU = `{
+		"properties": {
+			"provider": {"default": "aws", "title": "Provider", "type": "string"},
+			"skus": {
+				"items": {"type": "string"},
+				"title": "Skus",
+				"type": "array"
+			},
+			"regions": {
+				"items": {"type": "string"},
+				"title": "Regions",
+				"type": "array"
+			},
+			"baseline_region": {
+				"default": "",
+				"title": "Baseline Region",
+				"type": "string"
+			}
+		},
+		"required": ["skus", "regions"],
+		"title": "get_prices_by_skuArguments",
+		"type": "object"
+	}`
+
 	schemaSearchPricing = `{
 		"additionalProperties": true,
 		"properties": {},
@@ -617,6 +641,8 @@ const (
 
 	descGetPriceBySKU = "\n        Resolve a raw AWS usage-type/SKU string — exactly as it appears in a Cost & Usage Report\n        (CUR) export, e.g. \"CAN1-BoxUsage:r5a.8xlarge\" — to a price, across one or more regions.\n\n        Use this instead of get_price/compare_prices when you have a raw billing export line item\n        (a \"UsageType\" or \"SKU\" column value) and need to reconcile it against current public\n        pricing, rather than starting from a known resource_type/domain spec. This tool strips the\n        region-prefix token from the usage-type string (e.g. \"CAN1-\", \"EU-\", or no prefix at all\n        for us-east-1) to get a region-independent suffix, then matches that suffix against each\n        target region's pricing catalog.\n\n        If service is omitted, the AWS servicecode is inferred from the usage-type pattern (e.g.\n        \"BoxUsage:\" implies AmazonEC2, \"LCUUsage\" implies AWSELB) — service_source in the response\n        indicates \"explicit\" or \"inferred\". If a supplied service hint finds no match but the\n        inferred servicecode does (real CUR data isn't always internally consistent — e.g. data-\n        transfer usage types sometimes appear against an \"AmazonEC2\" AWS Product column but are\n        actually billed under AWSDataTransfer), the tool falls back to the inferred match and flags\n        service_mismatch on that region's result rather than reporting no match.\n\n        Some usage-type suffixes are shared by multiple distinct billable products (e.g. ELB's\n        \"LCUUsage\" suffix matches Application/Network/Gateway load balancer pricing alike; RDS's\n        \"InstanceUsage:<type>\" suffix matches every database engine on that instance type). When\n        that happens the affected region is reported under ambiguous_in (NOT in\n        all_regions_sorted/cheapest_price/most_expensive_price — an ambiguous multi-product match\n        is never silently resolved to \"cheapest\"), with every candidate row listed under\n        alternate_matches. Pass operation and/or product_family — the same columns a CUR export\n        carries alongside the usage-type/SKU column — to resolve it: e.g. for an Application Load\n        Balancer LCU usage-type, product_family=\"Load Balancer-Application\" picks the correct row\n        out of the Application/Network/Gateway alternatives.\n\n        Regions with no catalog entry for the resolved suffix are reported in no_mapping_in\n        (checked, not found) — this is distinct from errors_in (the catalog fetch itself failed)\n        and from ambiguous_in (matched, but more than one product row and not yet resolved).\n        Known limitation: compound inter-region/wavelength data-transfer SKUs with two region-\n        shaped tokens (e.g. \"USE1WL1ATL1-CAN1-AWS-Out-Bytes\") are not fully resolved by the\n        single-prefix-strip model; these produce a warning rather than a silently wrong match.\n\n        Args:\n            provider: Cloud provider — only \"aws\" is supported (raw usage-type SKUs are an AWS\n                      CUR concept with no GCP/Azure equivalent).\n            sku: The raw usage-type/SKU string exactly as it appears in the CUR export.\n            service: Optional AWS servicecode hint (e.g. \"AmazonEC2\", \"AWSELB\", \"AmazonRDS\",\n                     \"AmazonDynamoDB\", \"AmazonElastiCache\", \"AWSDataTransfer\"). If omitted, it is\n                     inferred from the usage-type pattern.\n            regions: List of AWS region codes to check, e.g. [\"us-east-1\", \"eu-west-1\"]. Required,\n                     max 30.\n            baseline_region: Optional region for delta comparison, e.g. \"us-east-1\".\n            operation: Optional disambiguating hint — the AWS product \"operation\" attribute (e.g.\n                       \"CreateDBInstance:0021\" identifies Aurora PostgreSQL among RDS engines on\n                       the same instance type), matched case-insensitively. Use this when a region\n                       comes back in ambiguous_in.\n            product_family: Optional disambiguating hint — the AWS top-level \"productFamily\" (e.g.\n                            \"Load Balancer-Application\" for an ALB vs NLB/GLB), matched\n                            case-insensitively. Use this when a region comes back in ambiguous_in.\n\n        Examples:\n            {\"sku\": \"CAN1-BoxUsage:r5a.8xlarge\", \"regions\": [\"ca-central-1\", \"us-east-1\"]}\n            {\"sku\": \"CAN1-AWS-Out-Bytes\", \"service\": \"AmazonEC2\", \"regions\": [\"ca-central-1\"]}\n            {\"sku\": \"CAN1-LCUUsage\", \"service\": \"AWSELB\", \"product_family\": \"Load Balancer-Application\",\n             \"regions\": [\"ca-central-1\", \"us-east-1\"]}\n        "
 
+	descGetPricesBySKU = "\n        Batch form of get_price_by_sku: resolve many raw AWS usage-type/SKU strings — each exactly\n        as it appears in a Cost & Usage Report (CUR) export — against the same set of target\n        regions in one call.\n\n        Use this to reconcile many CUR line items at once (e.g. every distinct usage-type/SKU in a\n        monthly export) instead of issuing one get_price_by_sku call per SKU. Each sku is resolved\n        independently via the same logic get_price_by_sku uses, so per-region ambiguous_in/\n        no_mapping_in/errors_in bucketing and baseline_region deltas all apply per sku exactly as\n        they would in a standalone get_price_by_sku call — this tool only adds the batching and\n        aggregation layer on top.\n\n        service/operation/product_family hints are not supported here (they are inherently\n        per-sku, and different SKUs in a batch usually resolve to different services) — the AWS\n        servicecode is inferred per sku from its usage-type pattern. If a particular sku needs a\n        hint to resolve an ambiguous_in entry, follow up with a single get_price_by_sku call for\n        that sku, passing operation/product_family.\n\n        Each successfully-processed sku appears in \"results\", in the same order as the input skus\n        list (NOT re-sorted by price — distinct SKUs commonly price in different units, e.g.\n        per-hour vs per-GB vs per-request, that are not meaningfully comparable). A sku that fails\n        outright (e.g. an empty string, or a usage-type pattern no service could be inferred for)\n        is instead reported in the top-level \"errors\" map, keyed by that sku string, with\n        message/status/retryable fields mirroring get_prices_batch's per-item error shape.\n\n        Args:\n            provider: Cloud provider — only \"aws\" is supported (raw usage-type SKUs are an AWS\n                      CUR concept with no GCP/Azure equivalent).\n            skus: List of raw usage-type/SKU strings, each exactly as it appears in the CUR\n                  export. Required, max 25.\n            regions: List of AWS region codes to check, e.g. [\"us-east-1\", \"eu-west-1\"]. Required,\n                     max 30 (applies to every sku).\n            baseline_region: Optional region for delta comparison, applied to every sku,\n                             e.g. \"us-east-1\".\n\n        Examples:\n            {\"skus\": [\"CAN1-BoxUsage:r5a.8xlarge\", \"USW2-BoxUsage:m5.large\"], \"regions\": [\"us-east-1\", \"ca-central-1\"]}\n        "
+
 	descSearchPricing = "Deprecated helper that redirects to the correct tools. Use describe_catalog to browse available services by domain/provider, or get_price with a known spec."
 
 	descGetDiscountSummary = "\n        Return a summary of all active cloud discounts for the authenticated account.\n\n        For AWS: active Savings Plans (type, commitment $/hr, utilization %) and\n        active Reserved Instances (instance type, count, payment type, days remaining),\n        plus Cost Explorer utilization for the previous month.\n\n        Requires credentials and OCC_AWS_ENABLE_COST_EXPLORER=true for AWS.\n\n        Args:\n            provider: Cloud provider — \"aws\" (GCP CUD support coming later)\n        "
@@ -716,6 +742,16 @@ func (s *AppServer) registerTools(srv *mcp.Server) {
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in tools.GetPriceBySKUInput) (*mcp.CallToolResult, any, error) {
 		return s.callTool(ctx, "get_price_by_sku", func(ctx context.Context) (*mcp.CallToolResult, any, error) {
 			return h.HandleGetPriceBySKU(ctx, req, in)
+		})
+	})
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "get_prices_by_sku",
+		Description: descGetPricesBySKU,
+		InputSchema: rawSchema(schemaGetPricesBySKU),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in tools.GetPricesBySKUInput) (*mcp.CallToolResult, any, error) {
+		return s.callTool(ctx, "get_prices_by_sku", func(ctx context.Context) (*mcp.CallToolResult, any, error) {
+			return h.HandleGetPricesBySKU(ctx, req, in)
 		})
 	})
 
