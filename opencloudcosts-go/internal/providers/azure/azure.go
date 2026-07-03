@@ -24,6 +24,7 @@ import (
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/cache"
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/models"
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/providers"
+	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/utils"
 )
 
 const (
@@ -556,22 +557,33 @@ func (p *Provider) fetchPrices(ctx context.Context, filters map[string]string, m
 	nextURL := rawURL
 
 	for nextURL != "" && len(results) < maxResults {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, nextURL, nil)
-		if err != nil {
-			return nil, fmt.Errorf("azure: build request: %w", err)
-		}
+		var body []byte
+		err := utils.DoWithRetry(ctx, func(ctx context.Context) error {
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, nextURL, nil)
+			if err != nil {
+				return fmt.Errorf("azure: build request: %w", err)
+			}
 
-		resp, err := p.httpClient.Do(req)
+			resp, err := p.httpClient.Do(req)
+			if err != nil {
+				return fmt.Errorf("azure: http get: %w", err)
+			}
+			respBody, err := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			if err != nil {
+				return fmt.Errorf("azure: read body: %w", err)
+			}
+			if resp.StatusCode != http.StatusOK {
+				return &utils.HTTPStatusError{
+					StatusCode: resp.StatusCode,
+					Message:    fmt.Sprintf("azure: api returned %d: %s", resp.StatusCode, string(respBody)),
+				}
+			}
+			body = respBody
+			return nil
+		})
 		if err != nil {
-			return nil, fmt.Errorf("azure: http get: %w", err)
-		}
-		body, err := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
-		if err != nil {
-			return nil, fmt.Errorf("azure: read body: %w", err)
-		}
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("azure: api returned %d: %s", resp.StatusCode, string(body))
+			return nil, err
 		}
 
 		var data azureRetailResponse
