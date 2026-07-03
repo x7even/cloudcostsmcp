@@ -2133,34 +2133,105 @@ func TestGetStoragePrice_BulkFallback_io1_StaticRates(t *testing.T) {
 	}
 }
 
-// TestGetStoragePrice_BulkFallback_gp3 verifies that GetStoragePrice in
-// bulkFallback mode returns a single static GB-month entry for gp3 with the
-// correct rate ($0.08/GB-month) and the fallback attribute set.
-func TestGetStoragePrice_BulkFallback_gp3(t *testing.T) {
-	p := newTestProvider(t)
-	p.bulkFallback = true
+// gp3BulkJSON is a minimal bulk-pricing fixture for a gp3 EBS volume. The
+// price ($0.088/GB-month) is deliberately different from the static fallback
+// rate ($0.08/GB-month) so tests can distinguish "live per-region data" from
+// "static fallback" by price value alone.
+const gp3BulkJSON = `{
+"formatVersion": "aws_v1",
+"products": {
+  "GP3SKU1": {
+    "sku": "GP3SKU1",
+    "productFamily": "Storage",
+    "attributes": {
+      "volumeType": "General Purpose",
+      "volumeApiName": "gp3",
+      "location": "Canada (Central)"
+    }
+  }
+},
+"terms": {
+  "OnDemand": {
+    "GP3SKU1": {
+      "GP3SKU1.JRTCKXETXF": {
+        "priceDimensions": {
+          "GP3SKU1.JRTCKXETXF.DIM": {
+            "unit": "GB-Mo",
+            "pricePerUnit": {"USD": "0.0880000000"},
+            "description": "$0.088 per GB-month of General Purpose (SSD) provisioned storage"
+          }
+        },
+        "termAttributes": {}
+      }
+    }
+  },
+  "Reserved": {}
+}
+}`
+
+// gp2BulkJSON is the gp2 analogue of gp3BulkJSON, priced differently again
+// ($0.105/GB-month) from both gp3's live price and gp2's static fallback
+// rate ($0.10/GB-month).
+const gp2BulkJSON = `{
+"formatVersion": "aws_v1",
+"products": {
+  "GP2SKU1": {
+    "sku": "GP2SKU1",
+    "productFamily": "Storage",
+    "attributes": {
+      "volumeType": "General Purpose",
+      "volumeApiName": "gp2",
+      "location": "US West (Oregon)"
+    }
+  }
+},
+"terms": {
+  "OnDemand": {
+    "GP2SKU1": {
+      "GP2SKU1.JRTCKXETXF": {
+        "priceDimensions": {
+          "GP2SKU1.JRTCKXETXF.DIM": {
+            "unit": "GB-Mo",
+            "pricePerUnit": {"USD": "0.1050000000"},
+            "description": "$0.105 per GB-month of General Purpose (SSD) provisioned storage"
+          }
+        },
+        "termAttributes": {}
+      }
+    }
+  },
+  "Reserved": {}
+}
+}`
+
+// TestGetStoragePrice_BulkFallback_gp3_LivePath verifies that, in bulkFallback
+// mode, GetStoragePrice("gp3", ...) now tries the live per-region bulk fetch
+// first (RC3-012) instead of unconditionally returning the static rate. When
+// the bulk endpoint returns a real product, the live price ($0.088) — not the
+// static fallback price ($0.08) — must be returned, and the result must not
+// carry Attributes["fallback"] = "true".
+func TestGetStoragePrice_BulkFallback_gp3_LivePath(t *testing.T) {
+	newBulkServer(t, gp3BulkJSON)
+	p := newBulkProvider(t)
 	ctx := context.Background()
 
-	result, err := p.GetStoragePrice(ctx, "gp3", "us-east-1", 0)
+	result, err := p.GetStoragePrice(ctx, "gp3", "ca-central-1", 0)
 	if err != nil {
 		t.Fatalf("GetStoragePrice gp3 bulkFallback: %v", err)
 	}
 	if len(result) == 0 {
-		t.Fatal("expected non-empty prices for gp3 static fallback")
+		t.Fatal("expected non-empty prices for gp3 live bulk path")
 	}
 
 	var hasGB bool
 	for _, np := range result {
 		if np.Unit == models.PriceUnitPerGBMonth {
 			hasGB = true
-			if np.PricePerUnit != 0.08 {
-				t.Errorf("gp3 GB rate = %v, want 0.08", np.PricePerUnit)
+			if np.PricePerUnit != 0.088 {
+				t.Errorf("gp3 GB rate = %v, want 0.088 (live bulk price, not the 0.08 static fallback)", np.PricePerUnit)
 			}
-			if got := np.Attributes["fallback"]; got != "true" {
-				t.Errorf("gp3 GB-month entry: Attributes[fallback] = %q, want \"true\"", got)
-			}
-			if got := np.Attributes["fallback_note"]; got == "" {
-				t.Errorf("gp3 GB-month entry: Attributes[fallback_note] is empty, want non-empty")
+			if got := np.Attributes["fallback"]; got == "true" {
+				t.Errorf("gp3 GB-month entry: Attributes[fallback] = %q, want unset (live data)", got)
 			}
 		}
 	}
@@ -2169,12 +2240,11 @@ func TestGetStoragePrice_BulkFallback_gp3(t *testing.T) {
 	}
 }
 
-// TestGetStoragePrice_BulkFallback_gp2 verifies that GetStoragePrice in
-// bulkFallback mode returns a single static GB-month entry for gp2 with the
-// correct rate ($0.10/GB-month) and the fallback attribute set.
-func TestGetStoragePrice_BulkFallback_gp2(t *testing.T) {
-	p := newTestProvider(t)
-	p.bulkFallback = true
+// TestGetStoragePrice_BulkFallback_gp2_LivePath is the gp2 analogue of
+// TestGetStoragePrice_BulkFallback_gp3_LivePath.
+func TestGetStoragePrice_BulkFallback_gp2_LivePath(t *testing.T) {
+	newBulkServer(t, gp2BulkJSON)
+	p := newBulkProvider(t)
 	ctx := context.Background()
 
 	result, err := p.GetStoragePrice(ctx, "gp2", "us-west-2", 0)
@@ -2182,23 +2252,66 @@ func TestGetStoragePrice_BulkFallback_gp2(t *testing.T) {
 		t.Fatalf("GetStoragePrice gp2 bulkFallback: %v", err)
 	}
 	if len(result) == 0 {
-		t.Fatal("expected non-empty prices for gp2 static fallback")
+		t.Fatal("expected non-empty prices for gp2 live bulk path")
 	}
 
 	var hasGB bool
 	for _, np := range result {
 		if np.Unit == models.PriceUnitPerGBMonth {
 			hasGB = true
-			if np.PricePerUnit != 0.10 {
-				t.Errorf("gp2 GB rate = %v, want 0.10", np.PricePerUnit)
+			if np.PricePerUnit != 0.105 {
+				t.Errorf("gp2 GB rate = %v, want 0.105 (live bulk price, not the 0.10 static fallback)", np.PricePerUnit)
 			}
-			if got := np.Attributes["fallback"]; got != "true" {
-				t.Errorf("gp2 GB-month entry: Attributes[fallback] = %q, want \"true\"", got)
+			if got := np.Attributes["fallback"]; got == "true" {
+				t.Errorf("gp2 GB-month entry: Attributes[fallback] = %q, want unset (live data)", got)
 			}
 		}
 	}
 	if !hasGB {
 		t.Error("expected at least one PriceUnitPerGBMonth entry for gp2")
+	}
+}
+
+// TestGetStoragePrice_BulkFallback_gp3_DegradesOnFetchError verifies that
+// when the live per-region bulk fetch fails (e.g. upstream 500, or a timeout
+// surfaced as a transport error), GetStoragePrice("gp3", ...) gracefully
+// degrades to the static published rate instead of returning an error — the
+// graceful-degrade behavior called for by RC3-012 item (1).
+func TestGetStoragePrice_BulkFallback_gp3_DegradesOnFetchError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	origURL := bulkPricingBaseURL
+	bulkPricingBaseURL = srv.URL
+	defer func() { bulkPricingBaseURL = origURL }()
+
+	p := newTestProvider(t)
+	p.bulkFallback = true
+	ctx := context.Background()
+
+	result, err := p.GetStoragePrice(ctx, "gp3", "us-east-1", 0)
+	if err != nil {
+		t.Fatalf("GetStoragePrice gp3 should degrade to static fallback on fetch error, got err: %v", err)
+	}
+	if len(result) == 0 {
+		t.Fatal("expected non-empty prices from static fallback degrade")
+	}
+
+	var hasGB bool
+	for _, np := range result {
+		if np.Unit == models.PriceUnitPerGBMonth {
+			hasGB = true
+			if np.PricePerUnit != 0.08 {
+				t.Errorf("gp3 GB rate = %v, want 0.08 (static fallback)", np.PricePerUnit)
+			}
+			if got := np.Attributes["fallback"]; got != "true" {
+				t.Errorf("gp3 GB-month entry: Attributes[fallback] = %q, want \"true\"", got)
+			}
+		}
+	}
+	if !hasGB {
+		t.Error("expected at least one PriceUnitPerGBMonth entry for gp3")
 	}
 }
 
