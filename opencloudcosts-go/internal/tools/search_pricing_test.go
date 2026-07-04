@@ -3,6 +3,7 @@ package tools_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/tools"
@@ -37,6 +38,23 @@ func TestSearchPricingStub_MessagePresent(t *testing.T) {
 	msg, ok := resp["message"].(string)
 	if !ok || msg == "" {
 		t.Errorf("expected non-empty message string, got: %v", resp["message"])
+	}
+}
+
+// TestSearchPricingStub_MessageIsDeprecationFramed verifies the message text
+// frames the tool as deprecated rather than nonexistent/broken, matching the
+// honest "Deprecated helper" tool-list description instead of contradicting it.
+func TestSearchPricingStub_MessageIsDeprecationFramed(t *testing.T) {
+	h := tools.New(nil)
+	resp := callSearchPricing(t, h)
+
+	const want = "search_pricing is deprecated and does not perform a search; use one of the alternatives below."
+	msg, _ := resp["message"].(string)
+	if msg != want {
+		t.Errorf("message: got %q, want %q", msg, want)
+	}
+	if strings.Contains(msg, "does not exist") {
+		t.Errorf("message still uses existential/broken-tool wording: %q", msg)
 	}
 }
 
