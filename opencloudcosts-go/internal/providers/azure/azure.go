@@ -732,6 +732,7 @@ func (p *Provider) GetComputePrice(
 	filters := map[string]string{
 		"armSkuName":    instanceType,
 		"armRegionName": region,
+		"serviceName":   "Virtual Machines",
 	}
 	switch term { //nolint:exhaustive // unsupported terms (savings plans, CUDs) fall back to Consumption
 	case models.PricingTermOnDemand:
@@ -755,6 +756,14 @@ func (p *Provider) GetComputePrice(
 
 	var prices []models.NormalizedPrice
 	for _, item := range items {
+		// Azure reuses the same armSkuName across unrelated billed services that
+		// build on the same underlying VM SKU (e.g. HDInsight, Azure Database for
+		// PostgreSQL/MySQL Flexible Server, Managed Instance for Apache Cassandra).
+		// Only "Virtual Machines" rows are the actual compute instance price.
+		if !strings.EqualFold(item.ServiceName, "Virtual Machines") {
+			continue
+		}
+
 		productName := item.ProductName
 		skuName := item.SkuName
 
@@ -762,10 +771,15 @@ func (p *Provider) GetComputePrice(
 			if !strings.Contains(skuName, "Spot") {
 				continue
 			}
-		} else if term == models.PricingTermOnDemand {
-			if strings.Contains(skuName, "Spot") || strings.Contains(skuName, "Low Priority") {
-				continue
-			}
+		} else if strings.Contains(skuName, "Spot") || strings.Contains(skuName, "Low Priority") {
+			continue
+		}
+
+		// OS (Linux/Windows) disambiguation only applies to Spot/OnDemand: reserved
+		// VM rows from the API are OS-neutral (a single row per SKU/term, with a
+		// generic productName), so applying this check there would incorrectly
+		// filter out the only available row for os="windows".
+		if term == models.PricingTermSpot || term == models.PricingTermOnDemand {
 			if strings.EqualFold(os, "linux") && strings.Contains(productName, "Windows") {
 				continue
 			}
