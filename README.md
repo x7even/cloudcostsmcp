@@ -388,6 +388,18 @@ OpenCloudCosts can access sensitive billing data when configured with cloud cred
 **What this server can access**
 With credentials configured: actual spend, contract/negotiated pricing, reservation and savings plan data. Understand this before granting access in shared or multi-user environments.
 
+**Server instructions**
+
+This is the complete, verbatim `Instructions` string this server sends to MCP clients (from `opencloudcosts-go/internal/server/server.go`), reproduced here so it can be checked without reading source:
+
+```
+OpenCloudCosts MCP provides accurate public and effective cloud pricing data. Use it to look up compute, storage, and database pricing on AWS, GCP, and Azure; compare prices across regions and providers; estimate TCO from a Bill of Materials; and calculate unit economics. For effective/bespoke pricing (post-discount), ensure provider credentials are configured. Azure pricing requires no credentials.
+```
+
+That's the whole thing: a description of what the tools do and when credentials matter. It contains no directives about the model's behavior, tone, or process, and it never will. We commit to keeping these instructions minimal and strictly pricing-scoped — any future change that adds a "you must...", "always...", or other behavioral directive is a review-blocking change and should be rejected in review unless this section of the README is updated in the same PR to reflect it.
+
+If your MCP client or harness renders instructions from multiple locally-installed servers or plugins adjacent to each other (for example, a separate SessionStart hook from an unrelated plugin), that adjacent output is not produced by this server. Compare what you see against the fenced block above — only that text originates from OpenCloudCosts MCP.
+
 ## Recent releases
 
 - **v0.9.1** ✅ GCP egress contract pricing; fix `PricingResult.source` Literal

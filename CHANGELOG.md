@@ -44,6 +44,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   produces while streaming the offer file, so term assembly is a direct O(1) `map[sku]` lookup
   instead.
 
+### Docs
+
+- **README: published canonical server instructions text** — added a "Server instructions"
+  subsection to the Security section with the verbatim `Instructions` string the server sends
+  to MCP clients (from `server.go`), a written commitment that these instructions stay minimal
+  and pricing-only (any future behavioral "you must..." addition is review-blocking), and a
+  note that other locally-installed harness plugins may render their own hook output adjacent
+  to this block, which is not this server's output. Closes a documentation gap identified after
+  a false-attribution concern (a third-party plugin hook mistaken for this server's own
+  instructions) was investigated and resolved.
+
 ---
 
 ## [1.0.0] — 2026-06-27
