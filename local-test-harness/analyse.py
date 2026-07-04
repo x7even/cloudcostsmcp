@@ -403,13 +403,18 @@ def flag_missing_data(trace: dict) -> tuple[bool, str]:
     for tc in trace["tool_calls"]:
         result = tc["result"]
         if isinstance(result, dict) and "error" in result:
-            err = (result["error"] or "").lower()
+            # Check "error" plus "reason"/"hint" — the Go server's not_configured
+            # shape puts the actual "no credentials found" detail in "reason".
+            err = " ".join(
+                str(result.get(k) or "") for k in ("error", "reason", "hint")
+            ).lower()
             # Expected: GCP auth errors, spot-price auth, cost-explorer auth,
             # and any error explicitly telling the LLM not to estimate
             if (
                 "gcp" not in err
                 and "api key" not in err
                 and "credentials" not in err
+                and "no credentials found" not in err
                 and "spot" not in err
                 and "cost explorer" not in err
                 and "do not estimate" not in err
@@ -445,9 +450,13 @@ def flag_api_key(trace: dict) -> tuple[bool, str]:
     for tc in trace["tool_calls"]:
         result = tc["result"]
         if isinstance(result, dict):
-            # Check both structured "error" field and FastMCP text error format
-            err = (result.get("error") or result.get("text") or "").lower()
-            if "api key" in err or ("gcp" in err and "requires" in err):
+            # Check structured "error"/"reason" fields (Go server's not_configured
+            # shape puts the actual "no credentials found" detail in "reason") and
+            # the FastMCP text error format.
+            err = " ".join(
+                str(result.get(k) or "") for k in ("error", "text", "reason", "hint")
+            ).lower()
+            if "api key" in err or ("gcp" in err and "requires" in err) or "no credentials found" in err:
                 return True, "GCP API key not configured (expected in this environment)"
             # AWS spot/Cost Explorer pricing requires live credentials — expected gap
             if (
@@ -563,7 +572,7 @@ def build_improvement_plan(report: dict, run_dir: Path):
     """Write a structured improvement plan based on observed failures."""
     failures = {pid: r for pid, r in report.items() if not r["pass"]}
     if not failures:
-        plan = "# Improvement Plan\n\nAll tests passed. No improvements needed from this run.\n"
+        lines = ["# Improvement Plan\n\nAll tests passed. No improvements needed from this run.\n"]
     else:
         from collections import defaultdict
 
@@ -613,9 +622,10 @@ def build_improvement_plan(report: dict, run_dir: Path):
             )
 
     plan_file = run_dir / "improvement_plan.md"
-    plan_file.write_text("".join(lines) if isinstance(lines, list) else plan)
+    plan_text = "".join(lines)
+    plan_file.write_text(plan_text)
     print(f"\nImprovement plan written to: {plan_file}")
-    print("\n" + ("".join(lines) if isinstance(lines, list) else plan))
+    print("\n" + plan_text)
 
 
 def main():

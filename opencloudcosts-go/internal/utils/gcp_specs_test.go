@@ -61,6 +61,31 @@ func TestParseInstanceTypeExactLookupA2Highgpu1g(t *testing.T) {
 	}
 }
 
+func TestParseInstanceTypeExactLookupA3Ultragpu8g(t *testing.T) {
+	// Regression test: a3-ultragpu-8g's "8g" suffix (GPU count, not vCPU
+	// count) is not parseable by the family-series-vcpus naming-convention
+	// fallback, so it must have a GCPInstanceSpecs override entry — without
+	// one, ParseInstanceType returns ok=false and callers misreport this as
+	// an "unknown instance type" error instead of proceeding to price it.
+	vcpu, mem, ok := ParseInstanceType("a3-ultragpu-8g")
+	if !ok {
+		t.Fatal("expected ok — a3-ultragpu-8g must have a GCPInstanceSpecs override entry")
+	}
+	if vcpu != 224 {
+		t.Errorf("vcpu: got %d want 224", vcpu)
+	}
+	if math.Abs(mem-2952.0) > 1e-9 {
+		t.Errorf("mem: got %v want 2952.0", mem)
+	}
+	gpu, ok := GCPInstanceGPU["a3-ultragpu-8g"]
+	if !ok {
+		t.Fatal("expected a3-ultragpu-8g to have a GCPInstanceGPU entry")
+	}
+	if gpu.Count != 8 {
+		t.Errorf("gpu count: got %d want 8", gpu.Count)
+	}
+}
+
 func TestParseInstanceTypeExactLookupM1Megamem96(t *testing.T) {
 	vcpu, mem, ok := ParseInstanceType("m1-megamem-96")
 	if !ok {
