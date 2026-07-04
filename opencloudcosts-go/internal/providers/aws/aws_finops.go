@@ -601,15 +601,15 @@ func (p *Provider) DescribeCatalog(ctx context.Context) (*models.ProviderCatalog
 			models.PricingDomainInterRegionEgress,
 		},
 		Services: map[string][]string{
-			"compute":             {"ec2", "fargate"},
-			"storage":             {"ebs", "s3"},
-			"database":            {"rds", "elasticache", "aurora_postgresql"},
-			"ai":                  {"bedrock", "sagemaker"},
-			"serverless":          {"lambda"},
-			"analytics":           {"redshift", "athena"},
-			"network":             {"lb", "cdn", "nat", "waf", "data_transfer", "egress"},
-			"observability":       {"cloudwatch"},
-			"container":           {"eks"},
+			"compute":       {"ec2", "fargate"},
+			"storage":       {"ebs", "s3"},
+			"database":      {"rds", "elasticache", "aurora_postgresql"},
+			"ai":            {"bedrock", "sagemaker"},
+			"serverless":    {"lambda"},
+			"analytics":     {"redshift", "athena"},
+			"network":       {"lb", "cdn", "nat", "waf", "data_transfer", "egress"},
+			"observability": {"cloudwatch"},
+			"container":     {"eks"},
 			// inter_region_egress has no discrete sub-services (it is parameterized
 			// by source_region/dest_region, not a service name) but the domain is
 			// fully functional — see FilterHints and ExampleInvocations below. A
@@ -688,19 +688,23 @@ func (p *Provider) DescribeCatalog(ctx context.Context) (*models.ProviderCatalog
 			"ai/bedrock": {
 				"model": "e.g. 'claude-3-5-sonnet', 'nova-pro', 'llama-3-1-70b'",
 				"mode":  "'on_demand' or 'batch'",
+				"note": "get_price currently returns a not_supported error for ai/bedrock: " +
+					"per-model inference rates are not in the static pricing catalog and require " +
+					"live AWS credentials (Bedrock/Cost Explorer pricing API), which is not yet " +
+					"implemented. See the reason field on the not_supported response for detail.",
 			},
 			"ai/sagemaker": {
 				"machine_type": "ml instance type e.g. 'ml.g5.xlarge'",
 			},
 			"serverless/lambda": {
-				"service":             "lambda",
-				"gb_seconds":          "compute time in GB-seconds per month (memory_gb × duration_seconds × invocations); omit for raw rate",
-				"requests_millions":   "number of invocations in millions per month; omit for raw rate",
-				"region":              "AWS region e.g. 'us-east-1'",
+				"service":           "lambda",
+				"gb_seconds":        "compute time in GB-seconds per month (memory_gb × duration_seconds × invocations); omit for raw rate",
+				"requests_millions": "number of invocations in millions per month; omit for raw rate",
+				"region":            "AWS region e.g. 'us-east-1'",
 			},
-			"analytics/redshift":    {"service": "redshift"},
-			"analytics/athena":      {"service": "athena"},
-			"network/lb":            {"service": "lb", "note": "also accepts 'cloud_lb'"},
+			"analytics/redshift": {"service": "redshift"},
+			"analytics/athena":   {"service": "athena"},
+			"network/lb":         {"service": "lb", "note": "also accepts 'cloud_lb'"},
 			"network/cdn": {
 				"service":           "cdn",
 				"data_gb_per_month": "monthly data transfer volume in GB (used for blended-rate calculation)",
@@ -779,13 +783,13 @@ func (p *Provider) DescribeCatalog(ctx context.Context) (*models.ProviderCatalog
 				"region":    "us-east-1",
 			},
 			"storage": {
-				"provider":     "aws",
-				"domain":       "storage",
-				"storage_type": "gp3",
-				"region":       "us-east-1",
-				"size_gb":      100,
-				"_iops_example":         "For io2: add \"iops\": 64000 to get the provisioned IOPS line item",
-				"_throughput_example":   "For gp3 with 500 MB/s: add \"throughput_mbps\": 500 (baseline 125 MB/s free)",
+				"provider":            "aws",
+				"domain":              "storage",
+				"storage_type":        "gp3",
+				"region":              "us-east-1",
+				"size_gb":             100,
+				"_iops_example":       "For io2: add \"iops\": 64000 to get the provisioned IOPS line item",
+				"_throughput_example": "For gp3 with 500 MB/s: add \"throughput_mbps\": 500 (baseline 125 MB/s free)",
 			},
 			"database/rds": {
 				"provider":      "aws",
@@ -814,14 +818,16 @@ func (p *Provider) DescribeCatalog(ctx context.Context) (*models.ProviderCatalog
 				"region":        "us-east-1",
 				"input_tokens":  1_000_000,
 				"output_tokens": 1_000_000,
+				"_note": "calling get_price with this spec currently returns a not_supported " +
+					"error — AWS Bedrock per-model rates are not in the static pricing catalog.",
 			},
 			"serverless/lambda": {
-				"provider":            "aws",
-				"domain":              "serverless",
-				"service":             "lambda",
-				"region":              "us-east-1",
-				"gb_seconds":          100.0,
-				"requests_millions":   10.0,
+				"provider":          "aws",
+				"domain":            "serverless",
+				"service":           "lambda",
+				"region":            "us-east-1",
+				"gb_seconds":        100.0,
+				"requests_millions": 10.0,
 			},
 			"observability/cloudwatch": {
 				"provider": "aws",
@@ -836,11 +842,11 @@ func (p *Provider) DescribeCatalog(ctx context.Context) (*models.ProviderCatalog
 				"region":   "us-east-1",
 			},
 			"inter_region_egress": {
-				"provider":          "aws",
-				"domain":            "inter_region_egress",
-				"source_region":     "us-east-1",
-				"dest_region":       "eu-west-1",
-				"data_gb":           1024.0,
+				"provider":      "aws",
+				"domain":        "inter_region_egress",
+				"source_region": "us-east-1",
+				"dest_region":   "eu-west-1",
+				"data_gb":       1024.0,
 			},
 			"network/egress": {
 				"provider":          "aws",
@@ -1018,4 +1024,3 @@ func derefStr(s *string) string {
 	}
 	return *s
 }
-

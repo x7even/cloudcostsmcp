@@ -1160,9 +1160,19 @@ func (p *Provider) GetPrice(ctx context.Context, spec models.PricingSpec) (*mode
 	case models.PricingDomainAI:
 		// AWS Bedrock and SageMaker AI pricing requires live AWS credentials
 		// (Cost Explorer / Bedrock pricing endpoints). The static catalog does not
-		// include per-model inference rates. Return ErrNotSupported so the caller
-		// gets a clean not_supported response rather than retryable upstream_failure.
-		return nil, providers.ErrNotSupported
+		// include per-model inference rates (e.g. no Claude, Llama, or Nova model
+		// rates), regardless of which model/service is requested. Wrap
+		// ErrNotSupported with a specific reason (rather than returning it bare)
+		// so the not_supported response callers see explains the catalog gap
+		// instead of the generic "not supported by this provider" — this is the
+		// message that reaches describe_catalog's ai/bedrock example_invocation
+		// callers when they actually invoke get_price.
+		return nil, fmt.Errorf(
+			"AWS %s pricing (service=%q) is not available from the static pricing catalog — "+
+				"per-model inference rates (e.g. Claude, Llama, Nova on Bedrock; SageMaker endpoints) "+
+				"require live AWS credentials and Bedrock/Cost Explorer pricing API integration, which "+
+				"is not yet implemented: %w",
+			spec.GetDomain(), spec.GetService(), providers.ErrNotSupported)
 
 	default:
 		return nil, fmt.Errorf("aws: GetPrice: unsupported domain %q in Part 1 — domain=%s service=%s",

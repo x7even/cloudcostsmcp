@@ -350,6 +350,34 @@ func TestDescribeCatalog_HasExampleInvocations(t *testing.T) {
 	}
 }
 
+// TestDescribeCatalog_BedrockExampleFlagsCatalogGap regression-tests the
+// "bedrock-claude-catalog-gap" fix: describe_catalog's ai/bedrock
+// example_invocation and filter_hints must warn that calling get_price with
+// this exact spec currently returns not_supported, since AWS Bedrock
+// per-model rates are not in the static catalog. Without this note, callers
+// would copy the example_invocation verbatim (as instructed by get_price's
+// own docstring) and always get an error.
+func TestDescribeCatalog_BedrockExampleFlagsCatalogGap(t *testing.T) {
+	p := newNilProvider()
+	cat, _ := p.DescribeCatalog(context.Background())
+
+	example, ok := cat.ExampleInvocations["ai/bedrock"]
+	if !ok {
+		t.Fatal("ExampleInvocations missing 'ai/bedrock' key")
+	}
+	if _, ok := example["_note"]; !ok {
+		t.Error("ai/bedrock example_invocation missing '_note' warning about the get_price catalog gap")
+	}
+
+	hints, ok := cat.FilterHints["ai/bedrock"]
+	if !ok {
+		t.Fatal("FilterHints missing 'ai/bedrock' key")
+	}
+	if _, ok := hints["note"]; !ok {
+		t.Error("ai/bedrock filter_hints missing 'note' warning about the get_price catalog gap")
+	}
+}
+
 func TestDescribeCatalog_HasDecisionMatrix(t *testing.T) {
 	p := newNilProvider()
 	cat, _ := p.DescribeCatalog(context.Background())
@@ -727,4 +755,3 @@ func TestGetEffectivePrice_NotConfigured(t *testing.T) {
 		t.Errorf("expected nil result when CE not configured, got: %v", result)
 	}
 }
-
