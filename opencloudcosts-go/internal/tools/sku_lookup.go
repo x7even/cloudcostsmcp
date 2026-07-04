@@ -181,6 +181,7 @@ func (h *Handler) resolveSKUPriceEntry(
 			"error":     "upstream_failure",
 			"message":   "SKU lookup failed. Try again shortly.",
 			"retryable": true,
+			"regions":   in.Regions,
 		}
 	}
 

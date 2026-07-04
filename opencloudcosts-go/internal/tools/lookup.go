@@ -596,6 +596,7 @@ func (h *Handler) HandleGetPrice(
 		return errResult(map[string]any{
 			"error": fmt.Sprintf("Provider '%s' not configured. Available: %v",
 				spec.GetProvider(), available),
+			"region": spec.GetRegion(),
 		}), nil, nil
 	}
 
@@ -620,6 +621,7 @@ func (h *Handler) HandleGetPrice(
 			"provider": string(spec.GetProvider()),
 			"domain":   string(spec.GetDomain()),
 			"service":  spec.GetService(),
+			"region":   spec.GetRegion(),
 			"reason": fmt.Sprintf("%s does not support %s/%s.",
 				spec.GetProvider(), spec.GetDomain(), spec.GetService()),
 			"alternatives": []string{"Call describe_catalog() to see what this provider supports."},
@@ -644,6 +646,7 @@ func (h *Handler) HandleGetPrice(
 				"provider": string(spec.GetProvider()),
 				"domain":   string(spec.GetDomain()),
 				"service":  spec.GetService(),
+				"region":   spec.GetRegion(),
 				"reason":   err.Error(),
 			}), nil, nil
 		}
@@ -652,12 +655,14 @@ func (h *Handler) HandleGetPrice(
 				"error":  "not_configured",
 				"reason": err.Error(),
 				"hint":   "Configure provider credentials to enable this feature.",
+				"region": spec.GetRegion(),
 			}), nil, nil
 		}
 		return errResult(map[string]any{
 			"error":     "upstream_failure",
 			"message":   "Pricing lookup failed. Try again shortly.",
 			"retryable": true,
+			"region":    spec.GetRegion(),
 		}), nil, nil
 	}
 
@@ -729,7 +734,8 @@ func (h *Handler) HandleGetPricesBatch(
 	pvdr := h.provider(in.Provider)
 	if pvdr == nil {
 		return errResult(map[string]any{
-			"error": fmt.Sprintf("Provider '%s' not configured.", in.Provider),
+			"error":  fmt.Sprintf("Provider '%s' not configured.", in.Provider),
+			"region": in.Region,
 		}), nil, nil
 	}
 
@@ -926,7 +932,8 @@ func (h *Handler) HandleComparePrices(
 	pvdr := h.provider(string(baseSpec.GetProvider()))
 	if pvdr == nil {
 		return errResult(map[string]any{
-			"error": fmt.Sprintf("Provider '%s' not configured.", baseSpec.GetProvider()),
+			"error":   fmt.Sprintf("Provider '%s' not configured.", baseSpec.GetProvider()),
+			"regions": in.Regions,
 		}), nil, nil
 	}
 
@@ -934,6 +941,7 @@ func (h *Handler) HandleComparePrices(
 		return errResult(map[string]any{
 			"error": fmt.Sprintf("%s does not support %s/%s.",
 				baseSpec.GetProvider(), baseSpec.GetDomain(), baseSpec.GetService()),
+			"regions": in.Regions,
 		}), nil, nil
 	}
 
@@ -1009,11 +1017,13 @@ func (h *Handler) HandleComparePrices(
 				"error":     "upstream_failure",
 				"message":   "Pricing lookup failed for all requested regions. Try again shortly.",
 				"retryable": true,
+				"regions":   in.Regions,
 			}), nil, nil
 		}
 		out := map[string]any{
 			"result":  "no_prices_found",
 			"message": "No pricing found in any of the specified regions.",
+			"regions": in.Regions,
 		}
 		if len(transientErrors) > 0 {
 			out["transient_errors"] = transientErrors
@@ -1508,7 +1518,8 @@ func (h *Handler) HandleGetSpotHistory(
 	pvdr := h.provider(string(spec.GetProvider()))
 	if pvdr == nil {
 		return errResult(map[string]any{
-			"error": fmt.Sprintf("Provider '%s' not configured.", spec.GetProvider()),
+			"error":  fmt.Sprintf("Provider '%s' not configured.", spec.GetProvider()),
+			"region": spec.GetRegion(),
 		}), nil, nil
 	}
 
@@ -1520,6 +1531,7 @@ func (h *Handler) HandleGetSpotHistory(
 				"provider": string(spec.GetProvider()),
 				"domain":   string(spec.GetDomain()),
 				"service":  spec.GetService(),
+				"region":   spec.GetRegion(),
 				"reason":   err.Error(),
 			}), nil, nil
 		}
@@ -1528,12 +1540,14 @@ func (h *Handler) HandleGetSpotHistory(
 				"error":     "invalid_input",
 				"message":   err.Error(),
 				"retryable": false,
+				"region":    spec.GetRegion(),
 			}), nil, nil
 		}
 		return errResult(map[string]any{
 			"error":     "upstream_failure",
 			"message":   "Spot history lookup failed. Try again shortly.",
 			"retryable": true,
+			"region":    spec.GetRegion(),
 		}), nil, nil
 	}
 

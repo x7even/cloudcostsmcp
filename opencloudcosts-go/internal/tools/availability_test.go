@@ -282,6 +282,9 @@ func TestListInstanceTypes_ProviderNotConfigured(t *testing.T) {
 	if resp["error"] == nil {
 		t.Errorf("expected error, got: %v", resp)
 	}
+	if resp["region"] != "us-central1" {
+		t.Errorf("region: got %v, want %q", resp["region"], "us-central1")
+	}
 }
 
 func TestListInstanceTypes_ResponseShape(t *testing.T) {
@@ -532,10 +535,12 @@ func TestFindCheapestRegion_ProviderNotConfigured(t *testing.T) {
 			"resource_type": "n1-standard-1",
 			"region":        "us-central1",
 		},
+		Regions: []string{"us-central1", "us-east1"},
 	})
 	if resp["error"] == nil {
 		t.Errorf("expected error, got: %v", resp)
 	}
+	assertStringsField(t, resp, "regions", []string{"us-central1", "us-east1"})
 }
 
 func TestFindCheapestRegion_InvalidSpec(t *testing.T) {
@@ -1056,6 +1061,7 @@ func TestFindCheapestRegion_ProviderNotConfiguredError(t *testing.T) {
 	if resp["provider"] != "gcp" {
 		t.Errorf("provider: got %v, want gcp", resp["provider"])
 	}
+	assertStringsField(t, resp, "regions", []string{"us-central1"})
 }
 
 // --------------------------------------------------------------------------
@@ -1071,10 +1077,44 @@ func TestFindAvailableRegions_ProviderNotConfigured(t *testing.T) {
 			"resource_type": "n1-standard-1",
 			"region":        "us-central1",
 		},
+		Regions: []string{"us-central1", "us-east1"},
 	})
 	if resp["error"] == nil {
 		t.Errorf("expected error, got: %v", resp)
 	}
+	assertStringsField(t, resp, "regions", []string{"us-central1", "us-east1"})
+}
+
+// TestFindAvailableRegions_NotAvailable_IncludesRegions exercises the
+// not_available result path — reached when every checked region comes back
+// with no usable price, including the case where the underlying error is a
+// "not configured" provider (find_available_regions has no isNotConfigured
+// branch to distinguish that from genuine no-data, so both collapse into this
+// same shape). Asserts "regions" is present so a caller has something to
+// quote (region-in-errors fix).
+func TestFindAvailableRegions_NotAvailable_IncludesRegions(t *testing.T) {
+	pvdr := makeGCPMockProvider(
+		func(_ context.Context, _ models.PricingSpec) (*models.PricingResult, error) {
+			return nil, errors.New("credentials not configured")
+		},
+		nil,
+	)
+	h := tools.New(map[string]tools.Provider{"gcp": pvdr})
+
+	resp := callFindAvailableRegions(t, h, tools.FindAvailableRegionsInput{
+		Spec: map[string]any{
+			"provider":      "gcp",
+			"domain":        "compute",
+			"resource_type": "n1-standard-1",
+			"region":        "us-central1",
+		},
+		Regions: []string{"us-central1", "us-east1"},
+	})
+
+	if resp["result"] != "not_available" {
+		t.Errorf("result: got %v, want not_available", resp["result"])
+	}
+	assertStringsField(t, resp, "regions", []string{"us-central1", "us-east1"})
 }
 
 // TestFindAvailableRegions_GCP_DefaultsMajorRegions mirrors T22 for find_available_regions.

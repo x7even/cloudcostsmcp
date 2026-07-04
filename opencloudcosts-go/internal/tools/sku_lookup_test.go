@@ -822,3 +822,12 @@ func TestHandleGetPriceBySKU_DefaultProviderIsAWS(t *testing.T) {
 		t.Errorf("expected a match in us-east-1, got %v", resp)
 	}
 }
+
+// Note: resolveSKUPriceEntry's generic (non-*SKULookupError) upstream_failure
+// branch — which now also echoes back "regions": in.Regions as part of this
+// fix — is not exercised by a test here. Every current top-level error
+// LookupSKUAcrossRegions can return is a *SKULookupError (validation
+// failures); per-region fetch failures are captured per-entry in
+// result.Regions / surfaced via errors_in, not returned as a top-level err.
+// The branch is defensive against a future error-contract change in the
+// provider layer, and isn't reachable through the public API today.

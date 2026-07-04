@@ -240,7 +240,7 @@ No credentials required. Azure pricing uses the public [Retail Prices API](https
 | `compute` | AWS, GCP, Azure | EC2, Compute Engine, Azure VMs, Fargate |
 | `storage` | AWS, GCP, Azure | EBS (gp3/io2/sc1), GCS, Azure Disk |
 | `database` | AWS, GCP, Azure | RDS, Cloud SQL, Azure SQL, ElastiCache, Memorystore |
-| `ai` | AWS, GCP | Bedrock (Claude, Llama), Vertex AI, Gemini |
+| `ai` | GCP | Gemini and Vertex AI (machine-based, via `machine_type`) are live. AWS Bedrock/SageMaker per-model inference rates, and Vertex pricing by model name (non-Gemini), are advertised by `describe_catalog` but not yet backed by data — `get_price` returns a `not_supported` error explaining the gap. |
 | `container` | AWS, GCP | EKS, GKE (Standard + Autopilot) |
 | `analytics` | GCP | BigQuery (query + storage) |
 | `network` | GCP | Cloud LB, CDN, NAT, Cloud Armor |

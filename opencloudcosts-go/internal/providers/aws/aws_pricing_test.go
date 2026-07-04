@@ -3,9 +3,11 @@ package aws
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -768,6 +770,40 @@ func TestGetPrice_UnsupportedDomain(t *testing.T) {
 	_, err := p.GetPrice(context.Background(), spec)
 	if err == nil {
 		t.Error("expected error for unsupported domain in Part 1")
+	}
+}
+
+// TestGetPrice_AIDomain_BedrockCatalogGap regression-tests the
+// "bedrock-claude-catalog-gap" fix: a get_price(aws, ai, service="bedrock",
+// model="claude-3-5-sonnet") call — the exact spec describe_catalog's
+// ai/bedrock example_invocation and get_price's own tool docstring advertise
+// — must still return a not_supported error (errors.Is unwrapping preserved,
+// so tools/lookup.go's not_supported classification keeps working), but with
+// a specific reason explaining the static-catalog gap instead of the bare,
+// unhelpful "not supported by this provider" string.
+func TestGetPrice_AIDomain_BedrockCatalogGap(t *testing.T) {
+	p := newTestProvider(t)
+	spec := &models.AiPricingSpec{
+		BasePricingSpec: models.BasePricingSpec{
+			Provider: models.CloudProviderAWS,
+			Domain:   models.PricingDomainAI,
+			Service:  "bedrock",
+			Region:   "us-east-1",
+		},
+		Model: "claude-3-5-sonnet",
+	}
+	_, err := p.GetPrice(context.Background(), spec)
+	if err == nil {
+		t.Fatal("expected not_supported error for AWS ai/bedrock — static catalog has no per-model rates")
+	}
+	if !errors.Is(err, providers.ErrNotSupported) {
+		t.Errorf("expected error to wrap providers.ErrNotSupported (for tools/lookup.go's not_supported classification), got: %v", err)
+	}
+	if err.Error() == providers.ErrNotSupported.Error() {
+		t.Error("expected a descriptive reason explaining the Bedrock catalog gap, got the bare ErrNotSupported message")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "bedrock") {
+		t.Errorf("expected error message to mention bedrock, got: %v", err)
 	}
 }
 

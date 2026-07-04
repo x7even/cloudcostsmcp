@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -186,6 +187,32 @@ func decodeResult(t *testing.T, r *mcp.CallToolResult) map[string]any {
 	return out
 }
 
+// assertStringsField asserts that resp[key] decodes (via JSON round-trip) to
+// exactly the given string slice — used to check "regions" echoed back on
+// fan-out tool error/result maps (region-in-errors fix).
+func assertStringsField(t *testing.T, resp map[string]any, key string, want []string) {
+	t.Helper()
+	raw, ok := resp[key]
+	if !ok {
+		t.Fatalf("expected %q key in response, got: %v", key, resp)
+	}
+	rawSlice, ok := raw.([]any)
+	if !ok {
+		t.Fatalf("%q: got %T, want []any", key, raw)
+	}
+	got := make([]string, len(rawSlice))
+	for i, v := range rawSlice {
+		s, ok := v.(string)
+		if !ok {
+			t.Fatalf("%q[%d]: got %T, want string", key, i, v)
+		}
+		got[i] = s
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("%q: got %v, want %v", key, got, want)
+	}
+}
+
 // makePrice constructs a NormalizedPrice for testing.
 func makePrice(region string, pricePerUnit float64) models.NormalizedPrice {
 	return models.NormalizedPrice{
@@ -334,6 +361,9 @@ func TestGetPrice_ProviderNotSupported(t *testing.T) {
 	if resp["error"] != "not_supported" {
 		t.Errorf("error: got %q, want %q", resp["error"], "not_supported")
 	}
+	if resp["region"] != "us-east-1" {
+		t.Errorf("region: got %v, want %q", resp["region"], "us-east-1")
+	}
 }
 
 func TestGetPrice_UpstreamFailure(t *testing.T) {
@@ -356,6 +386,37 @@ func TestGetPrice_UpstreamFailure(t *testing.T) {
 	}
 	if resp["retryable"] != true {
 		t.Errorf("retryable: got %v, want true", resp["retryable"])
+	}
+	if resp["region"] != "us-east-1" {
+		t.Errorf("region: got %v, want %q", resp["region"], "us-east-1")
+	}
+}
+
+// TestGetPrice_NotConfigured_IncludesRegion exercises the isNotConfigured(err)
+// branch (distinct from the pvdr==nil branch covered by
+// TestGetPrice_ProviderNotConfigured) and asserts the region string that was
+// in scope for the lookup is echoed back so a caller has something to quote
+// (region-in-errors fix).
+func TestGetPrice_NotConfigured_IncludesRegion(t *testing.T) {
+	pvdr := &mockProvider{
+		name:          "aws",
+		defaultRegion: "us-east-1",
+		getPriceFunc: func(_ context.Context, _ models.PricingSpec) (*models.PricingResult, error) {
+			return nil, errors.New("credentials not configured")
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"aws": pvdr})
+	resp := callGetPrice(t, h, map[string]any{
+		"provider":      "aws",
+		"domain":        "compute",
+		"resource_type": "m5.xlarge",
+		"region":        "us-east-1",
+	})
+	if resp["error"] != "not_configured" {
+		t.Errorf("error: got %q, want %q", resp["error"], "not_configured")
+	}
+	if resp["region"] != "us-east-1" {
+		t.Errorf("region: got %v, want %q", resp["region"], "us-east-1")
 	}
 }
 
@@ -548,6 +609,9 @@ func TestGetPricesBatch_ProviderNotConfigured(t *testing.T) {
 	})
 	if resp["error"] == nil {
 		t.Errorf("expected error, got: %v", resp)
+	}
+	if resp["region"] != "us-east-1" {
+		t.Errorf("region: got %v, want %q", resp["region"], "us-east-1")
 	}
 }
 
@@ -782,6 +846,7 @@ func TestComparePrices_ProviderNotConfigured(t *testing.T) {
 	if resp["error"] == nil {
 		t.Errorf("expected error, got: %v", resp)
 	}
+	assertStringsField(t, resp, "regions", []string{"us-east-1", "eu-west-1"})
 }
 
 func TestComparePrices_NoPricesFound(t *testing.T) {
@@ -800,6 +865,7 @@ func TestComparePrices_NoPricesFound(t *testing.T) {
 	if resp["result"] != "no_prices_found" {
 		t.Errorf("result: got %v, want no_prices_found", resp["result"])
 	}
+	assertStringsField(t, resp, "regions", []string{"us-east-1", "eu-west-1"})
 }
 
 func TestComparePrices_SortedCheapestFirst(t *testing.T) {
@@ -2061,6 +2127,9 @@ func TestGetSpotHistory_ProviderNotConfigured(t *testing.T) {
 	if resp["error"] == nil {
 		t.Errorf("expected error, got: %v", resp)
 	}
+	if resp["region"] != "us-east-1" {
+		t.Errorf("region: got %v, want %q", resp["region"], "us-east-1")
+	}
 }
 
 func TestGetSpotHistory_NotSupported(t *testing.T) {
@@ -2077,6 +2146,55 @@ func TestGetSpotHistory_NotSupported(t *testing.T) {
 	})
 	if resp["error"] != "not_supported" {
 		t.Errorf("error: got %v, want not_supported", resp["error"])
+	}
+	if resp["region"] != "us-central1" {
+		t.Errorf("region: got %v, want %q", resp["region"], "us-central1")
+	}
+}
+
+// TestGetSpotHistory_InvalidInput exercises the isInvalidInput(err) branch and
+// asserts the region is echoed back (region-in-errors fix).
+func TestGetSpotHistory_InvalidInput(t *testing.T) {
+	pvdr := &mockProvider{
+		name:          "aws",
+		defaultRegion: "us-east-1",
+		spotHistFunc: func(_ context.Context, _ models.PricingSpec, _ int, _ string) (map[string]any, error) {
+			return nil, errors.New("invalid availability zone")
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"aws": pvdr})
+	resp := callGetSpotHistory(t, h, tools.GetSpotHistoryInput{
+		Spec:             map[string]any{"provider": "aws", "domain": "compute", "resource_type": "m5.xlarge", "region": "us-east-1"},
+		AvailabilityZone: "not-a-real-az",
+	})
+	if resp["error"] != "invalid_input" {
+		t.Errorf("error: got %v, want invalid_input", resp["error"])
+	}
+	if resp["region"] != "us-east-1" {
+		t.Errorf("region: got %v, want %q", resp["region"], "us-east-1")
+	}
+}
+
+// TestGetSpotHistory_UpstreamFailure exercises the generic (retryable)
+// upstream_failure branch and asserts the region is echoed back
+// (region-in-errors fix).
+func TestGetSpotHistory_UpstreamFailure(t *testing.T) {
+	pvdr := &mockProvider{
+		name:          "aws",
+		defaultRegion: "us-east-1",
+		spotHistFunc: func(_ context.Context, _ models.PricingSpec, _ int, _ string) (map[string]any, error) {
+			return nil, errors.New("transient network error")
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"aws": pvdr})
+	resp := callGetSpotHistory(t, h, tools.GetSpotHistoryInput{
+		Spec: map[string]any{"provider": "aws", "domain": "compute", "resource_type": "m5.xlarge", "region": "us-east-1"},
+	})
+	if resp["error"] != "upstream_failure" {
+		t.Errorf("error: got %v, want upstream_failure", resp["error"])
+	}
+	if resp["region"] != "us-east-1" {
+		t.Errorf("region: got %v, want %q", resp["region"], "us-east-1")
 	}
 }
 

@@ -206,6 +206,44 @@ func TestGetComputePrice_SpotFilterApplied(t *testing.T) {
 	}
 }
 
+func TestGetComputePrice_SpotLinuxExcludesSpotWindows(t *testing.T) {
+	// Live Azure evidence: Standard_E4s_v3/eastus has both an "E4s v3 Spot" Linux
+	// row and an "E4s v3 Spot" Windows row (productName contains "Windows"). A
+	// Linux spot query must exclude the Windows spot row.
+	spotLinuxItem := azureItem{
+		"retailPrice": 0.038,
+		"armSkuName":  "Standard_E4s_v3",
+		"productName": "Virtual Machines ESv3 Series",
+		"skuName":     "E4s v3 Spot",
+		"serviceName": "Virtual Machines",
+		"meterName":   "E4s v3 Spot",
+		"meterId":     "spot-linux-meter",
+	}
+	spotWindowsItem := azureItem{
+		"retailPrice": 0.076,
+		"armSkuName":  "Standard_E4s_v3",
+		"productName": "Virtual Machines ESv3 Series Windows",
+		"skuName":     "E4s v3 Spot",
+		"serviceName": "Virtual Machines",
+		"meterName":   "E4s v3 Spot",
+		"meterId":     "spot-windows-meter",
+	}
+	srv := mockServer(t, []azureItem{spotLinuxItem, spotWindowsItem})
+	defer srv.Close()
+	p := newTestProvider(t, srv)
+
+	prices, err := p.GetComputePrice(context.Background(), "Standard_E4s_v3", "eastus", "Linux", models.PricingTermSpot)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(prices) != 1 {
+		t.Fatalf("expected exactly 1 Linux spot price, got %d", len(prices))
+	}
+	if prices[0].PricePerUnit != 0.038 {
+		t.Errorf("expected Linux spot price 0.038, got %f", prices[0].PricePerUnit)
+	}
+}
+
 func TestGetComputePrice_OnDemandExcludesSpot(t *testing.T) {
 	spotItem := azureItem{
 		"retailPrice": 0.05,
@@ -1233,6 +1271,96 @@ func TestGetComputePrice_WindowsExcludesLinuxSKUs(t *testing.T) {
 				t.Errorf("Windows result should contain Windows SKU: %s", productName)
 			}
 		}
+	}
+}
+
+func TestGetComputePrice_ExcludesCrossServiceSKUCollision(t *testing.T) {
+	// Azure reuses the same armSkuName across unrelated billed services that
+	// build on the same underlying VM SKU. Live Azure Retail Prices API evidence:
+	// Standard_E4s_v3/eastus/Consumption returns both a genuine "Virtual Machines"
+	// row and an "HDInsight ESv3 Series" row (serviceName "HDInsight") for the
+	// same armSkuName. Only the Virtual Machines row is the correct instance price.
+	vmRow := azureItem{
+		"retailPrice":   0.252,
+		"armSkuName":    "Standard_E4s_v3",
+		"productName":   "Virtual Machines ESv3 Series",
+		"skuName":       "E4s v3",
+		"serviceName":   "Virtual Machines",
+		"serviceFamily": "Compute",
+		"meterId":       "vm-e4s-v3-meter",
+		"meterName":     "E4s v3",
+		"armRegionName": "eastus",
+		"unitOfMeasure": "1 Hour",
+	}
+	hdInsightRow := azureItem{
+		"retailPrice":   0.328,
+		"armSkuName":    "Standard_E4s_v3",
+		"productName":   "HDInsight ESv3 Series",
+		"skuName":       "E4s v3",
+		"serviceName":   "HDInsight",
+		"serviceFamily": "Analytics",
+		"meterId":       "hdinsight-e4s-v3-meter",
+		"meterName":     "E4s v3",
+		"armRegionName": "eastus",
+		"unitOfMeasure": "1 Hour",
+	}
+	srv := mockServer(t, []azureItem{vmRow, hdInsightRow})
+	defer srv.Close()
+	p := newTestProvider(t, srv)
+
+	prices, err := p.GetComputePrice(context.Background(), "Standard_E4s_v3", "eastus", "Linux", models.PricingTermOnDemand)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(prices) != 1 {
+		t.Fatalf("expected exactly 1 price (the Virtual Machines row), got %d", len(prices))
+	}
+	if prices[0].PricePerUnit != 0.252 {
+		t.Errorf("expected price 0.252 (the Virtual Machines row), got %f", prices[0].PricePerUnit)
+	}
+}
+
+func TestGetComputePrice_ExcludesCrossServiceSKUCollision_ManagedInstance(t *testing.T) {
+	// Same collision pattern as above, but modeled on the live "Azure Managed
+	// Instance for Apache Cassandra" example, to show the fix is keyed off
+	// serviceName != "Virtual Machines" generally, not off "HDInsight" specifically.
+	vmRow := azureItem{
+		"retailPrice":   0.384,
+		"armSkuName":    "Standard_D8s_v4",
+		"productName":   "Virtual Machines D8s v4 Series",
+		"skuName":       "D8s v4",
+		"serviceName":   "Virtual Machines",
+		"serviceFamily": "Compute",
+		"meterId":       "vm-d8s-v4-meter",
+		"meterName":     "D8s v4",
+		"armRegionName": "eastus",
+		"unitOfMeasure": "1 Hour",
+	}
+	cassandraRow := azureItem{
+		"retailPrice":   0.48,
+		"armSkuName":    "Standard_D8s_v4",
+		"productName":   "Azure Managed Instance for Apache Cassandra - Compute",
+		"skuName":       "D8s v4",
+		"serviceName":   "Azure Managed Instance for Apache Cassandra",
+		"serviceFamily": "Databases",
+		"meterId":       "cassandra-d8s-v4-meter",
+		"meterName":     "D8s v4",
+		"armRegionName": "eastus",
+		"unitOfMeasure": "1 Hour",
+	}
+	srv := mockServer(t, []azureItem{vmRow, cassandraRow})
+	defer srv.Close()
+	p := newTestProvider(t, srv)
+
+	prices, err := p.GetComputePrice(context.Background(), "Standard_D8s_v4", "eastus", "Linux", models.PricingTermOnDemand)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(prices) != 1 {
+		t.Fatalf("expected exactly 1 price (the Virtual Machines row), got %d", len(prices))
+	}
+	if prices[0].PricePerUnit != 0.384 {
+		t.Errorf("expected price 0.384 (the Virtual Machines row), got %f", prices[0].PricePerUnit)
 	}
 }
 

@@ -107,7 +107,8 @@ func TestWarmCache_MissingProvider(t *testing.T) {
 }
 
 // TestWarmCache_UnconfiguredProvider verifies the error when the requested
-// provider has no registered implementation.
+// provider has no registered implementation, and that the requested regions
+// are echoed back so a caller has something to quote.
 func TestWarmCache_UnconfiguredProvider(t *testing.T) {
 	cm, cleanup := newTestCache(t)
 	defer cleanup()
@@ -115,6 +116,33 @@ func TestWarmCache_UnconfiguredProvider(t *testing.T) {
 	resp := callWarmCache(t, h, tools.WarmCacheInput{Provider: "aws", Regions: []string{"us-east-1"}})
 	if _, ok := resp["error"]; !ok {
 		t.Error("expected error key for unconfigured provider")
+	}
+	if regions, ok := resp["regions"].([]any); !ok || len(regions) != 1 || regions[0] != "us-east-1" {
+		t.Errorf("expected regions=[us-east-1] echoed in response, got %v", resp["regions"])
+	}
+}
+
+// TestWarmCache_DescribeCatalogUpstreamFailure verifies that a transient
+// DescribeCatalog failure still echoes back the requested regions, so a
+// caller retrying against a specific region set has something to quote.
+func TestWarmCache_DescribeCatalogUpstreamFailure(t *testing.T) {
+	cm, cleanup := newTestCache(t)
+	defer cleanup()
+	pvdr := &mockProvider{
+		name: "aws",
+		describeCatFunc: func(_ context.Context) (*models.ProviderCatalog, error) {
+			return nil, errors.New("connection reset by peer")
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"aws": pvdr})
+	h.SetCache(cm)
+	resp := callWarmCache(t, h, tools.WarmCacheInput{Provider: "aws", Regions: []string{"us-east-1", "eu-west-1"}})
+	if resp["error"] != "upstream_failure" {
+		t.Errorf("expected error=upstream_failure, got %v", resp["error"])
+	}
+	regions, ok := resp["regions"].([]any)
+	if !ok || len(regions) != 2 || regions[0] != "us-east-1" || regions[1] != "eu-west-1" {
+		t.Errorf("expected regions=[us-east-1 eu-west-1] echoed in response, got %v", resp["regions"])
 	}
 }
 

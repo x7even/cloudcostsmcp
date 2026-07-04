@@ -55,13 +55,13 @@ type ListRegionsInput struct {
 
 // ListInstanceTypesInput is the typed input for the list_instance_types tool.
 type ListInstanceTypesInput struct {
-	Provider    string    `json:"provider"`
-	Region      string    `json:"region"`
-	Family      string    `json:"family"`
-	MinVCPU     *FlexInt  `json:"min_vcpu"`
-	MinMemoryGB *float64  `json:"min_memory_gb"`
-	GPU         bool      `json:"gpu"`
-	MaxResults  int       `json:"max_results"`
+	Provider    string   `json:"provider"`
+	Region      string   `json:"region"`
+	Family      string   `json:"family"`
+	MinVCPU     *FlexInt `json:"min_vcpu"`
+	MinMemoryGB *float64 `json:"min_memory_gb"`
+	GPU         bool     `json:"gpu"`
+	MaxResults  int      `json:"max_results"`
 }
 
 // FindCheapestRegionInput is the typed input for the find_cheapest_region tool.
@@ -140,7 +140,8 @@ func (h *Handler) HandleListInstanceTypes(
 	pvdr := h.provider(in.Provider)
 	if pvdr == nil {
 		return errResult(map[string]any{
-			"error": fmt.Sprintf("Provider '%s' not configured.", in.Provider),
+			"error":  fmt.Sprintf("Provider '%s' not configured.", in.Provider),
+			"region": in.Region,
 		}), nil, nil
 	}
 
@@ -157,7 +158,8 @@ func (h *Handler) HandleListInstanceTypes(
 	types, err := pvdr.ListInstanceTypes(ctx, in.Region, in.Family, minVCPUs, minMemGB, in.GPU)
 	if err != nil {
 		return errResult(map[string]any{
-			"error": err.Error(),
+			"error":  err.Error(),
+			"region": in.Region,
 		}), nil, nil
 	}
 
@@ -225,7 +227,8 @@ func (h *Handler) HandleFindCheapestRegion(
 	pvdr := h.provider(string(baseSpec.GetProvider()))
 	if pvdr == nil {
 		return errResult(map[string]any{
-			"error": fmt.Sprintf("Provider '%s' not configured.", baseSpec.GetProvider()),
+			"error":   fmt.Sprintf("Provider '%s' not configured.", baseSpec.GetProvider()),
+			"regions": in.Regions,
 		}), nil, nil
 	}
 
@@ -235,7 +238,7 @@ func (h *Handler) HandleFindCheapestRegion(
 	allRegionsRequested := len(in.Regions) == 1 && in.Regions[0] == "all"
 	regions, scoped, err := resolveRegions(ctx, pvdr, in.Regions, allRegionsRequested)
 	if err != nil {
-		return errResult(map[string]any{"error": err.Error()}), nil, nil
+		return errResult(map[string]any{"error": err.Error(), "regions": in.Regions}), nil, nil
 	}
 
 	// Pre-build per-region spec maps sequentially (no shared mutable state).
@@ -308,6 +311,7 @@ func (h *Handler) HandleFindCheapestRegion(
 			"error":     "context_cancelled",
 			"message":   err.Error(),
 			"retryable": true,
+			"regions":   regions,
 		}), nil, nil
 	}
 
@@ -334,11 +338,13 @@ func (h *Handler) HandleFindCheapestRegion(
 				"result":   "provider_not_configured",
 				"provider": providerStr,
 				"error":    configErrMsg,
+				"regions":  regions,
 			}), nil, nil
 		}
 		return jsonText(map[string]any{
 			"result":  "no_prices_found",
 			"message": "No pricing found in any region.",
+			"regions": regions,
 		}), nil, nil
 	}
 
@@ -436,7 +442,8 @@ func (h *Handler) HandleFindAvailableRegions(
 	pvdr := h.provider(string(baseSpec.GetProvider()))
 	if pvdr == nil {
 		return errResult(map[string]any{
-			"error": fmt.Sprintf("Provider '%s' not configured.", baseSpec.GetProvider()),
+			"error":   fmt.Sprintf("Provider '%s' not configured.", baseSpec.GetProvider()),
+			"regions": in.Regions,
 		}), nil, nil
 	}
 
@@ -446,7 +453,7 @@ func (h *Handler) HandleFindAvailableRegions(
 	allRegionsRequested := len(in.Regions) == 1 && in.Regions[0] == "all"
 	regions, scoped, err := resolveRegions(ctx, pvdr, in.Regions, allRegionsRequested)
 	if err != nil {
-		return errResult(map[string]any{"error": err.Error()}), nil, nil
+		return errResult(map[string]any{"error": err.Error(), "regions": in.Regions}), nil, nil
 	}
 
 	// Pre-build per-region spec maps sequentially.
@@ -510,6 +517,7 @@ func (h *Handler) HandleFindAvailableRegions(
 			"error":     "context_cancelled",
 			"message":   err.Error(),
 			"retryable": true,
+			"regions":   regions,
 		}), nil, nil
 	}
 
@@ -533,6 +541,7 @@ func (h *Handler) HandleFindAvailableRegions(
 		return jsonText(map[string]any{
 			"result":  "not_available",
 			"message": "Not available in any of the checked regions.",
+			"regions": regions,
 		}), nil, nil
 	}
 
@@ -631,4 +640,3 @@ func copySpecMap(m map[string]any) map[string]any {
 	}
 	return out
 }
-

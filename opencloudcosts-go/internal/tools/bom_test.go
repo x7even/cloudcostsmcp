@@ -662,6 +662,68 @@ func TestEstimateBOM_NoValidItems(t *testing.T) {
 	if !ok || errVal == "" {
 		t.Error("expected error key when no valid items")
 	}
+	// bom.go's per-item errors are plain strings, not maps, so the region is
+	// embedded in the message text rather than a separate JSON key
+	// (region-in-errors fix).
+	errStr, _ := errVal.(string)
+	if !strings.Contains(errStr, "us-east-1") {
+		t.Errorf("expected error message to mention region 'us-east-1', got: %q", errStr)
+	}
+}
+
+// TestEstimateBOM_NotSupported_MessageIncludesRegion verifies the
+// "does not support" per-item error message embeds the item's region
+// (region-in-errors fix).
+func TestEstimateBOM_NotSupported_MessageIncludesRegion(t *testing.T) {
+	pvdr := &mockProvider{
+		name:          "aws",
+		defaultRegion: "us-east-1",
+		supportsFunc:  func(_ models.PricingDomain, _ string) bool { return false },
+	}
+	h := tools.New(map[string]tools.Provider{"aws": pvdr})
+	items := []map[string]any{
+		{
+			"provider":      "aws",
+			"domain":        "compute",
+			"resource_type": "m5.xlarge",
+			"region":        "eu-west-1",
+		},
+	}
+	resp := callEstimateBOM(t, h, items)
+
+	errStr, _ := resp["error"].(string)
+	if !strings.Contains(errStr, "eu-west-1") {
+		t.Errorf("expected 'does not support' error to mention region 'eu-west-1', got: %q", errStr)
+	}
+}
+
+// TestEstimateBOM_NoPricingFound_MessageIncludesRegion verifies the
+// "no pricing found for spec" per-item error message embeds the item's
+// region (region-in-errors fix).
+func TestEstimateBOM_NoPricingFound_MessageIncludesRegion(t *testing.T) {
+	pvdr := &mockProvider{
+		name:          "aws",
+		defaultRegion: "us-east-1",
+		supportsFunc:  func(_ models.PricingDomain, _ string) bool { return true },
+		getPriceFunc: func(_ context.Context, _ models.PricingSpec) (*models.PricingResult, error) {
+			return &models.PricingResult{PublicPrices: nil}, nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"aws": pvdr})
+	items := []map[string]any{
+		{
+			"provider":      "aws",
+			"domain":        "compute",
+			"resource_type": "m5.xlarge",
+			"region":        "ap-south-1",
+		},
+	}
+	resp := callEstimateBOM(t, h, items)
+
+	errStr, _ := resp["error"].(string)
+	if !strings.Contains(errStr, "ap-south-1") {
+		t.Errorf("expected 'no pricing found' error to mention region 'ap-south-1', got: %q", errStr)
+	}
 }
 
 // --------------------------------------------------------------------------
@@ -770,6 +832,11 @@ func TestEstimateBOM_PartialFailure(t *testing.T) {
 	errs, ok := errsVal.([]any)
 	if !ok || len(errs) == 0 {
 		t.Fatalf("expected non-empty errors slice, got: %v", errsVal)
+	}
+	// The failed item's message must embed its region (region-in-errors fix).
+	errStr, _ := errs[0].(string)
+	if !strings.Contains(errStr, "us-east-1") {
+		t.Errorf("expected failed item's error to mention region 'us-east-1', got: %q", errStr)
 	}
 }
 
