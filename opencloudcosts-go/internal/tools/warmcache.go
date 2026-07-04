@@ -165,7 +165,8 @@ func (h *Handler) HandleWarmCache(
 		}
 		sort.Strings(available)
 		return errResult(map[string]any{
-			"error": fmt.Sprintf("Provider '%s' not configured. Available: %v", in.Provider, available),
+			"error":   fmt.Sprintf("Provider '%s' not configured. Available: %v", in.Provider, available),
+			"regions": in.Regions,
 		}), nil, nil
 	}
 
@@ -180,6 +181,7 @@ func (h *Handler) HandleWarmCache(
 		return errResult(map[string]any{
 			"error":   "upstream_failure",
 			"message": fmt.Sprintf("Failed to describe catalog for %s: %v", in.Provider, err),
+			"regions": in.Regions,
 		}), nil, nil
 	}
 

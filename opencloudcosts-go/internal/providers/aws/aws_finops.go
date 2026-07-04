@@ -695,6 +695,10 @@ func (p *Provider) DescribeCatalog(ctx context.Context) (*models.ProviderCatalog
 			},
 			"ai/sagemaker": {
 				"machine_type": "ml instance type e.g. 'ml.g5.xlarge'",
+				"note": "get_price currently returns a not_supported error for ai/sagemaker: " +
+					"per-instance inference/training rates are not in the static pricing catalog and " +
+					"require live AWS credentials (Cost Explorer pricing API), which is not yet " +
+					"implemented. See the reason field on the not_supported response for detail.",
 			},
 			"serverless/lambda": {
 				"service":           "lambda",

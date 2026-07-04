@@ -378,6 +378,24 @@ func TestDescribeCatalog_BedrockExampleFlagsCatalogGap(t *testing.T) {
 	}
 }
 
+// TestDescribeCatalog_SagemakerFlagsCatalogGap mirrors
+// TestDescribeCatalog_BedrockExampleFlagsCatalogGap for ai/sagemaker: the
+// GetPrice AI-domain branch returns the same not_supported error for
+// sagemaker as it does for bedrock, so its filter_hints must carry the same
+// warning note rather than looking like a working, catalog-backed query.
+func TestDescribeCatalog_SagemakerFlagsCatalogGap(t *testing.T) {
+	p := newNilProvider()
+	cat, _ := p.DescribeCatalog(context.Background())
+
+	hints, ok := cat.FilterHints["ai/sagemaker"]
+	if !ok {
+		t.Fatal("FilterHints missing 'ai/sagemaker' key")
+	}
+	if _, ok := hints["note"]; !ok {
+		t.Error("ai/sagemaker filter_hints missing 'note' warning about the get_price catalog gap")
+	}
+}
+
 func TestDescribeCatalog_HasDecisionMatrix(t *testing.T) {
 	p := newNilProvider()
 	cat, _ := p.DescribeCatalog(context.Background())
