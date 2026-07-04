@@ -507,6 +507,21 @@ func allFallback(prices []models.NormalizedPrice) bool {
 
 // pricingResultSummary builds the LLM-readable summary dict for a PricingResult.
 // Mirrors PricingResult.summary() in Python's models.py.
+// isEmptyPricingResult reports whether a non-nil *models.PricingResult carries
+// no usable pricing data at all — no public prices, no contracted prices, no
+// effective price, and no explanatory Note. Providers such as AWS's GetPrice
+// unconditionally return a non-nil *models.PricingResult even when nothing
+// matched the spec, so a nil check alone never catches that zero-match case.
+// The Note-present exclusion is preserved deliberately: e.g. AWS spot pricing
+// sets Note with an on-demand-estimate hint instead of returning prices, and
+// that response must NOT be reclassified as no_results.
+func isEmptyPricingResult(r *models.PricingResult) bool {
+	return len(r.PublicPrices) == 0 &&
+		len(r.ContractedPrices) == 0 &&
+		r.EffectivePrice == nil &&
+		r.Note == ""
+}
+
 func pricingResultSummary(r *models.PricingResult) map[string]any {
 	out := map[string]any{
 		"public_prices":  priceSummaries(r.PublicPrices),
@@ -646,7 +661,7 @@ func (h *Handler) HandleGetPrice(
 		}), nil, nil
 	}
 
-	if result == nil {
+	if result == nil || isEmptyPricingResult(result) {
 		provName := string(spec.GetProvider())
 		svc := spec.GetService()
 		region := spec.GetRegion()

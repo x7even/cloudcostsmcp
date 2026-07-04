@@ -2358,6 +2358,11 @@ func TestFillDomain_AzureResourceTypeInference(t *testing.T) {
 // TestGetPrice_EmptyPublicPrices_NoResultsHint verifies that when GetPrice returns
 // nil (provider found no pricing), the tool emits a no_results response with a
 // tip pointing to search_pricing and list_services.
+//
+// This (nil, nil) shape is a defensive case only — no provider in this codebase
+// actually returns it (AWS's GetPrice always wraps its result in a non-nil
+// *models.PricingResult; see TestGetPrice_NonNilEmptyResult_NoResultsHint below
+// for the shape AWS really produces on a zero-match lookup, RC3-027 / #46).
 func TestGetPrice_EmptyPublicPrices_NoResultsHint(t *testing.T) {
 	pvdr := &mockProvider{
 		name:          "aws",
@@ -2383,6 +2388,91 @@ func TestGetPrice_EmptyPublicPrices_NoResultsHint(t *testing.T) {
 	}
 	if resp["provider"] != "aws" {
 		t.Errorf("provider: got %v, want aws", resp["provider"])
+	}
+}
+
+// TestGetPrice_NonNilEmptyResult_NoResultsHint verifies the no_results hint also
+// fires for the shape AWS's GetPrice actually returns on a zero-match lookup: a
+// non-nil *models.PricingResult with an empty PublicPrices slice, no contracted
+// prices, no effective price, and no Note (e.g. db.r8g.2xlarge Aurora PostgreSQL
+// in a region with no catalog entry). Before RC3-027 this was returned verbatim
+// as {"public_prices":[],...} with no error/no_results marker, indistinguishable
+// from a typo'd resource_type (#46).
+func TestGetPrice_NonNilEmptyResult_NoResultsHint(t *testing.T) {
+	pvdr := &mockProvider{
+		name:          "aws",
+		defaultRegion: "us-east-1",
+		getPriceFunc: func(_ context.Context, _ models.PricingSpec) (*models.PricingResult, error) {
+			return &models.PricingResult{
+				PublicPrices:  []models.NormalizedPrice{},
+				AuthAvailable: false,
+				Source:        "catalog",
+				SchemaVersion: "1",
+			}, nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"aws": pvdr})
+	resp := callGetPrice(t, h, map[string]any{
+		"provider":      "aws",
+		"domain":        "database",
+		"service":       "rds",
+		"resource_type": "db.r8g.2xlarge",
+		"engine":        "Aurora PostgreSQL",
+		"region":        "us-east-1",
+	})
+
+	if resp["result"] != "no_results" {
+		t.Fatalf("result: got %v, want no_results (got full response: %v)", resp["result"], resp)
+	}
+	tip, _ := resp["tip"].(string)
+	if !contains(tip, "describe_catalog") {
+		t.Errorf("tip should mention describe_catalog, got: %q", tip)
+	}
+	if resp["provider"] != "aws" {
+		t.Errorf("provider: got %v, want aws", resp["provider"])
+	}
+	if _, present := resp["public_prices"]; present {
+		t.Errorf("no_results response should not also carry public_prices, got: %v", resp)
+	}
+}
+
+// TestGetPrice_NonNilEmptyResultWithNote_NotNoResults verifies the Note-present
+// exclusion is preserved: a non-nil *models.PricingResult with empty
+// PublicPrices but a non-empty Note (the deliberate spot-price case, where AWS
+// has no static spot data but supplies an on-demand-estimate hint instead) must
+// NOT be reclassified as no_results.
+func TestGetPrice_NonNilEmptyResultWithNote_NotNoResults(t *testing.T) {
+	const spotNote = "Spot prices are not available from the static pricing catalog."
+	pvdr := &mockProvider{
+		name:          "aws",
+		defaultRegion: "us-east-1",
+		getPriceFunc: func(_ context.Context, _ models.PricingSpec) (*models.PricingResult, error) {
+			return &models.PricingResult{
+				PublicPrices:  []models.NormalizedPrice{},
+				AuthAvailable: false,
+				Source:        "catalog",
+				SchemaVersion: "1",
+				Note:          spotNote,
+			}, nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"aws": pvdr})
+	resp := callGetPrice(t, h, map[string]any{
+		"provider":      "aws",
+		"domain":        "compute",
+		"resource_type": "m5.xlarge",
+		"term":          "spot",
+		"region":        "us-east-1",
+	})
+
+	if resp["result"] == "no_results" {
+		t.Fatalf("result should not be no_results when Note is set, got: %v", resp)
+	}
+	if resp["note"] != spotNote {
+		t.Errorf("note: got %v, want %q", resp["note"], spotNote)
+	}
+	if _, present := resp["public_prices"]; !present {
+		t.Errorf("expected public_prices field to be present in the summary response, got: %v", resp)
 	}
 }
 
