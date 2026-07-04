@@ -360,6 +360,37 @@ Quick wins T20, T21, T22, T23, T25 have no dependencies and can be built in any 
 
 ---
 
+## RC3 triage — scope decisions
+
+The RC3 engineering roadmap (`rc3-engineering-roadmap.md`, filed from customer/GCP
+feedback reports) produced one GitHub issue per finding, numbered `RC3-001`
+through `RC3-033` (issue numbers don't match RC3 IDs — each issue's title
+carries its own RC3 ID). Most were scoped bug fixes and shipped directly. A
+handful needed an explicit scope call — either narrowed down to an
+independently-shippable slice, or deferred pending a dependency or owner
+sign-off. Those decisions:
+
+| RC3 ID | Issue | Decision | Rationale |
+|--------|-------|----------|-----------|
+| RC3-004 | [#31](https://github.com/x7even/cloudcostsmcp/issues/31) | **Scoped to AWS-only v1** (PR [#82](https://github.com/x7even/cloudcostsmcp/pull/82), draft) | The full `compare_bom_regions` contract (weighted, SKU-native, multi-provider) depends on RC3-016 (batch SKU lookup), RC3-005 (weight field), and RC3-032 (canonical response shape) — none landed at implementation time. v1 reuses `estimate_bom`'s `processBOMItems` and `compare_prices`' region fan-out for AWS-only PricingSpec-dict items; non-AWS items report once under `not_supported`. A separate, broader design note ([#75](https://github.com/x7even/cloudcostsmcp/pull/75)) proposes raw-SKU line items and a `providers?` filter — flagged in PR #82 for repo-owner reconciliation, not yet resolved. |
+| RC3-006 | [#32](https://github.com/x7even/cloudcostsmcp/issues/32) | **Scoped down** — shipped | The roadmap's full item bundled two independent halves: threading `Attributes["fallback"]` through `estimate_bom`'s existing output (shipped), and per-line×region fallback tagging for the not-yet-built `compare_bom_regions` (deferred alongside RC3-004, since that tool didn't exist yet). |
+| RC3-014 | [#33](https://github.com/x7even/cloudcostsmcp/issues/33) | **Deferred, blocked on RC3-004** | `compare_bom`'s 4-type enum can't accept CUR-native services (e.g. DynamoDB) without retiring the enum in favor of `estimate_bom`'s open-item substrate — which is exactly RC3-004's job. No independent fix exists; this resolves whenever RC3-004's full (non-v1) contract lands. |
+| RC3-015 | [#35](https://github.com/x7even/cloudcostsmcp/issues/35) | **Scoped as GCP-first, deferred** | No GCP/Azure equivalent of `get_price_by_sku` exists. XL effort — GCP SKU IDs and Azure meter IDs have no shared shape with AWS's usage-type convention, so the AWS resolver can't be generalized; each provider needs its own design. Recommended starting with GCP (simpler catalog) once live catalog access is available, not fabricated speculatively. |
+| RC3-018 | [#37](https://github.com/x7even/cloudcostsmcp/issues/37) | **Scoped down** — shipped | `not_available_in` is only wired into 3 of ~9 fan-out/BoM tools. Scoped to `get_price` and `get_prices_batch` (no dependencies); the remaining tools (`compare_bom`, `estimate_bom`, `get_price_by_sku`) were left for follow-up since some overlap with RC3-004/RC3-019's own output shape work. |
+| RC3-019 | [#38](https://github.com/x7even/cloudcostsmcp/issues/38) | **Built as thin introspection, AWS+GCP+Azure** (PR [#81](https://github.com/x7even/cloudcostsmcp/pull/81), draft) | New `get_coverage(provider)` endpoint — L effort, new public API surface, so implemented as a draft pending owner sign-off rather than merged outright. Composes from the same per-price `fallback` attribute already computed elsewhere, fanned out across `DescribeCatalog()`'s service/domain/region lists — no new data-fabrication risk since it's introspecting the server's own catalog, not calling out to providers. |
+| RC3-023 | [#39](https://github.com/x7even/cloudcostsmcp/issues/39) | **Deferred, split into 5 sub-issues** | Five flat/global-rate GCP services (Firestore, Pub/Sub, KMS, Cloud DNS, external IPs) have zero catalog entries. Each has a genuinely different pricing shape (per-key-version, per-zone+query-volume, per-GB throughput, etc.) — not a uniform bucket — so split into per-service issues ([#76](https://github.com/x7even/cloudcostsmcp/issues/76)–[#80](https://github.com/x7even/cloudcostsmcp/issues/80)), each gated on live GCP catalog access to verify SKU shape before implementing. |
+| RC3-030 | [#49](https://github.com/x7even/cloudcostsmcp/issues/49) | **WONTFIX** | `get_prices_batch`'s per-item `errors` map on no-pricing-found was reported as a gap, but it's already correct, intentional, working code (`lookup.go` already checks `len(fr.prices)==0`). No functional change; noted as a documentation companion to RC3-027 (which covers the analogous `get_price` gap) instead. |
+| RC3-032 | [#30](https://github.com/x7even/cloudcostsmcp/issues/30) | **Partially shipped** (PR [#74](https://github.com/x7even/cloudcostsmcp/pull/74), open) | Canonical `price_per_unit` field renamed across `get_price`/`get_price_by_sku`/`get_prices_batch`/`get_prices_by_sku`/`effective_price` for naming consistency (a breaking, intentional change — no compat alias, since these tools are LLM-consumed and re-read the schema per call), plus docs clarifying that `price_per_unit` is always a unit rate, never scaled by `size_gb`/quantity. Three sub-parts explicitly deferred to follow-up: the GCP egress unit-label mislabel (`per_gb_month` vs `per_gb` — entangled with `bom.go`'s cost-scaling branch, risks silently changing BOM totals if fixed without separate verification), `monthly_estimate`/breakdown decomposition for CDN/Cloud LB, and published per-tool JSON schemas. |
+
+Every scoped-down or deferred item above followed the same rule: if a finding's
+proposed fix required a new public tool/endpoint, a schema decision, or
+speculative design work with no landed dependency to build on, it got a DACI
+write-up in its issue (decision, alternatives considered, risk) rather than an
+autonomous guess — consistent with this project's standing rule that new
+tool contracts need repo-owner sign-off before merge, not just before design.
+
+---
+
 ## Path to 1.0.0
 
 ### What 1.0.0 means
