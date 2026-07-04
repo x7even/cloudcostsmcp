@@ -832,9 +832,6 @@ func (p *Provider) ListInstanceTypes(
 		if gpu && !isGPU {
 			continue
 		}
-		if !gpu && isGPU {
-			continue
-		}
 		if family != "" && !strings.HasPrefix(itype, family) {
 			continue
 		}
