@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -165,6 +166,30 @@ func TestDescriptionParityWithSnapshot(t *testing.T) {
 			t.Errorf("tool %q: description drift\n got:  %q\nwant: %q",
 				name, tool.Description, snap.Description)
 		}
+	}
+}
+
+// TestFindAvailableRegionsDescription_ShowsSpecWrapExample verifies that
+// find_available_regions' description leads with an explicit example showing
+// all fields nested under "spec", so a caller sees correct usage before
+// hitting the SDK's jsonschema validator on an unwrapped call (RC3-029).
+func TestFindAvailableRegionsDescription_ShowsSpecWrapExample(t *testing.T) {
+	srv := newTestServer(t)
+	sess := connectToServer(t, srv)
+	ctx := context.Background()
+
+	tools := collectTools(t, ctx, sess)
+	tool, ok := tools["find_available_regions"]
+	if !ok {
+		t.Fatal("find_available_regions tool not registered")
+	}
+
+	desc := tool.Description
+	if !strings.Contains(desc, `nested under "spec"`) {
+		t.Errorf("find_available_regions description should explicitly call out nesting fields under \"spec\", got: %q", desc)
+	}
+	if !strings.Contains(desc, `{"spec": {`) {
+		t.Errorf("find_available_regions description should include a worked example wrapping fields in \"spec\", got: %q", desc)
 	}
 }
 
