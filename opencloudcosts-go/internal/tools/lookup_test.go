@@ -2741,5 +2741,214 @@ func TestGetPrice_AuroraStorageFieldDisambiguates(t *testing.T) {
 	}
 }
 
+// --------------------------------------------------------------------------
+// Tests: describe_catalog — RC3-020/021/022/025 fixes
+// --------------------------------------------------------------------------
+
+// TestDescribeCatalog_AWS_InterRegionEgressServicesNotEmpty verifies that the
+// top-level services map for AWS no longer lists "inter_region_egress" as an
+// empty array — the domain is fully functional and should carry a placeholder
+// entry instead (RC3-020).
+func TestDescribeCatalog_AWS_InterRegionEgressServicesNotEmpty(t *testing.T) {
+	realAWS := realAWSProvider(t)
+	pvdr := &mockProvider{
+		name:          "aws",
+		defaultRegion: "us-east-1",
+		describeCatFunc: func(ctx context.Context) (*models.ProviderCatalog, error) {
+			return realAWS.DescribeCatalog(ctx)
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"aws": pvdr})
+
+	// Provider-only mode returns the raw services map (catalogEntry) so we can
+	// inspect it directly without any per-domain fallback logic in play.
+	resp := callDescribeCatalog(t, h, tools.DescribeCatalogInput{Provider: "aws"})
+	if resp["error"] != nil {
+		t.Fatalf("unexpected error: %v", resp)
+	}
+	matrix, ok := resp["support_matrix"].(map[string]any)
+	if !ok {
+		t.Fatalf("support_matrix missing or wrong type: %v", resp)
+	}
+	awsEntry, ok := matrix["aws"].(map[string]any)
+	if !ok {
+		t.Fatalf("support_matrix.aws missing or wrong type: %v", matrix)
+	}
+	services, ok := awsEntry["services"].(map[string]any)
+	if !ok {
+		t.Fatalf("services missing or wrong type: %v", awsEntry)
+	}
+	ire, ok := services["inter_region_egress"].([]any)
+	if !ok {
+		t.Fatalf("services.inter_region_egress missing or wrong type: %v", services["inter_region_egress"])
+	}
+	if len(ire) == 0 {
+		t.Errorf("expected services.inter_region_egress to be non-empty (placeholder entry), got empty array")
+	}
+
+	// The domain itself must still work end-to-end: filter_hints and
+	// example_invocation are unaffected by the Services placeholder.
+	domResp := callDescribeCatalog(t, h, tools.DescribeCatalogInput{
+		Provider: "aws",
+		Domain:   "inter_region_egress",
+	})
+	if domResp["filter_hints"] == nil {
+		t.Errorf("expected filter_hints for inter_region_egress domain, got: %v", domResp)
+	}
+	if domResp["example_invocation"] == nil {
+		t.Errorf("expected example_invocation for inter_region_egress domain, got: %v", domResp)
+	}
+}
+
+// TestDescribeCatalog_AWS_Database_ShowsAvailableServices verifies that
+// describe_catalog(domain=database) with no service returns available_services
+// and a tip, instead of a bare service:null response (RC3-021). "database" has
+// a domain-level supported_terms entry but no domain-level filter_hints or
+// example_invocation, so the "nothing actionable found" guard must fire based
+// on hints/example alone, not terms.
+func TestDescribeCatalog_AWS_Database_ShowsAvailableServices(t *testing.T) {
+	realAWS := realAWSProvider(t)
+	pvdr := &mockProvider{
+		name:          "aws",
+		defaultRegion: "us-east-1",
+		describeCatFunc: func(ctx context.Context) (*models.ProviderCatalog, error) {
+			return realAWS.DescribeCatalog(ctx)
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"aws": pvdr})
+
+	resp := callDescribeCatalog(t, h, tools.DescribeCatalogInput{
+		Provider: "aws",
+		Domain:   "database",
+	})
+	if resp["error"] != nil {
+		t.Fatalf("unexpected error: %v", resp)
+	}
+	if resp["service"] != nil {
+		t.Errorf("expected service:null, got: %v", resp["service"])
+	}
+	// supported_terms should still be present (domain-level terms exist).
+	if resp["supported_terms"] == nil {
+		t.Errorf("expected supported_terms to still be present, got: %v", resp)
+	}
+	svcs, ok := resp["available_services"].([]any)
+	if !ok || len(svcs) == 0 {
+		t.Fatalf("available_services missing or empty: %v", resp["available_services"])
+	}
+	if !listContainsStr(svcs, "rds") {
+		t.Errorf("available_services should contain rds; got: %v", svcs)
+	}
+	if resp["tip"] == nil {
+		t.Errorf("expected a tip guiding the caller to specify service=, got: %v", resp)
+	}
+}
+
+// TestDescribeCatalog_AWS_Network_LBNATWAF_HaveOwnExampleInvocation verifies
+// that describe_catalog(domain=network, service=<lb|nat|waf>) returns an
+// example_invocation scoped to that service (not the egress-shaped
+// domain-level example) (RC3-022/RC3-025).
+func TestDescribeCatalog_AWS_Network_LBNATWAF_HaveOwnExampleInvocation(t *testing.T) {
+	realAWS := realAWSProvider(t)
+	pvdr := &mockProvider{
+		name:          "aws",
+		defaultRegion: "us-east-1",
+		describeCatFunc: func(ctx context.Context) (*models.ProviderCatalog, error) {
+			return realAWS.DescribeCatalog(ctx)
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"aws": pvdr})
+
+	for _, service := range []string{"lb", "nat", "waf"} {
+		service := service
+		t.Run(service, func(t *testing.T) {
+			resp := callDescribeCatalog(t, h, tools.DescribeCatalogInput{
+				Provider: "aws",
+				Domain:   "network",
+				Service:  service,
+			})
+			if resp["error"] != nil {
+				t.Fatalf("unexpected error: %v", resp)
+			}
+			ex, ok := resp["example_invocation"].(map[string]any)
+			if !ok {
+				t.Fatalf("example_invocation missing or wrong type: %v", resp["example_invocation"])
+			}
+			if got := ex["service"]; got != service {
+				t.Errorf("example_invocation.service = %v, want %q (must not be the egress-shaped domain-level example)", got, service)
+			}
+			// The egress-shaped domain-level example carries a
+			// "destination_type" field; none of lb/nat/waf's examples should.
+			if _, hasDestType := ex["destination_type"]; hasDestType {
+				t.Errorf("example_invocation for service=%q should not carry egress's destination_type field: %v", service, ex)
+			}
+		})
+	}
+}
+
+// TestDescribeCatalog_AWS_Network_DataTransferRedirectStillWorks is a
+// regression guard for the RC3-022/025 fallback fix: domain=network,
+// service=data_transfer must keep redirecting to domain=inter_region_egress
+// (via serviceToDomain) and fall back to that domain's service-agnostic
+// example, since that fallback path has no mismatched "service" field.
+func TestDescribeCatalog_AWS_Network_DataTransferRedirectStillWorks(t *testing.T) {
+	realAWS := realAWSProvider(t)
+	pvdr := &mockProvider{
+		name:          "aws",
+		defaultRegion: "us-east-1",
+		describeCatFunc: func(ctx context.Context) (*models.ProviderCatalog, error) {
+			return realAWS.DescribeCatalog(ctx)
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"aws": pvdr})
+
+	resp := callDescribeCatalog(t, h, tools.DescribeCatalogInput{
+		Provider: "aws",
+		Domain:   "network",
+		Service:  "data_transfer",
+	})
+	if resp["error"] != nil {
+		t.Fatalf("unexpected error: %v", resp)
+	}
+	if resp["domain"] != "inter_region_egress" {
+		t.Errorf("expected redirect to domain=inter_region_egress, got domain=%v (full resp: %v)", resp["domain"], resp)
+	}
+	if resp["example_invocation"] == nil {
+		t.Errorf("expected example_invocation to still be present after redirect, got: %v", resp)
+	}
+}
+
+// TestDescribeCatalog_AWS_Compute_DomainLevelExampleStillFallsBack is a
+// regression guard for the RC3-022/025 fallback fix: domain=compute,
+// service=ec2 has no "compute/ec2" key in ExampleInvocations, so it must still
+// fall back to the domain-level "compute" example (which has no "service"
+// field and is therefore an unambiguous, safe fallback).
+func TestDescribeCatalog_AWS_Compute_DomainLevelExampleStillFallsBack(t *testing.T) {
+	realAWS := realAWSProvider(t)
+	pvdr := &mockProvider{
+		name:          "aws",
+		defaultRegion: "us-east-1",
+		describeCatFunc: func(ctx context.Context) (*models.ProviderCatalog, error) {
+			return realAWS.DescribeCatalog(ctx)
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"aws": pvdr})
+
+	resp := callDescribeCatalog(t, h, tools.DescribeCatalogInput{
+		Provider: "aws",
+		Domain:   "compute",
+		Service:  "ec2",
+	})
+	if resp["error"] != nil {
+		t.Fatalf("unexpected error: %v", resp)
+	}
+	ex, ok := resp["example_invocation"].(map[string]any)
+	if !ok {
+		t.Fatalf("example_invocation missing or wrong type: %v", resp["example_invocation"])
+	}
+	if ex["resource_type"] != "m5.xlarge" {
+		t.Errorf("expected domain-level compute example to still be used as fallback, got: %v", ex)
+	}
+}
+
 // Compile-time check that mockProvider satisfies the Provider interface.
 var _ providers.Provider = (*mockProvider)(nil)
