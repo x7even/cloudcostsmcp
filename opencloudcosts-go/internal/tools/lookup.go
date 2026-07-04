@@ -158,6 +158,10 @@ var serviceToDomain = map[string]models.PricingDomain{
 	"sql":         models.PricingDomainDatabase,
 	"cosmos":      models.PricingDomainDatabase,
 	"elasticache": models.PricingDomainDatabase,
+	// aurora_postgresql is a documentation-only alias for RDS Aurora
+	// PostgreSQL (RC3-026 / #45) — see aws.go Supports() and the
+	// PricingDomainDatabase dispatch in aws_pricing.go GetPrice.
+	"aurora_postgresql": models.PricingDomainDatabase,
 	// analytics
 	"bigquery": models.PricingDomainAnalytics,
 	// network
