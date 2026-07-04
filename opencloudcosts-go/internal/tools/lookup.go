@@ -1351,7 +1351,18 @@ func (h *Handler) HandleDescribeCatalog(
 
 	ex, haEx := catalog.ExampleInvocations[key]
 	if !haEx {
-		ex, haEx = catalog.ExampleInvocations[in.Domain]
+		// Only fall back to the domain-level example when it doesn't carry an
+		// explicit "service" field that names a *different* service than the
+		// one requested (e.g. AWS "network"'s domain-level example is shaped
+		// for service="egress" — it must not be handed back for
+		// service="lb"/"nat"/"waf"/etc.). Domain-level examples with no
+		// "service" field (e.g. "compute", "storage") are service-agnostic
+		// and remain a safe fallback.
+		if domEx, ok := catalog.ExampleInvocations[in.Domain]; ok {
+			if domSvc, hasSvcField := domEx["service"]; !hasSvcField || domSvc == in.Service {
+				ex, haEx = domEx, true
+			}
+		}
 	}
 	if haEx {
 		out["example_invocation"] = ex
@@ -1385,7 +1396,18 @@ func (h *Handler) HandleDescribeCatalog(
 	}
 
 	// When nothing was found: show available services (mirrors Python).
-	if !haTerms && !haHints && !haEx {
+	//
+	// Deliberately does NOT gate on haTerms: a domain can have a domain-level
+	// supported_terms entry (e.g. AWS "database") while still lacking any
+	// filter_hints or example_invocation for that bare domain key — the caller
+	// still can't construct a valid call from supported_terms alone, so this
+	// still counts as "nothing actionable found" and should surface
+	// available_services. haHints is still checked because when hints ARE
+	// present (e.g. a specific service missing only its example) the caller
+	// already has enough to build a call, so we don't override that guidance
+	// with "not a catalog key" tips for domains/services outside this fix's
+	// scope.
+	if !haHints && !haEx {
 		availSvcs := catalog.Services[in.Domain]
 		out["available_services"] = availSvcs
 

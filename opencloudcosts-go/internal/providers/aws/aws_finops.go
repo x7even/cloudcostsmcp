@@ -610,7 +610,12 @@ func (p *Provider) DescribeCatalog(ctx context.Context) (*models.ProviderCatalog
 			"network":             {"lb", "cdn", "nat", "waf", "data_transfer", "egress"},
 			"observability":       {"cloudwatch"},
 			"container":           {"eks"},
-			"inter_region_egress": {},
+			// inter_region_egress has no discrete sub-services (it is parameterized
+			// by source_region/dest_region, not a service name) but the domain is
+			// fully functional — see FilterHints and ExampleInvocations below. A
+			// placeholder entry (rather than an empty array) makes that clear to
+			// callers inspecting the top-level services map.
+			"inter_region_egress": {"direct (no sub-service — see filter_hints/example_invocation)"},
 		},
 		SupportedTerms: map[string][]string{
 			"compute": {
@@ -858,6 +863,25 @@ func (p *Provider) DescribeCatalog(ctx context.Context) (*models.ProviderCatalog
 				"provider":          "aws",
 				"domain":            "network",
 				"service":           "cdn",
+				"data_gb_per_month": 1000.0,
+				"region":            "us-east-1",
+			},
+			"network/lb": {
+				"provider": "aws",
+				"domain":   "network",
+				"service":  "lb",
+				"region":   "us-east-1",
+			},
+			"network/nat": {
+				"provider": "aws",
+				"domain":   "network",
+				"service":  "nat",
+				"region":   "us-east-1",
+			},
+			"network/waf": {
+				"provider":          "aws",
+				"domain":            "network",
+				"service":           "waf",
 				"data_gb_per_month": 1000.0,
 				"region":            "us-east-1",
 			},
