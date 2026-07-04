@@ -275,6 +275,20 @@ Use this before `get_price` when unsure of exact field names or values.
 
 ---
 
+### `get_coverage`
+
+Report which domains/services this server actually covers, per provider.
+
+v1 scope: structural coverage from the catalog only — each domain is reported as `catalog` (with its known services) unless the provider has no entry for it at all. This does **not** fan out a live `get_price` call per region — whether a specific region's live price is a real catalog rate or a degraded fallback constant is only observable by calling `get_price` for that spec and checking its `fallback` field, since that is a live fetch outcome rather than a fixed property of the catalog.
+
+Use this to answer "what does this server know about" before trial-and-error against `describe_catalog` and individual `get_price` calls.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `provider` | string | | `"aws"`, `"gcp"`, or `"azure"`. Empty = all configured providers. |
+
+---
+
 ### `list_regions`
 
 List all regions where a cloud service is available.
