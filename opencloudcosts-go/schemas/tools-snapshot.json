@@ -438,7 +438,7 @@
     },
     {
       "name": "find_available_regions",
-      "description": "\n        Find all regions where a specific service/instance type is available, cheapest first.\n\n        Args:\n            spec: PricingSpec dict (same as get_price). The region field is overridden\n                  per comparison — pass any region in the spec.\n            regions: Region codes to check. Omit for major regions.\n                     Pass [\"all\"] to search every available region.\n            baseline_region: Optional region for delta comparison.\n        ",
+      "description": "\n        Find all regions where a specific service/instance type is available, cheapest first.\n\n        All fields must be nested under \"spec\" — do not pass provider/domain/resource_type\n        etc. as top-level arguments. Example call:\n          {\"spec\": {\"provider\": \"aws\", \"domain\": \"compute\", \"resource_type\": \"m5.xlarge\", \"region\": \"us-east-1\"}}\n\n        Args:\n            spec: PricingSpec dict (same as get_price). The region field is overridden\n                  per comparison — pass any region in the spec.\n            regions: Region codes to check. Omit for major regions.\n                     Pass [\"all\"] to search every available region.\n            baseline_region: Optional region for delta comparison.\n        ",
       "inputSchema": {
         "properties": {
           "spec": {
