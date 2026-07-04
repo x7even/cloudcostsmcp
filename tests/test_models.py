@@ -41,8 +41,8 @@ def test_normalized_price_summary():
     p = make_price()
     s = p.summary()
     assert s["provider"] == "aws"
-    assert s["price"]["amount"] == pytest.approx(0.192)
-    assert "0.192" in s["price"]["display"]
+    assert s["price_per_unit"]["amount"] == pytest.approx(0.192)
+    assert "0.192" in s["price_per_unit"]["display"]
     assert s["instanceType"] == "m5.xlarge"
     assert s["region"] == "us-east-1"
     assert s["region_name"] == "US East (N. Virginia)"

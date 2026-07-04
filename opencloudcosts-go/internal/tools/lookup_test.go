@@ -662,8 +662,8 @@ func TestGetPricesBatch_SingleType(t *testing.T) {
 	if r0["instance_type"] != "m5.xlarge" {
 		t.Errorf("instance_type: got %v, want m5.xlarge", r0["instance_type"])
 	}
-	if r0["price_per_hour"] == nil {
-		t.Error("price_per_hour missing")
+	if r0["price_per_unit"] == nil {
+		t.Error("price_per_unit missing")
 	}
 	if r0["monthly_estimate"] == nil {
 		t.Error("monthly_estimate missing")

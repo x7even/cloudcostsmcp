@@ -867,7 +867,7 @@ func (h *Handler) HandleGetPricesBatch(
 	for _, e := range entries {
 		row := map[string]any{
 			"instance_type":    e.instanceType,
-			"price_per_hour":   e.pricePerUnit,
+			"price_per_unit":   e.pricePerUnit,
 			"monthly_estimate": e.monthlyEstMap,
 		}
 		if e.vcpu != "" {

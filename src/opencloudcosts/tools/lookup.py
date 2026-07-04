@@ -184,7 +184,7 @@ def register_lookup_tools(mcp: Any) -> None:
                 p = outcome[0]
                 entry: dict[str, Any] = {
                     "instance_type": itype,
-                    "price_per_hour": _price(p.price_per_unit, p.unit.value),
+                    "price_per_unit": _price(p.price_per_unit, p.unit.value),
                     "monthly_estimate": _money(p.monthly_cost, "/mo"),
                 }
                 entry.update(
@@ -192,7 +192,7 @@ def register_lookup_tools(mcp: Any) -> None:
                 )
                 results.append(entry)
 
-        results.sort(key=lambda x: x["price_per_hour"]["amount"])
+        results.sort(key=lambda x: x["price_per_unit"]["amount"])
 
         out: dict[str, Any] = {
             "provider": provider,
