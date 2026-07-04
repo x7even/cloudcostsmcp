@@ -396,6 +396,23 @@ Each item in `items` is a `get_price` spec dict plus these extra fields:
 
 ---
 
+### `compare_bom_regions`
+
+Compare a Bill of Materials' total monthly cost across multiple AWS regions. Returns `regions[]` sorted
+cheapest-first, each with `total_monthly`, resolved `line_items`, and any per-item errors.
+
+**v1 scope: AWS-only.** Items using other providers are reported once under `not_supported` rather than
+guessed or dropped silently — GCP/Azure support is tracked separately. See the
+[#31 design discussion](https://github.com/x7even/cloudcostsmcp/issues/31) for scope rationale.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `items` | list[dict] | ✓ | Same format as `estimate_bom`. The `region` field on each item is overridden per comparison. |
+| `regions` | list[string] | ✓ | AWS region codes to compare, e.g. `["us-east-1", "eu-west-1"]` |
+| `baseline_region` | string | | Region for delta comparison, e.g. `"us-east-1"` |
+
+---
+
 ### `estimate_unit_economics`
 
 Estimate cost per user, request, or transaction given a BoM and monthly volume.

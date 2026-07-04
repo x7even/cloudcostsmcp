@@ -468,6 +468,32 @@ const (
 		"type": "object"
 	}`
 
+	schemaCompareBOMRegions = `{
+		"properties": {
+			"items": {
+				"items": {
+					"additionalProperties": true,
+					"type": "object"
+				},
+				"title": "Items",
+				"type": "array"
+			},
+			"regions": {
+				"items": {"type": "string"},
+				"title": "Regions",
+				"type": "array"
+			},
+			"baseline_region": {
+				"default": "",
+				"title": "Baseline Region",
+				"type": "string"
+			}
+		},
+		"required": ["items", "regions"],
+		"title": "compare_bom_regionsArguments",
+		"type": "object"
+	}`
+
 	schemaGetCoverage = `{
 		"properties": {
 			"provider": {"default": "", "title": "Provider", "type": "string"}
@@ -684,6 +710,8 @@ const (
 
 	descDescribeCatalog = "\n        Discover what each provider supports and how to call get_price.\n\n        - No args → full support matrix across all configured providers.\n        - provider only → all domains/services for that provider.\n        - provider + domain [+ service] → targeted guidance with required_fields,\n          supported_terms, filter_hints, and a ready-to-use example_invocation\n          you can pass directly to get_price.\n\n        Use this before get_price when unsure of exact field names or values.\n\n        Args:\n            provider: Cloud provider — \"aws\", \"gcp\", or \"azure\". Empty = all providers.\n            domain: Domain — \"compute\", \"storage\", \"database\", \"ai\", \"container\",\n                    \"serverless\", \"analytics\", \"network\", \"observability\". Empty = all.\n            service: Service — e.g. \"bedrock\", \"rds\", \"gke\", \"bigquery\". Empty = all.\n        "
 
+	descCompareBOMRegions = "\n        Compare a Bill of Materials' total monthly cost across multiple AWS regions.\n\n        v1 scope: AWS-only. Each item is an open PricingSpec dict, same shape as\n        estimate_bom's items (provider, domain, resource_type/region/etc, plus\n        quantity/hours_per_month/size_gb/description). The region field on each\n        item is overridden per comparison — pass any region in the item dicts.\n        Non-AWS items are reported once under \"not_supported\" rather than\n        guessed or dropped silently; GCP/Azure support is tracked separately.\n\n        Returns regions[] sorted cheapest-first, each with total_monthly, the\n        resolved line_items, and any per-item errors. Optionally shows delta vs\n        a baseline region.\n\n        Args:\n            items: List of PricingSpec dicts (same shape as estimate_bom).\n            regions: List of AWS region codes to compare, e.g. [\"us-east-1\", \"eu-west-1\"].\n            baseline_region: Optional region for delta comparison, e.g. \"us-east-1\".\n        "
+
 	descGetCoverage = "\n        Report which domains/services this server actually covers, per provider.\n\n        v1 scope: structural coverage from the catalog only — each domain is\n        reported as \"catalog\" (with its known services) unless the provider\n        has no entry for it at all. This does NOT fan out a live get_price call\n        per region — whether a specific region's live price is a real catalog\n        rate or a degraded fallback constant is only observable by calling\n        get_price for that spec and checking its \"fallback\" field, since that\n        is a live fetch outcome rather than a fixed property of the catalog.\n\n        Use this to answer \"what does this server know about\" before trial-\n        and-error against describe_catalog and individual get_price calls.\n\n        Args:\n            provider: Cloud provider — \"aws\", \"gcp\", or \"azure\". Empty = all\n                      configured providers.\n        "
 
 	descFindCheapestRegion = "\n        Find the cheapest region for any cloud service.\n\n        Queries pricing concurrently across regions and returns results sorted cheapest\n        first, with the price delta between cheapest and most expensive regions.\n\n        Args:\n            spec: PricingSpec dict (same as get_price). The region field is overridden\n                  for each comparison — pass any region in the spec.\n            regions: List of region codes to compare. Omit for major regions (faster).\n                     Pass [\"all\"] to search every available region (slow on first run without cache).\n            baseline_region: Optional region for delta comparison, e.g. \"us-east-1\".\n        "
@@ -865,6 +893,16 @@ func (s *AppServer) registerTools(srv *mcp.Server) {
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in tools.CompareBOMInput) (*mcp.CallToolResult, any, error) {
 		return s.callTool(ctx, "compare_bom", func(ctx context.Context) (*mcp.CallToolResult, any, error) {
 			return h.HandleCompareBOM(ctx, req, in)
+		})
+	})
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "compare_bom_regions",
+		Description: descCompareBOMRegions,
+		InputSchema: rawSchema(schemaCompareBOMRegions),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in tools.CompareBOMRegionsInput) (*mcp.CallToolResult, any, error) {
+		return s.callTool(ctx, "compare_bom_regions", func(ctx context.Context) (*mcp.CallToolResult, any, error) {
+			return h.HandleCompareBOMRegions(ctx, req, in)
 		})
 	})
 
