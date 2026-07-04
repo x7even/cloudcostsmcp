@@ -1116,8 +1116,16 @@ func (p *Provider) GetPrice(ctx context.Context, spec models.PricingSpec) (*mode
 		// Use the service field to override routing for in-memory caches.
 		engine := ds.Engine
 		svc := strings.ToLower(ds.GetService())
-		if svc == "elasticache" || svc == "redis" || svc == "memcached" {
+		switch svc {
+		case "elasticache", "redis", "memcached":
 			engine = svc
+		case "aurora_postgresql":
+			// aurora_postgresql is a documentation-only service alias (RC3-026 / #45):
+			// describe_catalog lists it as a peer service name under "database", but
+			// there is no separate Aurora product family — it routes to the same RDS
+			// handler as service="rds", with engine forced to "aurora-postgresql" so
+			// callers don't need to know the underlying service/engine split.
+			engine = "aurora-postgresql"
 		}
 		prices, err = p.GetDatabasePrice(ctx, engine, ds.ResourceType, ds.GetRegion(), ds.GetTerm())
 

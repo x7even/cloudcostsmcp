@@ -444,6 +444,8 @@ func TestSupports(t *testing.T) {
 		{models.PricingDomainStorage, "ebs", true},
 		{models.PricingDomainStorage, "s3", true},
 		{models.PricingDomainDatabase, "rds", true},
+		{models.PricingDomainDatabase, "elasticache", true},
+		{models.PricingDomainDatabase, "aurora_postgresql", true},
 		{models.PricingDomainNetwork, "lb", true},
 		{models.PricingDomainNetwork, "egress", true},
 		{models.PricingDomainCompute, "nonexistent-service", false},
@@ -1186,6 +1188,83 @@ func TestGetPrice_ElastiCache_ServiceRouting(t *testing.T) {
 	}
 	if result.PublicPrices[0].PricePerUnit != 0.156 {
 		t.Errorf("price = %v, want 0.156", result.PublicPrices[0].PricePerUnit)
+	}
+}
+
+// auroraPostgresRDSJSON is a minimal RDS pricing response for Aurora PostgreSQL.
+const auroraPostgresRDSJSON = `{
+  "product": {
+    "sku": "RDSAURORAPGSKU",
+    "productFamily": "Database Instance",
+    "attributes": {
+      "instanceType": "db.r6g.large",
+      "databaseEngine": "Aurora PostgreSQL",
+      "deploymentOption": "Single-AZ",
+      "location": "US East (N. Virginia)"
+    }
+  },
+  "terms": {
+    "OnDemand": {
+      "RDSAURORAPGSKU.JRTCKXETXF": {
+        "priceDimensions": {
+          "RDSAURORAPGSKU.JRTCKXETXF.6YS6EN2CT7": {
+            "unit": "Hrs",
+            "pricePerUnit": {"USD": "0.2900000000"},
+            "description": "$0.29 per RDS db.r6g.large Aurora PostgreSQL instance hour"
+          }
+        },
+        "termAttributes": {}
+      }
+    }
+  }
+}`
+
+// TestGetPrice_AuroraPostgresql_ServiceRouting verifies the RC3-026 / #45 fix:
+// GetPrice must accept service="aurora_postgresql" — the name describe_catalog
+// advertises as a peer service under "database" — and route it to the RDS
+// handler with engine forced to "aurora-postgresql", even though the
+// DatabasePricingSpec schema default (and this test's explicit value) is
+// "MySQL". This is the exact pattern the model uses: service="aurora_postgresql",
+// no explicit engine field.
+func TestGetPrice_AuroraPostgresql_ServiceRouting(t *testing.T) {
+	p := newTestProvider(t)
+	ctx := context.Background()
+
+	// Pre-populate the RDS cache key for engine="aurora-postgresql" (the value
+	// GetPrice's database dispatch must force it to, regardless of ds.Engine).
+	np := skuToNormalizedPrice(auroraPostgresRDSJSON, "us-east-1", models.PricingTermOnDemand, "database")
+	if np == nil {
+		t.Fatal("skuToNormalizedPrice returned nil for Aurora PostgreSQL")
+	}
+	prices := []models.NormalizedPrice{*np}
+	data, _ := json.Marshal(prices)
+	p.cache.Set("aws:database:us-east-1:aurora-postgresql:db.r6g.large:on_demand", data, 24*time.Hour)
+
+	spec := &models.DatabasePricingSpec{
+		BasePricingSpec: models.BasePricingSpec{
+			Provider: models.CloudProviderAWS,
+			Domain:   models.PricingDomainDatabase,
+			Region:   "us-east-1",
+			Service:  "aurora_postgresql",
+			Term:     models.PricingTermOnDemand,
+		},
+		ResourceType: "db.r6g.large",
+		Engine:       "MySQL", // schema default — intentionally wrong, service should override
+	}
+
+	if !p.Supports(spec.GetDomain(), spec.GetService()) {
+		t.Fatal("Supports(database, aurora_postgresql) = false, want true")
+	}
+
+	result, err := p.GetPrice(ctx, spec)
+	if err != nil {
+		t.Fatalf("GetPrice(service=aurora_postgresql, engine=MySQL): unexpected error: %v", err)
+	}
+	if result == nil || len(result.PublicPrices) == 0 {
+		t.Fatal("GetPrice(service=aurora_postgresql, engine=MySQL): expected Aurora PostgreSQL price, got empty — routing bug: service field not overriding default engine")
+	}
+	if result.PublicPrices[0].PricePerUnit != 0.29 {
+		t.Errorf("price = %v, want 0.29", result.PublicPrices[0].PricePerUnit)
 	}
 }
 

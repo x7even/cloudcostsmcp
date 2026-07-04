@@ -164,6 +164,12 @@ func (p *Provider) Supports(domain models.PricingDomain, service string) bool {
 		// database
 		{models.PricingDomainDatabase, "rds"}:         true,
 		{models.PricingDomainDatabase, "elasticache"}: true,
+		// aurora_postgresql is a documentation-only alias for RDS Aurora
+		// PostgreSQL (RC3-026 / #45): describe_catalog advertises it as a
+		// peer service name under "database", so get_price must accept it
+		// too rather than rejecting it as not_supported. GetPrice routes it
+		// to the RDS handler with engine forced to "aurora-postgresql".
+		{models.PricingDomainDatabase, "aurora_postgresql"}: true,
 		// network
 		{models.PricingDomainNetwork, "lb"}:            true,
 		{models.PricingDomainNetwork, "cloud_lb"}:      true,

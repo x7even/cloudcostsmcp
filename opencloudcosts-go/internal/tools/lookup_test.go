@@ -2275,6 +2275,34 @@ func TestFillDomain_ServiceInference_RDS(t *testing.T) {
 	}
 }
 
+// TestFillDomain_ServiceInference_AuroraPostgresql verifies the RC3-026 / #45
+// fix: service="aurora_postgresql" (the documentation-only alias describe_catalog
+// advertises under "database") infers domain=database just like service="rds",
+// so get_price(service="aurora_postgresql", ...) works without an explicit
+// domain field.
+func TestFillDomain_ServiceInference_AuroraPostgresql(t *testing.T) {
+	var capturedDomain models.PricingDomain
+	pvdr := &mockProvider{
+		name:          "aws",
+		defaultRegion: "us-east-1",
+		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
+			capturedDomain = spec.GetDomain()
+			return makePriceResult(makePrice(spec.GetRegion(), 0.29)), nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"aws": pvdr})
+	callGetPrice(t, h, map[string]any{
+		"provider":      "aws",
+		"service":       "aurora_postgresql",
+		"resource_type": "db.r6g.large",
+		"region":        "us-east-1",
+		// no domain — should infer database
+	})
+	if capturedDomain != models.PricingDomainDatabase {
+		t.Errorf("domain: got %q, want database", capturedDomain)
+	}
+}
+
 func TestFillDomain_ResourceTypeDotInference(t *testing.T) {
 	var capturedDomain models.PricingDomain
 	pvdr := &mockProvider{
