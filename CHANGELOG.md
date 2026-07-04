@@ -3,9 +3,14 @@
 All notable changes to OpenCloudCosts are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [1.1.0] — 2026-07-04
 
 ### Added
+- **warm_cache** — new tool that pre-populates the pricing cache for a provider across a
+  set of regions (and, optionally, services) before a large sweep (e.g. a multi-region
+  `compare_prices` or `get_prices_batch` call), so the sweep hits a warm cache instead of
+  paying fetch latency on every combination. `cache_stats` now also reports a per-provider
+  entry-count breakdown. (#63)
 - **get_price_by_sku** — new AWS-only tool that resolves a raw Cost & Usage Report (CUR)
   usage-type/SKU string (e.g. `CAN1-BoxUsage:r5a.8xlarge`) to a price across one or more
   regions, without requiring the caller to know the resource_type/domain spec. Strips the
@@ -43,6 +48,55 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   request timeout. `collectTermsForSKUs` now preserves the SKU-level grouping it already
   produces while streaming the offer file, so term assembly is a direct O(1) `map[sku]` lookup
   instead.
+- **Tool error responses now echo the requested region(s)** — `warm_cache` and
+  `find_available_regions` error paths (unconfigured provider, upstream catalog failure)
+  were dropping the caller's `region`/`regions` input from the error payload, making it hard
+  to correlate a failure with its request in a batch context. All error branches now include it.
+- **estimate_bom: fixed a cross-service SKU collision** — Azure SKU lookups could resolve a
+  fallback price from an unrelated service when two services shared an ambiguous SKU token;
+  resolution is now scoped per-service so a line item can no longer silently pick up another
+  service's price.
+- **describe_catalog: `ai/bedrock` and `ai/sagemaker` `FilterHints` now include a `note`**
+  explaining that `get_price` currently returns `not_supported` for these services (live
+  AWS Cost Explorer pricing API required, not yet implemented), instead of leaving callers
+  to discover this only after a failed call.
+- **AWS EKS control-plane pricing** — fixed a dispatcher gap that prevented EKS pricing from
+  resolving. (#71)
+- **GCP `a3-ultragpu-8g`** — added the missing catalog entry for this instance type. (#71)
+- **Harness: `reason` field** — fixed a bug that could surface an incorrect explanation on
+  certain failures. (#71)
+- **search_pricing** — reworded the deprecated stub's message to a clearer deprecation
+  framing. (#64)
+- **get_price** — a non-nil but empty `PricingResult` is now treated as `no_results` instead
+  of surfacing an ambiguous partial success. (#67)
+- **find_available_regions** — tool description now leads with a spec-wrap example to reduce
+  malformed calls. (#68)
+- **RDS** — `aurora_postgresql` accepted as a `get_price` service alias for RDS. (#69)
+- **list_instance_types (GCP)** — stopped excluding GPU families when the `gpu` flag is
+  omitted. (#66)
+- **describe_catalog (AWS)** — filled catalog gaps for `inter_region_egress`, `database`,
+  and network LB/NAT/WAF services. (#70)
+- **get_price / get_prices_batch** — now emit a `not_available_in` hint when a spec isn't
+  available in the requested region/provider. (#61)
+- **estimate_bom / compare_bom** — fractional quantities are now allowed in line items. (#59)
+- **estimate_bom** — `Attributes[fallback]` is now surfaced on line items so callers can see
+  when a fallback price was used. (#60)
+- **compare_prices** — results are now grouped by SKU instead of interleaved across regions.
+  (#56)
+- **AWS SKU hints** — a stored-empty `operation` attribute is no longer treated as
+  exclusionary when matching SKU hints. (#58)
+- **AWS EBS** — gp3/gp2 pricing now tries a live lookup before falling back to static rates,
+  and surfaces a fallback warning when it does. (#55)
+- **AWS ALB** — `GetALBPrice` now fetches real region-varying rates instead of a flat
+  estimate. (#57)
+- **AWS DynamoDB** — stopped mis-inferring `AmazonDynamoDB` from the S3-shared
+  `TimedStorage-ByteHrs` usage-type suffix. (#54)
+- **GCP/Azure providers** — wired retry/backoff into HTTP fetches for transient failures.
+  (#52)
+- **GCP instance catalog** — added C4/Z3 families; unsupported families now classified as
+  `not_supported` rather than erroring. (#53)
+- **compare_prices** — transient errors are now classified distinctly and the baseline
+  degrades gracefully instead of failing the whole call. (#51)
 
 ### Docs
 

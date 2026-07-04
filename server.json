@@ -6,12 +6,12 @@
     "url": "https://github.com/x7even/cloudcostsmcp",
     "source": "github"
   },
-  "version": "1.1.0-rc2",
+  "version": "1.1.0",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "opencloudcosts",
-      "version": "1.1.0-rc2",
+      "version": "1.1.0",
       "transport": {
         "type": "stdio"
       },
