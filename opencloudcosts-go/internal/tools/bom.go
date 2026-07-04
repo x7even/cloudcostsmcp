@@ -244,7 +244,14 @@ func processBOMItems(
 		// Unmarshal to typed PricingSpec.
 		parsed, err := unmarshalSpec(enriched)
 		if err != nil {
-			errs = append(errs, fmt.Sprintf("%s: invalid spec — %v", label, err))
+			// parsed does not exist yet on this branch, so region info is
+			// only available as a raw, unvalidated field on the input map
+			// (best-effort — the spec itself failed validation).
+			if rawRegion, ok := enriched["region"].(string); ok && rawRegion != "" {
+				errs = append(errs, fmt.Sprintf("%s: invalid spec (region '%s') — %v", label, rawRegion, err))
+			} else {
+				errs = append(errs, fmt.Sprintf("%s: invalid spec — %v", label, err))
+			}
 			continue
 		}
 
@@ -252,14 +259,15 @@ func processBOMItems(
 		pvdrName := string(parsed.GetProvider())
 		pvdr := provs[pvdrName]
 		if pvdr == nil {
-			errs = append(errs, fmt.Sprintf("%s: provider '%s' not configured", label, pvdrName))
+			errs = append(errs, fmt.Sprintf("%s: provider '%s' not configured for region '%s'",
+				label, pvdrName, parsed.GetRegion()))
 			continue
 		}
 
 		// Check support.
 		if !pvdr.Supports(parsed.GetDomain(), parsed.GetService()) {
-			errs = append(errs, fmt.Sprintf("%s: %s does not support %s/%s",
-				label, pvdrName, parsed.GetDomain(), parsed.GetService()))
+			errs = append(errs, fmt.Sprintf("%s: %s does not support %s/%s in region '%s'",
+				label, pvdrName, parsed.GetDomain(), parsed.GetService(), parsed.GetRegion()))
 			continue
 		}
 
@@ -267,14 +275,16 @@ func processBOMItems(
 		result, err := pvdr.GetPrice(ctx, parsed)
 		if err != nil {
 			if err == providers.ErrNotSupported {
-				errs = append(errs, fmt.Sprintf("%s: %s does not support this spec", label, pvdrName))
+				errs = append(errs, fmt.Sprintf("%s: %s does not support this spec in region '%s'",
+					label, pvdrName, parsed.GetRegion()))
 			} else {
-				errs = append(errs, fmt.Sprintf("%s: %v", label, err))
+				errs = append(errs, fmt.Sprintf("%s: %v (region '%s')", label, err, parsed.GetRegion()))
 			}
 			continue
 		}
 		if result == nil || len(result.PublicPrices) == 0 {
-			errs = append(errs, fmt.Sprintf("%s: no pricing found for spec", label))
+			errs = append(errs, fmt.Sprintf("%s: no pricing found for spec in region '%s'",
+				label, parsed.GetRegion()))
 			continue
 		}
 
