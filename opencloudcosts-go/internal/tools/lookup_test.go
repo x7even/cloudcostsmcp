@@ -443,16 +443,16 @@ func TestGetPrice_PublicPricesSummaryShape(t *testing.T) {
 	p0 := prices[0].(map[string]any)
 
 	// Verify required fields.
-	for _, key := range []string{"provider", "description", "region", "region_name", "term", "price", "monthly_estimate"} {
+	for _, key := range []string{"provider", "description", "region", "region_name", "term", "price_per_unit", "monthly_estimate"} {
 		if _, ok := p0[key]; !ok {
 			t.Errorf("public_prices[0] missing key %q", key)
 		}
 	}
 
-	// price sub-dict.
-	price, ok := p0["price"].(map[string]any)
+	// price_per_unit sub-dict.
+	price, ok := p0["price_per_unit"].(map[string]any)
 	if !ok {
-		t.Fatalf("price field is not a map: %v", p0["price"])
+		t.Fatalf("price_per_unit field is not a map: %v", p0["price_per_unit"])
 	}
 	for _, key := range []string{"amount", "unit", "currency", "display"} {
 		if _, ok := price[key]; !ok {
@@ -2304,7 +2304,7 @@ func TestPriceFormatting_SmallAmount(t *testing.T) {
 	})
 	prices, _ := resp["public_prices"].([]any)
 	p0 := prices[0].(map[string]any)
-	price := p0["price"].(map[string]any)
+	price := p0["price_per_unit"].(map[string]any)
 	display, _ := price["display"].(string)
 	if !contains(display, "e") && !contains(display, "E") {
 		t.Errorf("tiny price display should use scientific notation, got: %q", display)
@@ -2328,7 +2328,7 @@ func TestPriceFormatting_NormalAmount(t *testing.T) {
 	})
 	prices, _ := resp["public_prices"].([]any)
 	p0 := prices[0].(map[string]any)
-	price := p0["price"].(map[string]any)
+	price := p0["price_per_unit"].(map[string]any)
 	display, _ := price["display"].(string)
 	// Should be "$0.192000/per_hour"
 	if !contains(display, "0.192000") {

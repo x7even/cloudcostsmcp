@@ -78,7 +78,7 @@ Use `describe_catalog(provider, domain)` to see required fields and a copy-paste
 ```json
 {
   "public_prices": [
-    {"region": "us-east-1", "price": "$0.192000 per_hour", "monthly_estimate": "$140.16/mo", "vcpu": "4", "memory": "16 GiB"}
+    {"region": "us-east-1", "price_per_unit": {"amount": 0.192, "unit": "per_hour", "currency": "USD", "display": "$0.192000/per_hour"}, "monthly_estimate": "$140.16/mo", "vcpu": "4", "memory": "16 GiB"}
   ],
   "auth_available": false,
   "source": "catalog"
@@ -86,6 +86,13 @@ Use `describe_catalog(provider, domain)` to see required fields and a copy-paste
 ```
 
 When credentials are present, `contracted_prices` and `effective_price` are also populated.
+
+`price_per_unit` is the canonical price field across every tool that returns a
+price (`get_price`, `get_prices_batch`, `get_price_by_sku`, `compare_prices`,
+`effective_price`, etc.) — always a per-unit rate, never pre-multiplied by
+`size_gb`/quantity. Check `price_per_unit.unit` (e.g. `per_gb_month`,
+`per_hour`) to know what to multiply by for a total; use `estimate_bom` /
+`estimate_unit_economics` if you want the multiplication done for you.
 
 ---
 
