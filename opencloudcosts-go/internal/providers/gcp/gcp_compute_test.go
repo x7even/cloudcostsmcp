@@ -609,6 +609,32 @@ func TestListInstanceTypes_IncludesC4AndZ3(t *testing.T) {
 	}
 }
 
+// TestListInstanceTypes_FamilyFilterIgnoresOmittedGPUFlag verifies RC3-024:
+// requesting family="g2" (a GPU family) with gpu omitted/false must still
+// return results. Before the fix, the loop applied
+// "if !gpu && isGPU { continue }" ahead of the family prefix check, so an
+// omitted gpu argument (defaulting to false, since GPU is a plain bool) was
+// misread as "exclude all GPU families" and family="g2" incorrectly
+// returned zero results.
+func TestListInstanceTypes_FamilyFilterIgnoresOmittedGPUFlag(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer ts.Close()
+	p := newTestProvider(t, ts)
+
+	g2Types, err := p.ListInstanceTypes(context.Background(), "us-central1", "g2", 0, 0, false)
+	if err != nil {
+		t.Fatalf("ListInstanceTypes(g2, gpu=false): %v", err)
+	}
+	if len(g2Types) == 0 {
+		t.Error("expected at least one g2 instance type when gpu is omitted/false, got 0")
+	}
+	for _, it := range g2Types {
+		if !startsWith(it.InstanceType, "g2") {
+			t.Errorf("ListInstanceTypes(family=g2): unexpected type %q", it.InstanceType)
+		}
+	}
+}
+
 // TestCachingAvoidsDuplicateHTTP verifies that a second call uses the cache.
 func TestCachingAvoidsDuplicateHTTP(t *testing.T) {
 	skus := []map[string]any{
