@@ -225,6 +225,10 @@ var GCPInstanceSpecs = map[string]InstanceSpec{
 	"g2-standard-96": {96, 384.0},
 	// ---- A3 (GPU, H100 80GB) ----
 	"a3-highgpu-8g": {208, 1872.0},
+	// ---- A3 Ultra (GPU, H200 141GB) ----
+	// Source: https://cloud.google.com/compute/docs/gpus (accelerator-optimized
+	// machine family table), verified 2026-07-04.
+	"a3-ultragpu-8g": {224, 2952.0},
 	// ---- C4 standard (3.75 GB/vCPU) ----
 	// Source: https://docs.cloud.google.com/compute/docs/general-purpose-machines (C4 section)
 	// cross-checked against https://instances.vantage.sh/gcp/c4-standard-8 (2026-07).
@@ -589,6 +593,15 @@ var GCPInstanceGPU = map[string]InstanceGPU{
 	"g2-standard-96": {8, "L4", "Nvidia L4 GPU running in"},
 	// ---- A3 highgpu — 8× NVIDIA H100 80GB ----
 	"a3-highgpu-8g": {8, "H100 80GB", "Nvidia H100 80GB GPU running in"},
+	// ---- A3 Ultra — 8× NVIDIA H200 141GB ----
+	// NOTE: unlike the other entries in this map, this OnDemand substring is a
+	// best-effort guess following the established naming pattern — it has NOT
+	// been verified against a live GCP Cloud Billing Catalog query (no GCP
+	// credentials were available when this was added). If the GPU surcharge
+	// is silently missing from a3-ultragpu-8g on-demand pricing (falls back to
+	// CPU+RAM only, logged as "gcp: GPU SKU not found"), correct this string
+	// against the real catalog.
+	"a3-ultragpu-8g": {8, "H200 141GB", "Nvidia H200 141GB GPU running in"},
 }
 
 // sudEligibleFamilies lists GCP machine families that qualify for Sustained Use

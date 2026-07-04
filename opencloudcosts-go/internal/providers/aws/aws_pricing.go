@@ -1055,7 +1055,7 @@ func (p *Provider) GetPrice(ctx context.Context, spec models.PricingSpec) (*mode
 	var prices []models.NormalizedPrice
 	var err error
 
-	switch spec.GetDomain() { //nolint:exhaustive // AI, container, analytics, observability fall to default error
+	switch spec.GetDomain() { //nolint:exhaustive // AI, analytics fall to default error
 	case models.PricingDomainCompute:
 		cs, ok := spec.(*models.ComputePricingSpec)
 		if !ok {
@@ -1142,6 +1142,9 @@ func (p *Provider) GetPrice(ctx context.Context, spec models.PricingSpec) (*mode
 
 	case models.PricingDomainObservability:
 		prices, err = p.GetCloudWatchPrice(ctx, spec.GetRegion())
+
+	case models.PricingDomainContainer:
+		prices, err = p.GetEKSPrice(ctx, spec.GetRegion())
 
 	case models.PricingDomainServerless:
 		ss, ok := spec.(*models.ServerlessPricingSpec)
