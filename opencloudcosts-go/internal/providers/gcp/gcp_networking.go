@@ -479,7 +479,7 @@ func (p *Provider) priceNetworkEgress(
 			Region:        src,
 			PricingTerm:   models.PricingTermOnDemand,
 			PricePerUnit:  blended,
-			Unit:          models.PriceUnitPerGBMonth,
+			Unit:          models.PriceUnitPerGB,
 			Currency:      "USD",
 			Attributes: map[string]string{
 				"source_region":    src,
@@ -581,7 +581,7 @@ func (p *Provider) GetEgressPrice(
 		Region:        sourceRegion,
 		PricingTerm:   models.PricingTermOnDemand,
 		PricePerUnit:  rate,
-		Unit:          models.PriceUnitPerGBMonth,
+		Unit:          models.PriceUnitPerGB,
 		Currency:      "USD",
 		Attributes:    attrs,
 	}

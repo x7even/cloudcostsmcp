@@ -935,6 +935,83 @@ func TestBOMMonthlyCostMath(t *testing.T) {
 	}
 }
 
+// TestBOMMonthlyCost_EgressUnitConsistentWithNetwork locks in a consistency
+// property (issue #30(d)): a GCP egress-domain line item and a GCP
+// network-domain line item (e.g. cloud_cdn/cloud_nat data processing) that
+// both carry a models.PriceUnitPerGB price, with the same rate and quantity,
+// must compute the same monthly_cost formula (plain price*quantity — neither
+// gets the per_gb_month sizeGB(100) multiplier). This does NOT assert any
+// particular dollar total is "correct" — only that the two domains are no
+// longer treated inconsistently now that egress is labeled per_gb like its
+// networking siblings.
+func TestBOMMonthlyCost_EgressUnitConsistentWithNetwork(t *testing.T) {
+	const rate = 0.02
+	const qty = 5.0
+
+	pvdr := &mockProvider{
+		name:          "gcp",
+		defaultRegion: "us-central1",
+		supportsFunc:  func(_ models.PricingDomain, _ string) bool { return true },
+		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
+			price := models.NormalizedPrice{
+				Provider:     models.CloudProviderGCP,
+				Service:      string(spec.GetDomain()),
+				Region:       "us-central1",
+				PricingTerm:  models.PricingTermOnDemand,
+				PricePerUnit: rate,
+				Unit:         models.PriceUnitPerGB,
+				Currency:     "USD",
+			}
+			return &models.PricingResult{PublicPrices: []models.NormalizedPrice{price}}, nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"gcp": pvdr})
+
+	items := []map[string]any{
+		{
+			// GCP egress-domain item.
+			"provider": "gcp",
+			"domain":   "inter_region_egress",
+			"region":   "us-central1",
+			"quantity": qty,
+		},
+		{
+			// GCP network-domain item (e.g. cloud_cdn / cloud_nat data
+			// processing), which already carries PriceUnitPerGB today.
+			"provider": "gcp",
+			"domain":   "network",
+			"region":   "us-central1",
+			"quantity": qty,
+		},
+	}
+	resp := callEstimateBOM(t, h, items)
+
+	if _, ok := resp["error"]; ok {
+		t.Fatalf("expected success: %v", resp)
+	}
+	lineItems, _ := resp["line_items"].([]any)
+	if len(lineItems) != 2 {
+		t.Fatalf("expected 2 line items, got %d: %v", len(lineItems), resp)
+	}
+
+	egress := lineItems[0].(map[string]any)
+	network := lineItems[1].(map[string]any)
+
+	egressAmount, _ := egress["monthly_cost"].(map[string]any)["amount"].(float64)
+	networkAmount, _ := network["monthly_cost"].(map[string]any)["amount"].(float64)
+
+	wantAmount := rate * qty // plain price*quantity — no sizeGB(100) multiplier
+	if egressAmount < wantAmount-1e-9 || egressAmount > wantAmount+1e-9 {
+		t.Errorf("egress monthly_cost = %.4f, want %.4f (price*quantity, no sizeGB multiplier)", egressAmount, wantAmount)
+	}
+	if networkAmount < wantAmount-1e-9 || networkAmount > wantAmount+1e-9 {
+		t.Errorf("network monthly_cost = %.4f, want %.4f (price*quantity, no sizeGB multiplier)", networkAmount, wantAmount)
+	}
+	if egressAmount < networkAmount-1e-9 || egressAmount > networkAmount+1e-9 {
+		t.Errorf("egress and network monthly_cost formulas diverged: egress=%.4f, network=%.4f", egressAmount, networkAmount)
+	}
+}
+
 // TestEstimateBOM_FractionalQuantityNotTruncated verifies that a fractional
 // "quantity" (e.g. 2.9) is honored exactly rather than silently truncated to
 // an int. Prior to the fix, processBOMItems extracted quantity via int(n),
