@@ -23,6 +23,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   across multiple AWS regions, returning `regions[]` sorted cheapest-first with resolved
   line items and per-region errors. v1 scope: AWS-only, PricingSpec-dict items; non-AWS
   items are reported under `not_supported`. (RC3-004 / #31)
+
+## [1.1.0] — 2026-07-04
+
+### Added
 - **warm_cache** — new tool that pre-populates the pricing cache for a provider across a
   set of regions (and, optionally, services) before a large sweep (e.g. a multi-region
   `compare_prices` or `get_prices_batch` call), so the sweep hits a warm cache instead of
