@@ -4,28 +4,28 @@
 class Opencloudcosts < Formula
   desc "MCP server for cloud pricing (AWS, GCP, Azure)"
   homepage "https://github.com/x7even/cloudcostsmcp"
-  version "1.1.0"
+  version "1.2.0"
   license "MIT"
 
   on_macos do
     on_arm do
       url "https://github.com/x7even/cloudcostsmcp/releases/download/v#{version}/opencloudcosts_#{version}_darwin_arm64.tar.gz"
-      sha256 "1d5eaa3da97e9de420429c95553922d3a194c44e922ae3a347a70617c901eb07"
+      sha256 "13773afd42b4b2336ca721d0345dc4434941d0d5334a3524e1b0f163904f41a6"
     end
     on_intel do
       url "https://github.com/x7even/cloudcostsmcp/releases/download/v#{version}/opencloudcosts_#{version}_darwin_amd64.tar.gz"
-      sha256 "af5cc564b2e2d9fa7712eaf9a03b89f6576310aaec1842903fba98be0cabd30d"
+      sha256 "3b3cbf67d94018b0150099bccba20bd8055680a96c3d05079737bad309c01b2b"
     end
   end
 
   on_linux do
     on_arm do
       url "https://github.com/x7even/cloudcostsmcp/releases/download/v#{version}/opencloudcosts_#{version}_linux_arm64.tar.gz"
-      sha256 "daf0c11fbcadd57deda027f001c235b42975c035c44b8b3790c2db756dabf528"
+      sha256 "3961e186b6eaa9f4ae090dde007b530b8e790eb94cd2c324e83ad20f6eb6e85c"
     end
     on_intel do
       url "https://github.com/x7even/cloudcostsmcp/releases/download/v#{version}/opencloudcosts_#{version}_linux_amd64.tar.gz"
-      sha256 "4dd2a4e2b161adcc285def26c151676f388ff7e4208b06db0fb2366e5394e450"
+      sha256 "e78856fccf2ea65cceafe217f9a4d62c19374da2a0d70fb9914796d3d76a238f"
     end
   end
 
