@@ -3,7 +3,18 @@
 All notable changes to OpenCloudCosts are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [1.1.0] — 2026-07-04
+## [Unreleased]
+
+### Changed
+- **BREAKING:** `get_price`, `get_prices_batch`, `get_price_by_sku`, `get_prices_by_sku`,
+  and `effective_price` now return the unit-price sub-object under `price_per_unit`
+  instead of `price`, matching the key `compare_prices` already used. This unifies the
+  price field name across every tool that returns a price (RC3-032 / #30). Callers that
+  parse `price.amount` programmatically (e.g. a CUR-reconciliation script rather than an
+  LLM re-reading the tool schema each call) need to switch to `price_per_unit.amount`.
+  No version bump yet — pending a local harness run to measure impact.
+
+
 
 ### Added
 - **warm_cache** — new tool that pre-populates the pricing cache for a provider across a

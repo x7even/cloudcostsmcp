@@ -440,7 +440,12 @@ func normalizedPriceSummary(p models.NormalizedPrice) map[string]any {
 		"region":      p.Region,
 		"region_name": regionDisplayNameFn(string(p.Provider), p.Region),
 		"term":        string(p.PricingTerm),
-		"price":       priceDict(p.PricePerUnit, string(p.Unit)),
+		// RC3-032 / #30: canonical field name across every tool that returns a
+		// price is "price_per_unit" — compare_prices already used this name;
+		// get_price/get_prices_batch/get_price_by_sku (all routed through this
+		// shared summary builder) previously called it "price", which forced
+		// callers to special-case field names per tool.
+		"price_per_unit": priceDict(p.PricePerUnit, string(p.Unit)),
 	}
 	if p.Unit == models.PriceUnitPerHour || p.Unit == models.PriceUnitPerMonth {
 		result["monthly_estimate"] = moneyDict(p.MonthlyCost(), "/mo")
@@ -535,7 +540,7 @@ func pricingResultSummary(r *models.PricingResult) map[string]any {
 		ep := r.EffectivePrice
 		unit := string(ep.BasePrice.Unit)
 		out["effective_price"] = map[string]any{
-			"price":                priceDict(ep.EffectivePricePerUnit, unit),
+			"price_per_unit":       priceDict(ep.EffectivePricePerUnit, unit),
 			"discount_type":        ep.DiscountType,
 			"discount_pct":         ep.DiscountPct,
 			"savings_vs_on_demand": priceDict(ep.SavingsVsOnDemand(), unit),
@@ -862,7 +867,7 @@ func (h *Handler) HandleGetPricesBatch(
 	for _, e := range entries {
 		row := map[string]any{
 			"instance_type":    e.instanceType,
-			"price_per_hour":   e.pricePerUnit,
+			"price_per_unit":   e.pricePerUnit,
 			"monthly_estimate": e.monthlyEstMap,
 		}
 		if e.vcpu != "" {

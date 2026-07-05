@@ -127,7 +127,7 @@ class NormalizedPrice(BaseModel):
             "region": self.region,
             "region_name": region_display_name(self.provider.value, self.region),
             "term": self.pricing_term.value,
-            "price": _price(self.price_per_unit, self.unit.value),
+            "price_per_unit": _price(self.price_per_unit, self.unit.value),
             "monthly_estimate": (
                 _money(self.monthly_cost, "/mo")
                 if self.unit in (PriceUnit.PER_HOUR, PriceUnit.PER_MONTH)
@@ -588,7 +588,7 @@ class PricingResult(BaseModel):
         if self.effective_price is not None:
             unit = self.effective_price.base_price.unit.value
             out["effective_price"] = {
-                "price": _price(self.effective_price.effective_price_per_unit, unit),
+                "price_per_unit": _price(self.effective_price.effective_price_per_unit, unit),
                 "discount_type": self.effective_price.discount_type,
                 "discount_pct": self.effective_price.discount_pct,
                 "savings_vs_on_demand": _price(self.effective_price.savings_vs_on_demand, unit),
