@@ -5,6 +5,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-07-05
+
 ### Changed
 - **BREAKING:** `get_price`, `get_prices_batch`, `get_price_by_sku`, `get_prices_by_sku`,
   and `effective_price` now return the unit-price sub-object under `price_per_unit`
@@ -12,11 +14,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   price field name across every tool that returns a price (RC3-032 / #30). Callers that
   parse `price.amount` programmatically (e.g. a CUR-reconciliation script rather than an
   LLM re-reading the tool schema each call) need to switch to `price_per_unit.amount`.
-  No version bump yet — pending a local harness run to measure impact.
-
-
 
 ### Added
+- **get_coverage** — new tool reporting structural catalog coverage (`catalog`/`absent`
+  per domain/service) for a provider, answering "what does this server know about" without
+  a live per-region fetch. (RC3-038 / #38)
+- **compare_bom_regions** — new tool comparing a Bill of Materials' total monthly cost
+  across multiple AWS regions, returning `regions[]` sorted cheapest-first with resolved
+  line items and per-region errors. v1 scope: AWS-only, PricingSpec-dict items; non-AWS
+  items are reported under `not_supported`. (RC3-004 / #31)
 - **warm_cache** — new tool that pre-populates the pricing cache for a provider across a
   set of regions (and, optionally, services) before a large sweep (e.g. a multi-region
   `compare_prices` or `get_prices_batch` call), so the sweep hits a warm cache instead of
