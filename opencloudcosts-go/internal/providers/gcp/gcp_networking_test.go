@@ -546,6 +546,91 @@ func TestGetEgressPrice_CrossContinent(t *testing.T) {
 	}
 }
 
+// TestGetEgressPrice_InternetUnit verifies that GetEgressPrice's internet
+// egress (destRegion == "") is labeled as a flat per-GB price, not a
+// per-GB-month recurring rate (issue #30(d): unit mislabeling regression).
+func TestGetEgressPrice_InternetUnit(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(networkingSKUResponse(nil))
+	}))
+	defer ts.Close()
+
+	p := newNetworkingTestProvider(t, ts)
+	ctx := context.Background()
+
+	prices, err := p.GetEgressPrice(ctx, "us-east1", "", 0)
+	if err != nil {
+		t.Fatalf("GetEgressPrice: %v", err)
+	}
+	if len(prices) == 0 {
+		t.Fatal("expected at least one price")
+	}
+	if prices[0].Unit != models.PriceUnitPerGB {
+		t.Errorf("Unit = %v, want %v (internet egress must not be per_gb_month)", prices[0].Unit, models.PriceUnitPerGB)
+	}
+}
+
+// TestGetEgressPrice_InterRegionUnit verifies that GetEgressPrice's
+// inter-region egress (destRegion != "") is labeled as a flat per-GB price,
+// not a per-GB-month recurring rate (issue #30(d): unit mislabeling regression).
+func TestGetEgressPrice_InterRegionUnit(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(networkingSKUResponse(nil))
+	}))
+	defer ts.Close()
+
+	p := newNetworkingTestProvider(t, ts)
+	ctx := context.Background()
+
+	prices, err := p.GetEgressPrice(ctx, "us-east1", "eu-west1", 0)
+	if err != nil {
+		t.Fatalf("GetEgressPrice (inter-region): %v", err)
+	}
+	if len(prices) == 0 {
+		t.Fatal("expected at least one price")
+	}
+	if prices[0].Unit != models.PriceUnitPerGB {
+		t.Errorf("Unit = %v, want %v (inter-region egress must not be per_gb_month)", prices[0].Unit, models.PriceUnitPerGB)
+	}
+}
+
+// TestPriceNetworkEgress_InternetTieredUnit verifies that the tiered
+// internet-egress path in priceNetworkEgress (the `default:` case for
+// destination_type "internet") is labeled as a flat per-GB price, not a
+// per-GB-month recurring rate (issue #30(d): unit mislabeling regression).
+func TestPriceNetworkEgress_InternetTieredUnit(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(networkingSKUResponse(nil))
+	}))
+	defer ts.Close()
+
+	p := newNetworkingTestProvider(t, ts)
+	ctx := context.Background()
+
+	spec := &models.NetworkPricingSpec{
+		BasePricingSpec: models.BasePricingSpec{
+			Region: "us-east1",
+		},
+		SourceRegion:    "us-east1",
+		DestinationType: "internet",
+		DataGBPerMonth:  100.0,
+		NetworkTier:     "premium",
+	}
+	prices, _, err := p.priceNetworkEgress(ctx, spec)
+	if err != nil {
+		t.Fatalf("priceNetworkEgress: %v", err)
+	}
+	if len(prices) == 0 {
+		t.Fatal("expected at least one price")
+	}
+	if prices[0].Unit != models.PriceUnitPerGB {
+		t.Errorf("Unit = %v, want %v (tiered internet egress must not be per_gb_month)", prices[0].Unit, models.PriceUnitPerGB)
+	}
+}
+
 // --------------------------------------------------------------------------
 // Cloud Armor tests (Fix: fallback disclosure for missing policy/request rates)
 // --------------------------------------------------------------------------
