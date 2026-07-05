@@ -711,6 +711,40 @@
         "title": "get_coverageArguments",
         "type": "object"
       }
+    },
+    {
+      "name": "compare_bom_regions",
+      "description": "\n        Compare a Bill of Materials' total monthly cost across multiple AWS regions.\n\n        v1 scope: AWS-only. Each item is an open PricingSpec dict, same shape as\n        estimate_bom's items (provider, domain, resource_type/region/etc, plus\n        quantity/hours_per_month/size_gb/description). The region field on each\n        item is overridden per comparison — pass any region in the item dicts.\n        Non-AWS items are reported once under \"not_supported\" rather than\n        guessed or dropped silently; GCP/Azure support is tracked separately.\n\n        Returns regions[] sorted cheapest-first, each with total_monthly, the\n        resolved line_items, and any per-item errors. Optionally shows delta vs\n        a baseline region.\n\n        Args:\n            items: List of PricingSpec dicts (same shape as estimate_bom).\n            regions: List of AWS region codes to compare, e.g. [\"us-east-1\", \"eu-west-1\"].\n            baseline_region: Optional region for delta comparison, e.g. \"us-east-1\".\n        ",
+      "inputSchema": {
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "regions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Regions",
+            "type": "array"
+          },
+          "baseline_region": {
+            "default": "",
+            "title": "Baseline Region",
+            "type": "string"
+          }
+        },
+        "required": [
+          "items",
+          "regions"
+        ],
+        "title": "compare_bom_regionsArguments",
+        "type": "object"
+      }
     }
   ]
 }
