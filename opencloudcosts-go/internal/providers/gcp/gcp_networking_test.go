@@ -656,6 +656,287 @@ func TestPriceNetworkEgress_InternetTieredUnit(t *testing.T) {
 }
 
 // --------------------------------------------------------------------------
+// External IP helpers and tests
+// --------------------------------------------------------------------------
+
+// makeExternalIPSKU builds a two-tier global SKU matching the real Billing
+// Catalog shape for the Standard VM External IP Charge SKU: a $0 tier at
+// startUsageAmount=0 (the account-level monthly free usage), followed by the
+// marginal per-hour rate at startUsageAmount=744. skuLastNonZeroTierPrice
+// must be used to extract paidUnits/paidNanos; skuPrice would incorrectly
+// return 0 (the free tier), and skuPaidPrice happens to work here too but
+// not for the single-tier spot shape below.
+func makeExternalIPSKU(desc string, paidUnits string, paidNanos int) map[string]any {
+	return map[string]any{
+		"description":    desc,
+		"serviceRegions": []any{"global"},
+		"category": map[string]any{
+			"usageType": "OnDemand",
+		},
+		"pricingInfo": []any{
+			map[string]any{
+				"pricingExpression": map[string]any{
+					"tieredRates": []any{
+						map[string]any{
+							"startUsageAmount": float64(0),
+							"unitPrice": map[string]any{
+								"units": "0",
+								"nanos": float64(0),
+							},
+						},
+						map[string]any{
+							"startUsageAmount": float64(744),
+							"unitPrice": map[string]any{
+								"units": paidUnits,
+								"nanos": float64(paidNanos),
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+// makeExternalIPSKUSingleTier builds a single-tier global SKU matching the
+// real Billing Catalog shape for the Spot Preemptible VM External IP Charge
+// SKU: unlike the Standard VM SKU, it has no $0 free-quota tier at all — just
+// one tier at startUsageAmount=0 carrying the paid rate directly. skuPaidPrice
+// (which skips any tier with start<=0) would incorrectly return 0 for this
+// shape; skuLastNonZeroTierPrice is required.
+func makeExternalIPSKUSingleTier(desc string, units string, nanos int) map[string]any {
+	return map[string]any{
+		"description":    desc,
+		"serviceRegions": []any{"global"},
+		"category": map[string]any{
+			"usageType": "OnDemand",
+		},
+		"pricingInfo": []any{
+			map[string]any{
+				"pricingExpression": map[string]any{
+					"tieredRates": []any{
+						map[string]any{
+							"startUsageAmount": float64(0),
+							"unitPrice": map[string]any{
+								"units": units,
+								"nanos": float64(nanos),
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+// fakeExternalIPSKUs returns the two real External IP Charge SKUs:
+// C054-7F72-A02E (Standard VM, $0.005/hr, two-tier with a free quota) and
+// 4AF8-7C1F-39C4 (Spot Preemptible VM, $0.0025/hr, single-tier with no free
+// quota), both scoped global.
+func fakeExternalIPSKUs() []map[string]any {
+	return []map[string]any{
+		makeExternalIPSKU(externalIPStandardDescription, "0", 5_000_000),       // $0.005
+		makeExternalIPSKUSingleTier(externalIPSpotDescription, "0", 2_500_000), // $0.0025
+	}
+}
+
+// TestPriceNetworkExternalIP_StandardRateFromSKU verifies that the on-demand
+// (Standard VM) external IP rate is extracted as the marginal (non-zero)
+// tier, not the $0 free-tier rate: C054-7F72-A02E → $0.005/hr.
+func TestPriceNetworkExternalIP_StandardRateFromSKU(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(networkingSKUResponse(fakeExternalIPSKUs()))
+	}))
+	defer ts.Close()
+
+	p := newNetworkingTestProvider(t, ts)
+	ctx := context.Background()
+
+	spec := &models.NetworkPricingSpec{
+		BasePricingSpec: models.BasePricingSpec{
+			Term: models.PricingTermOnDemand,
+		},
+	}
+	prices, breakdown, err := p.priceNetworkExternalIP(ctx, spec)
+	if err != nil {
+		t.Fatalf("priceNetworkExternalIP: %v", err)
+	}
+	if len(prices) != 1 {
+		t.Fatalf("expected exactly one price, got %d", len(prices))
+	}
+
+	if abs(prices[0].PricePerUnit-0.005) > 1e-9 {
+		t.Errorf("standard external IP rate = %.6f, want 0.005000", prices[0].PricePerUnit)
+	}
+	if prices[0].Region != "global" {
+		t.Errorf("region = %q, want %q (external IP is region-invariant)", prices[0].Region, "global")
+	}
+	if prices[0].Unit != models.PriceUnitPerHour {
+		t.Errorf("unit = %v, want per_hour", prices[0].Unit)
+	}
+	if prices[0].Attributes["vm_type"] != "standard" {
+		t.Errorf("vm_type = %q, want %q", prices[0].Attributes["vm_type"], "standard")
+	}
+	if fb, ok := breakdown["fallback"]; ok && fb == true {
+		t.Error("expected no fallback when the Standard VM SKU is present")
+	}
+}
+
+// TestPriceNetworkExternalIP_SpotRateFromSKU verifies that term=spot selects
+// the Spot Preemptible VM SKU: 4AF8-7C1F-39C4 → $0.0025/hr.
+func TestPriceNetworkExternalIP_SpotRateFromSKU(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(networkingSKUResponse(fakeExternalIPSKUs()))
+	}))
+	defer ts.Close()
+
+	p := newNetworkingTestProvider(t, ts)
+	ctx := context.Background()
+
+	spec := &models.NetworkPricingSpec{
+		BasePricingSpec: models.BasePricingSpec{
+			Term: models.PricingTermSpot,
+		},
+	}
+	prices, _, err := p.priceNetworkExternalIP(ctx, spec)
+	if err != nil {
+		t.Fatalf("priceNetworkExternalIP (spot): %v", err)
+	}
+	if len(prices) != 1 {
+		t.Fatalf("expected exactly one price, got %d", len(prices))
+	}
+
+	if abs(prices[0].PricePerUnit-0.0025) > 1e-9 {
+		t.Errorf("spot external IP rate = %.6f, want 0.002500", prices[0].PricePerUnit)
+	}
+	if prices[0].Attributes["vm_type"] != "spot" {
+		t.Errorf("vm_type = %q, want %q", prices[0].Attributes["vm_type"], "spot")
+	}
+}
+
+// TestPriceNetworkExternalIP_SpotSingleTierDistinctRate proves the spot rate
+// is actually read from the single-tier live SKU and not merely coincident
+// with the hardcoded fallback constant ($0.0025). It uses a rate ($0.003)
+// that differs from the fallback so a regression to skuPaidPrice (which
+// returns 0 for a start=0-only tier, triggering the fallback path) would be
+// caught: this test would then observe 0.0025 instead of 0.003, and
+// breakdown["fallback"] would incorrectly be true.
+func TestPriceNetworkExternalIP_SpotSingleTierDistinctRate(t *testing.T) {
+	skus := []map[string]any{
+		makeExternalIPSKUSingleTier(externalIPSpotDescription, "0", 3_000_000), // $0.003
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(networkingSKUResponse(skus))
+	}))
+	defer ts.Close()
+
+	p := newNetworkingTestProvider(t, ts)
+	ctx := context.Background()
+
+	spec := &models.NetworkPricingSpec{
+		BasePricingSpec: models.BasePricingSpec{
+			Term: models.PricingTermSpot,
+		},
+	}
+	prices, breakdown, err := p.priceNetworkExternalIP(ctx, spec)
+	if err != nil {
+		t.Fatalf("priceNetworkExternalIP (spot distinct rate): %v", err)
+	}
+	if abs(prices[0].PricePerUnit-0.003) > 1e-9 {
+		t.Errorf("spot external IP rate = %.6f, want 0.003000 (should read the live single-tier SKU, not the fallback constant)", prices[0].PricePerUnit)
+	}
+	if fb, ok := breakdown["fallback"]; ok && fb == true {
+		t.Error("expected no fallback when the single-tier Spot SKU is present")
+	}
+}
+
+// TestPriceNetworkExternalIP_Fallback verifies that when no matching SKU is
+// found, priceNetworkExternalIP falls back to the hardcoded rates ($0.005/hr
+// standard, $0.0025/hr spot) and sets breakdown["fallback"]=true.
+func TestPriceNetworkExternalIP_Fallback(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(networkingSKUResponse(nil))
+	}))
+	defer ts.Close()
+
+	p := newNetworkingTestProvider(t, ts)
+	ctx := context.Background()
+
+	spec := &models.NetworkPricingSpec{}
+	prices, breakdown, err := p.priceNetworkExternalIP(ctx, spec)
+	if err != nil {
+		t.Fatalf("priceNetworkExternalIP (fallback): %v", err)
+	}
+
+	fb, ok := breakdown["fallback"]
+	if !ok || fb != true {
+		t.Errorf("expected fallback=true, got %v (ok=%v)", fb, ok)
+	}
+	if abs(prices[0].PricePerUnit-0.005) > 1e-9 {
+		t.Errorf("fallback standard rate = %.6f, want 0.005000", prices[0].PricePerUnit)
+	}
+}
+
+// TestPriceNetworkExternalIP_CostMath verifies:
+//
+//	term=on_demand, hours_per_month=730
+//	→ monthly_cost = $0.005 * 730 = $3.65
+func TestPriceNetworkExternalIP_CostMath(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(networkingSKUResponse(fakeExternalIPSKUs()))
+	}))
+	defer ts.Close()
+
+	p := newNetworkingTestProvider(t, ts)
+	ctx := context.Background()
+
+	spec := &models.NetworkPricingSpec{
+		HoursPerMonth: 730,
+	}
+	_, breakdown, err := p.priceNetworkExternalIP(ctx, spec)
+	if err != nil {
+		t.Fatalf("priceNetworkExternalIP: %v", err)
+	}
+
+	wantMonthly := 0.005 * 730.0
+	got := toFloat64(breakdown["monthly_cost"])
+	if abs(got-wantMonthly) > 1e-6 {
+		t.Errorf("monthly_cost = %.4f, want %.4f", got, wantMonthly)
+	}
+}
+
+// TestPriceNetwork_DispatchesExternalIP verifies that priceNetwork routes
+// service="external_ip" to priceNetworkExternalIP.
+func TestPriceNetwork_DispatchesExternalIP(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(networkingSKUResponse(fakeExternalIPSKUs()))
+	}))
+	defer ts.Close()
+
+	p := newNetworkingTestProvider(t, ts)
+	ctx := context.Background()
+
+	spec := &models.NetworkPricingSpec{
+		BasePricingSpec: models.BasePricingSpec{
+			Service: "external_ip",
+		},
+	}
+	prices, _, err := p.priceNetwork(ctx, spec)
+	if err != nil {
+		t.Fatalf("priceNetwork: %v", err)
+	}
+	if len(prices) != 1 || prices[0].Service != "external_ip" {
+		t.Fatalf("priceNetwork did not dispatch to external_ip: %+v", prices)
+	}
+}
+
+// --------------------------------------------------------------------------
 // Cloud Armor tests (Fix: fallback disclosure for missing policy/request rates)
 // --------------------------------------------------------------------------
 

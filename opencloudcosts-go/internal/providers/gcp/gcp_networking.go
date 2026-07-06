@@ -6,6 +6,7 @@
 //   - network/cloud_nat    : Cloud NAT (gateway hours + data processed)
 //   - network/cloud_armor  : Cloud Armor (policy fee + request evaluation)
 //   - network/egress       : Internet and inter-region egress with tiered rates
+//   - network/external_ip  : External IP Charge on standard/spot VMs (flat, global rate)
 //   - inter_region_egress  : Simple GetEgressPrice (base rate, no tiering)
 //
 // All methods are on *Provider defined in gcp.go (Part 1).
@@ -1006,6 +1007,139 @@ func (p *Provider) priceNetworkArmor(
 }
 
 // --------------------------------------------------------------------------
+// External IP (domain=network, service=external_ip)
+// --------------------------------------------------------------------------
+
+// externalIPStandardDescription and externalIPSpotDescription are the exact
+// Billing Catalog SKU descriptions for the two External IP Charge SKUs under
+// Compute Engine (skuId C054-7F72-A02E and 4AF8-7C1F-39C4 respectively). Both
+// are scoped serviceRegions=["global"] — the ephemeral/attached-to-a-running-VM
+// external IP charge is a flat, region-invariant rate, unlike the per-region
+// "Static Ip Charge" family (reserved-but-unattached IPs), which this function
+// does not price.
+const (
+	externalIPStandardDescription = "External IP Charge on a Standard VM"
+	externalIPSpotDescription     = "External IP Charge on a Spot Preemptible VM"
+)
+
+// externalIPFallbackRate holds the published flat rate per VM type, used when
+// the live SKU fetch fails or returns no match.
+var externalIPFallbackRate = map[string]float64{
+	"standard": 0.005,
+	"spot":     0.0025,
+}
+
+// skuLastNonZeroTierPrice returns the last tier with a non-zero unit price
+// from a SKU's pricingExpression. The two External IP Charge SKUs use
+// different tier shapes in the live catalog: the Standard VM SKU has a $0
+// free-quota tier at startUsageAmount=0 followed by the paid rate at
+// startUsageAmount=744, while the Spot Preemptible VM SKU has no free tier at
+// all — a single tier at startUsageAmount=0 carrying the paid rate directly.
+// Neither skuPrice (first tier only) nor skuPaidPrice (first tier with
+// start>0 only) handles both shapes; this does.
+func skuLastNonZeroTierPrice(sku map[string]any) float64 {
+	pi, _ := sku["pricingInfo"].([]any)
+	if len(pi) == 0 {
+		return 0
+	}
+	pe, _ := pi[0].(map[string]any)
+	if pe == nil {
+		return 0
+	}
+	expr, _ := pe["pricingExpression"].(map[string]any)
+	if expr == nil {
+		return 0
+	}
+	tiers, _ := expr["tieredRates"].([]any)
+	var last float64
+	for _, t := range tiers {
+		tier, _ := t.(map[string]any)
+		if tier == nil {
+			continue
+		}
+		up, _ := tier["unitPrice"].(map[string]any)
+		if up == nil {
+			continue
+		}
+		units, _ := up["units"].(string)
+		nanos, _ := up["nanos"].(float64)
+		if price := gcpMoney(units, int(nanos)); price > 0 {
+			last = price
+		}
+	}
+	return last
+}
+
+// priceNetworkExternalIP prices the External IP Charge for a standard or
+// spot/preemptible VM.
+func (p *Provider) priceNetworkExternalIP(
+	ctx context.Context,
+	spec *models.NetworkPricingSpec,
+) ([]models.NormalizedPrice, map[string]any, error) {
+	vmType := "standard"
+	wantDesc := externalIPStandardDescription
+	term := models.PricingTermOnDemand
+	if spec.Term == models.PricingTermSpot {
+		vmType = "spot"
+		wantDesc = externalIPSpotDescription
+		term = models.PricingTermSpot
+	}
+
+	var rate float64
+	fallback := false
+	skus, err := p.fetchSKUs(ctx, computeServiceID)
+	if err != nil {
+		slog.Warn("gcp external_ip: fetch SKUs failed", "err", err)
+		fallback = true
+	} else {
+		for _, sku := range skus {
+			desc, _ := sku["description"].(string)
+			if desc != wantDesc {
+				continue
+			}
+			rate = skuLastNonZeroTierPrice(sku)
+			break
+		}
+	}
+
+	fallback = fallback || rate == 0
+	if rate == 0 {
+		rate = externalIPFallbackRate[vmType]
+	}
+
+	price := models.NormalizedPrice{
+		Provider:      models.CloudProviderGCP,
+		Service:       "external_ip",
+		SKUID:         fmt.Sprintf("gcp:external_ip:%s", vmType),
+		ProductFamily: "External IP Address",
+		Description:   wantDesc,
+		Region:        "global",
+		PricingTerm:   term,
+		PricePerUnit:  rate,
+		Unit:          models.PriceUnitPerHour,
+		Currency:      "USD",
+		Attributes: map[string]string{
+			"vm_type": vmType,
+			"scope":   "global",
+		},
+	}
+
+	hoursPerMonth := spec.HoursPerMonth
+	if hoursPerMonth <= 0 {
+		hoursPerMonth = 730
+	}
+	breakdown := map[string]any{
+		"vm_type":      vmType,
+		"monthly_cost": breakdownMoney(rate*hoursPerMonth, "/mo"),
+	}
+	if fallback {
+		breakdown["fallback"] = true
+		breakdown["fallback_note"] = "Using hardcoded fallback rate ($0.005/hr standard, $0.0025/hr spot); live SKU catalog unavailable or returned no match. Verify current rates at https://cloud.google.com/vpc/network-pricing."
+	}
+	return annotateFreshWithURL([]models.NormalizedPrice{price}, egressSourceURL), breakdown, nil
+}
+
+// --------------------------------------------------------------------------
 // priceNetwork — dispatcher for domain=network
 // --------------------------------------------------------------------------
 
@@ -1024,6 +1158,8 @@ func (p *Provider) priceNetwork(
 		return p.priceNetworkNAT(ctx, spec)
 	case "cloud_armor":
 		return p.priceNetworkArmor(ctx, spec)
+	case "external_ip":
+		return p.priceNetworkExternalIP(ctx, spec)
 	default:
 		// Default to Cloud LB
 		return p.priceNetworkLB(ctx, spec)
