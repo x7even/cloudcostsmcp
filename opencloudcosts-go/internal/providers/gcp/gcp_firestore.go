@@ -146,7 +146,7 @@ type firestoreRates struct {
 // map (see file header's FALLBACK STRATEGY section).
 var firestoreFallbackRates = firestoreRates{
 	StorageRate:        0.15,
-	StorageFreeGBMonth: 0.032258, // ~= 1 GiB / 31 days, expressed as a GiB-month fraction
+	StorageFreeGBMonth: 1.0, // flat 1 GiB-month static allowance (verified: cloud.google.com/firestore/docs/quotas lists "Stored data: 1 GiB" with no "/day" qualifier, unlike the ops quotas below)
 	ReadRate:           0.03 / 100000,
 	ReadFreeOpsMonth:   1500000, // ~= 50,000 reads/day * 30 days, approximate monthly-equivalent
 	WriteRate:          0.09 / 100000,
@@ -161,10 +161,11 @@ var firestoreFallbackRates = firestoreRates{
 	SmallOpsRate:       0,
 }
 
-// firestoreValidQuantityFields lists every FirestorePricingSpec quantity
-// field name, used only by tests to keep the fillDomain collision audit
+// FirestoreValidQuantityFields lists every FirestorePricingSpec quantity
+// field name (as it appears in the JSON request), used only by tests (in
+// this package and in internal/tools) to keep the fillDomain collision audit
 // honest as fields are added.
-var firestoreValidQuantityFields = []string{
+var FirestoreValidQuantityFields = []string{
 	"storage_gb", "reads_per_month", "writes_per_month", "deletes_per_month",
 	"ttl_deletes_per_month", "pitr_storage_gb", "zonal_backup_storage_gb",
 	"restore_gb", "clone_gb",
@@ -267,11 +268,30 @@ func firestoreBucketRate(sku map[string]any) (rate float64, freeThreshold float6
 	if len(tiers) == 0 {
 		return 0, 0
 	}
+	if len(tiers) > 2 {
+		// Today's catalog is verified 2-tier-max for every in-scope Firestore
+		// bucket. A 3rd+ tier would mean a graduated-rate structure this
+		// function doesn't model (it always takes the LAST tier's price as
+		// the flat paid rate and the 2nd tier's start as the free
+		// threshold), which would silently mis-price. Warn rather than
+		// implementing full graduated-tier support for a case that has never
+		// been observed live.
+		desc, _ := sku["description"].(string)
+		slog.Warn("gcp firestore: SKU has more than 2 tiers; firestoreBucketRate assumes at most 2 and may mis-price", "description", desc, "tier_count", len(tiers))
+	}
 	rate = tiers[len(tiers)-1].price
 	if len(tiers) >= 2 && tiers[0].start == 0 && tiers[0].price == 0 {
 		freeThreshold = tiers[1].start
 	}
 	return rate, freeThreshold
+}
+
+// firestoreRegionKey lowercases a region string for use as a rates-map key,
+// so lookups are case-insensitive regardless of how the caller (or a SKU's
+// geoTaxonomy.regions entry) capitalizes the region — see
+// gcp_networking.go's strings.ToLower(region) for the precedent.
+func firestoreRegionKey(region string) string {
+	return strings.ToLower(region)
 }
 
 // fetchFirestoreRates returns the live, derived per-region Cloud Firestore
@@ -333,13 +353,14 @@ func (p *Provider) fetchFirestoreRates(ctx context.Context) map[string]firestore
 				slog.Warn("gcp firestore: REGIONAL SKU without exactly one geoTaxonomy region; skipping", "description", desc, "regions", geoRegions)
 				continue
 			}
-			key = geoRegions[0]
+			key = firestoreRegionKey(geoRegions[0])
 		case "MULTI_REGIONAL":
 			key = skuFirestoreMultiRegion(descLower)
 			if key == "" {
 				slog.Warn("gcp firestore: MULTI_REGIONAL SKU with no recognized multi-region name in description; skipping", "description", desc)
 				continue
 			}
+			key = firestoreRegionKey(key)
 		default:
 			// GLOBAL (the 4 CUD metadata SKUs under FirestoreReadOps) or
 			// unrecognized/absent geoTaxonomy — not a genuine per-region
@@ -349,7 +370,14 @@ func (p *Provider) fetchFirestoreRates(ctx context.Context) map[string]firestore
 
 		hasFreeTierDesc := strings.Contains(descLower, "free tier")
 		rate, freeThreshold := firestoreBucketRate(sku)
-		if rate == 0 && freeThreshold == 0 {
+		// small_ops is verified always $0 with no free-tier tiering, so its
+		// (rate, freeThreshold) is legitimately (0, 0) — the same zero pair
+		// this guard otherwise treats as "no match found". Skipping the
+		// guard for small_ops is what lets a matched small_ops SKU actually
+		// reach the switch below and set r.SmallOpsRate; without this
+		// exception every small_ops SKU is silently discarded here before
+		// ever being applied.
+		if bucket != "small_ops" && rate == 0 && freeThreshold == 0 {
 			continue
 		}
 
@@ -361,6 +389,20 @@ func (p *Provider) fetchFirestoreRates(ctx context.Context) map[string]firestore
 			// Either a free-tier-variant match already won this bucket
 			// (kept), or both this and the existing match are plain
 			// variants (first match wins) — either way, do not overwrite.
+			//
+			// A free variant beating a later plain variant for the same
+			// bucket (already=true, hasFreeTierDesc=false) is the normal,
+			// expected shape of the real catalog — every bucket ships both
+			// a plain and a "(with free tier)" SKU — so warning here would
+			// just be routine log spam on well-formed data, which is the
+			// opposite of what gcp_pubsub.go/gcp_dns.go's convention
+			// intends (warn only when something is unexpected). Only warn
+			// when two SKUs of the *same* kind (both free-tier variants, or
+			// both plain) matched the same bucket, since that is the
+			// genuinely surprising case this guard exists to catch.
+			if already == hasFreeTierDesc {
+				slog.Warn("gcp firestore: multiple SKUs matched bucket; keeping first match", "region", key, "bucket", bucket, "description", desc)
+			}
 			continue
 		}
 		isFreeVariant[key][bucket] = hasFreeTierDesc
@@ -397,6 +439,26 @@ func (p *Provider) fetchFirestoreRates(ctx context.Context) map[string]firestore
 	return rates
 }
 
+// pickRateFreeThreshold resolves a (Rate, FreeThreshold) field pair —
+// storage, read, write, and delete each have one. pickRate's "live==0 means
+// missing" heuristic is safe applied to Rate (every in-scope Firestore rate
+// is genuinely non-zero, except SmallOpsRate, handled separately in
+// resolveFirestoreRates) but is NOT safe applied directly to FreeThreshold:
+// a bucket can be live-matched (Rate present) with a genuine free threshold
+// of zero, and pickRate would incorrectly discard that genuine zero and
+// substitute the fallback threshold instead. So FreeThreshold's fallback
+// substitution is gated on Rate's own fallback decision, not on
+// FreeThreshold's value: only when the bucket is entirely unmatched live
+// (Rate fell back) does FreeThreshold also fall back; otherwise the live
+// FreeThreshold is trusted verbatim, including when it is zero.
+func pickRateFreeThreshold(liveRate, fallbackRate, liveFree, fallbackFree float64) (rate, free float64, usedFallback bool) {
+	rate, usedFallback = pickRate(liveRate, fallbackRate)
+	if usedFallback {
+		return rate, fallbackFree, true
+	}
+	return rate, liveFree, false
+}
+
 // resolveFirestoreRates picks the rates bucket to use for region: the live
 // bucket if present and non-empty, otherwise firestoreFallbackRates — see
 // file header's FALLBACK STRATEGY section for why a single representative
@@ -407,38 +469,46 @@ func (p *Provider) fetchFirestoreRates(ctx context.Context) map[string]firestore
 func resolveFirestoreRates(live map[string]firestoreRates, region string) (rates firestoreRates, usedFallback bool) {
 	l, ok := live[region]
 	fb := firestoreFallbackRates
+	if !ok {
+		usedFallback = true
+	}
 
-	rates.StorageRate, usedFallback = pickRate(l.StorageRate, fb.StorageRate)
-	var fb2 bool
-	rates.StorageFreeGBMonth, fb2 = pickRate(l.StorageFreeGBMonth, fb.StorageFreeGBMonth)
-	usedFallback = usedFallback || fb2 || !ok
+	// Plain rate fields: a single live value, no paired free-threshold.
+	simplePairs := []struct {
+		live *float64
+		fb   float64
+		out  *float64
+	}{
+		{&l.TTLDeleteRate, fb.TTLDeleteRate, &rates.TTLDeleteRate},
+		{&l.PITRStorageRate, fb.PITRStorageRate, &rates.PITRStorageRate},
+		{&l.ZonalBackupRate, fb.ZonalBackupRate, &rates.ZonalBackupRate},
+		{&l.RestoreRate, fb.RestoreRate, &rates.RestoreRate},
+		{&l.CloneRate, fb.CloneRate, &rates.CloneRate},
+	}
+	for _, p := range simplePairs {
+		var f bool
+		*p.out, f = pickRate(*p.live, p.fb)
+		usedFallback = usedFallback || f
+	}
 
-	var f bool
-	rates.ReadRate, f = pickRate(l.ReadRate, fb.ReadRate)
-	usedFallback = usedFallback || f
-	rates.ReadFreeOpsMonth, f = pickRate(l.ReadFreeOpsMonth, fb.ReadFreeOpsMonth)
-	usedFallback = usedFallback || f
+	// Rate + FreeThreshold pairs: see pickRateFreeThreshold's doc for why
+	// these can't use the same plain pickRate loop above.
+	freeTieredPairs := []struct {
+		liveRate, fbRate float64
+		liveFree, fbFree float64
+		outRate, outFree *float64
+	}{
+		{l.StorageRate, fb.StorageRate, l.StorageFreeGBMonth, fb.StorageFreeGBMonth, &rates.StorageRate, &rates.StorageFreeGBMonth},
+		{l.ReadRate, fb.ReadRate, l.ReadFreeOpsMonth, fb.ReadFreeOpsMonth, &rates.ReadRate, &rates.ReadFreeOpsMonth},
+		{l.WriteRate, fb.WriteRate, l.WriteFreeOpsMonth, fb.WriteFreeOpsMonth, &rates.WriteRate, &rates.WriteFreeOpsMonth},
+		{l.DeleteRate, fb.DeleteRate, l.DeleteFreeOpsMonth, fb.DeleteFreeOpsMonth, &rates.DeleteRate, &rates.DeleteFreeOpsMonth},
+	}
+	for _, p := range freeTieredPairs {
+		var f bool
+		*p.outRate, *p.outFree, f = pickRateFreeThreshold(p.liveRate, p.fbRate, p.liveFree, p.fbFree)
+		usedFallback = usedFallback || f
+	}
 
-	rates.WriteRate, f = pickRate(l.WriteRate, fb.WriteRate)
-	usedFallback = usedFallback || f
-	rates.WriteFreeOpsMonth, f = pickRate(l.WriteFreeOpsMonth, fb.WriteFreeOpsMonth)
-	usedFallback = usedFallback || f
-
-	rates.DeleteRate, f = pickRate(l.DeleteRate, fb.DeleteRate)
-	usedFallback = usedFallback || f
-	rates.DeleteFreeOpsMonth, f = pickRate(l.DeleteFreeOpsMonth, fb.DeleteFreeOpsMonth)
-	usedFallback = usedFallback || f
-
-	rates.TTLDeleteRate, f = pickRate(l.TTLDeleteRate, fb.TTLDeleteRate)
-	usedFallback = usedFallback || f
-	rates.PITRStorageRate, f = pickRate(l.PITRStorageRate, fb.PITRStorageRate)
-	usedFallback = usedFallback || f
-	rates.ZonalBackupRate, f = pickRate(l.ZonalBackupRate, fb.ZonalBackupRate)
-	usedFallback = usedFallback || f
-	rates.RestoreRate, f = pickRate(l.RestoreRate, fb.RestoreRate)
-	usedFallback = usedFallback || f
-	rates.CloneRate, f = pickRate(l.CloneRate, fb.CloneRate)
-	usedFallback = usedFallback || f
 	// SmallOpsRate is always $0 (verified live) — pickRate would treat a
 	// genuine live $0 as "missing" and substitute the (also $0) fallback,
 	// which is harmless here but is not the reason usedFallback is computed
@@ -477,17 +547,35 @@ func newFirestorePrice(region, skuID, description string, pricePerUnit float64, 
 // restore, clone, small ops), always returned together — mirroring the
 // multi-line-item shape used by Cloud DNS (zone+query) and Cloud Pub/Sub
 // (throughput+storage).
+//
+// The 9 "dimension" strings stamped below via attrs(...) are independently
+// re-enumerated in internal/tools/lookup.go's normalizedPriceSummary
+// (the `case firestoreSpec != nil:` switch on Attributes["dimension"]),
+// which maps each one to its FirestorePricingSpec quantity field. This is
+// the same duplication tension already accepted for Cloud Pub/Sub's
+// destination handling (see pubsubDestinations' doc comment) and is left
+// unconsolidated here for the same reason: lookup.go is a provider-agnostic
+// dispatch layer, and threading a shared dimension-name table across the
+// gcp/tools package boundary purely to save re-typing 9 string literals was
+// judged not worth the added indirection for a fixed, rarely-changing list.
 func (p *Provider) priceFirestore(
 	ctx context.Context,
 	spec *models.FirestorePricingSpec,
 ) ([]models.NormalizedPrice, map[string]any, error) {
-	region := spec.Region
+	region := firestoreRegionKey(spec.Region)
 	if region == "" {
-		region = firestoreDefaultRegion
+		region = firestoreRegionKey(p.DefaultRegion())
 	}
 
 	live := p.fetchFirestoreRates(ctx)
-	_, regionRecognized := live[region]
+	_, regionFound := live[region]
+	// A region is only "unrecognized" when the live fetch itself succeeded
+	// (len(live) > 0) but this specific region key is absent from it. If the
+	// fetch failed entirely (empty catalog, network error, etc. — see
+	// fetchFirestoreRates), EVERY region is absent from an empty map, and
+	// that is a fetch failure, not a signal that this particular region is
+	// unrecognized by GCP.
+	regionUnrecognized := len(live) > 0 && !regionFound
 	rates, usedFallback := resolveFirestoreRates(live, region)
 
 	// attrs stamps a "dimension" attribute distinguishing each line item —
@@ -499,7 +587,7 @@ func (p *Provider) priceFirestore(
 	// (internal/tools/lookup.go). Each call returns a fresh map so no two
 	// NormalizedPrices share a mutable Attributes reference.
 	attrs := func(dimension string) map[string]string {
-		return map[string]string{"region_priced": "true", "dimension": dimension}
+		return map[string]string{"dimension": dimension}
 	}
 
 	prices := []models.NormalizedPrice{
@@ -553,7 +641,7 @@ func (p *Provider) priceFirestore(
 		"small_ops_rate":            breakdownMoney(rates.SmallOpsRate, "/operation"),
 		"no_free_tier_note":         "ttl_delete, pitr_storage, zonal_backup, restore, and clone have NO genuine free tier despite GCP publishing a '(with free tier)' SKU description variant for each — verified live that both description variants carry byte-identical tiered rates.",
 	}
-	if !regionRecognized {
+	if regionUnrecognized {
 		breakdown["region_unrecognized"] = true
 		breakdown["region_unrecognized_note"] = fmt.Sprintf(
 			"region %q was not found in the live Cloud Firestore SKU catalog; substituted %s rates as an approximation. Verify actual rates for this region at %s — Firestore rates vary significantly by region and are NOT well-approximated by any single other region.",

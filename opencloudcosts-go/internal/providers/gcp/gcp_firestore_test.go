@@ -121,7 +121,7 @@ func firestoreSKUResponse(skus []map[string]any) []byte {
 
 // fakeFirestoreSKUsForRegion returns one fake SKU per rate bucket for a
 // single REGIONAL Firestore region, at the live-verified us-central1 rates
-// (issue #80): storage $0.15/GiB-mo (free 0.032258 GiBy.mo), reads
+// (issue #80): storage $0.15/GiB-mo (free 1.0 GiBy.mo), reads
 // $0.03/100K (free 1.5M/mo), writes $0.09/100K (free 600K/mo), deletes
 // $0.01/100K (free 600K/mo), small ops always $0, TTL deletes $0.01/100K (NO
 // genuine free tier), PITR storage $0.15/GiB-mo (NO genuine free tier), zonal
@@ -133,7 +133,7 @@ func fakeFirestoreSKUsForRegion(region string) []map[string]any {
 	regions := []string{region}
 	return []map[string]any{
 		// Real catalog SKU ID: 140B-ADDF-6A12 (plain) / F845-5E55-0738 (free-tier variant, used here).
-		firestoreSKUFreeTier("Cloud Firestore Storage (with free tier)", "FirestoreStorage", "REGIONAL", regions, 0.032258, "0", 150000000),
+		firestoreSKUFreeTier("Cloud Firestore Storage (with free tier)", "FirestoreStorage", "REGIONAL", regions, 1.0, "0", 150000000),
 		// Real catalog SKU ID: 6A94-8525-876F (plain) / F251-5791-CE45 (free-tier variant, used here).
 		firestoreSKUFreeTier("Cloud Firestore Entity Read Operations (with free tier)", "FirestoreReadOps", "REGIONAL", regions, 1500000, "0", 300),
 		// Real catalog SKU ID: BFCC-1D11-14E1 (plain) / 63B3-E146-F0E9 (free-tier variant, used here).
@@ -271,13 +271,13 @@ func TestFirestoreBucketRate_FlatSingleTier(t *testing.T) {
 }
 
 func TestFirestoreBucketRate_GenuineFreeTier(t *testing.T) {
-	sku := firestoreSKUFreeTier("Storage (with free tier)", "FirestoreStorage", "REGIONAL", []string{"us-central1"}, 0.032258, "0", 150000000)
+	sku := firestoreSKUFreeTier("Storage (with free tier)", "FirestoreStorage", "REGIONAL", []string{"us-central1"}, 1.0, "0", 150000000)
 	rate, free := firestoreBucketRate(sku)
 	if abs(rate-0.15) > 1e-9 {
 		t.Errorf("rate = %.6f, want 0.150000", rate)
 	}
-	if abs(free-0.032258) > 1e-9 {
-		t.Errorf("freeThreshold = %.6f, want 0.032258 (genuine free tier)", free)
+	if abs(free-1.0) > 1e-9 {
+		t.Errorf("freeThreshold = %.6f, want 1.0 (genuine free tier)", free)
 	}
 }
 
@@ -323,7 +323,7 @@ func TestFetchFirestoreRates_ParsesAllBucketsForOneRegion(t *testing.T) {
 		want float64
 	}{
 		{"StorageRate", r.StorageRate, 0.15},
-		{"StorageFreeGBMonth", r.StorageFreeGBMonth, 0.032258},
+		{"StorageFreeGBMonth", r.StorageFreeGBMonth, 1.0},
 		{"ReadRate", r.ReadRate, 0.03 / 100000},
 		{"ReadFreeOpsMonth", r.ReadFreeOpsMonth, 1500000},
 		{"WriteRate", r.WriteRate, 0.09 / 100000},
@@ -494,8 +494,8 @@ func TestFetchFirestoreRates_Cached(t *testing.T) {
 func TestFetchFirestoreRates_FreeVariantAlwaysWinsRegardlessOfOrder(t *testing.T) {
 	t.Run("plain_then_free", func(t *testing.T) {
 		skus := []map[string]any{
-			firestoreSKUFlat("Cloud Firestore Storage", "FirestoreStorage", "REGIONAL", []string{"us-central1"}, "0", 990000000),                                // plain, wrong rate
-			firestoreSKUFreeTier("Cloud Firestore Storage (with free tier)", "FirestoreStorage", "REGIONAL", []string{"us-central1"}, 0.032258, "0", 150000000), // free variant, correct rate
+			firestoreSKUFlat("Cloud Firestore Storage", "FirestoreStorage", "REGIONAL", []string{"us-central1"}, "0", 990000000),                           // plain, wrong rate
+			firestoreSKUFreeTier("Cloud Firestore Storage (with free tier)", "FirestoreStorage", "REGIONAL", []string{"us-central1"}, 1.0, "0", 150000000), // free variant, correct rate
 		}
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -510,8 +510,8 @@ func TestFetchFirestoreRates_FreeVariantAlwaysWinsRegardlessOfOrder(t *testing.T
 	})
 	t.Run("free_then_plain", func(t *testing.T) {
 		skus := []map[string]any{
-			firestoreSKUFreeTier("Cloud Firestore Storage (with free tier)", "FirestoreStorage", "REGIONAL", []string{"us-central1"}, 0.032258, "0", 150000000), // free variant, correct rate
-			firestoreSKUFlat("Cloud Firestore Storage", "FirestoreStorage", "REGIONAL", []string{"us-central1"}, "0", 990000000),                                // plain, wrong rate, scanned second
+			firestoreSKUFreeTier("Cloud Firestore Storage (with free tier)", "FirestoreStorage", "REGIONAL", []string{"us-central1"}, 1.0, "0", 150000000), // free variant, correct rate
+			firestoreSKUFlat("Cloud Firestore Storage", "FirestoreStorage", "REGIONAL", []string{"us-central1"}, "0", 990000000),                           // plain, wrong rate, scanned second
 		}
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -526,13 +526,43 @@ func TestFetchFirestoreRates_FreeVariantAlwaysWinsRegardlessOfOrder(t *testing.T
 	})
 }
 
+// TestFetchFirestoreRates_SmallOpsReachesSwitchViaParsing proves a matched
+// small_ops SKU actually reaches the switch in fetchFirestoreRates and sets
+// r.SmallOpsRate from parsing — not merely by zero-value coincidence. Real
+// Cloud Firestore small_ops SKUs are always $0 (verified live), which makes
+// "parsed but zero" and "never reached the switch, so left at the region
+// entry's zero-value default" indistinguishable by value alone. This fixture
+// deliberately uses an atypical nonzero rate (real Firestore never does
+// this) so a nonzero SmallOpsRate can ONLY come from the parsing path
+// actually running, not from the zero-value default — guarding against the
+// dead-code bug where the early `rate == 0 && freeThreshold == 0` guard fired
+// for small_ops before the switch could set r.SmallOpsRate (issue #80).
+func TestFetchFirestoreRates_SmallOpsReachesSwitchViaParsing(t *testing.T) {
+	sku := firestoreSKUFlat("Cloud Firestore Small Operations", "FirestoreSmallOps", "REGIONAL", []string{"us-central1"}, "0", 123)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(firestoreSKUResponse([]map[string]any{sku}))
+	}))
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	rates := p.fetchFirestoreRates(context.Background())
+	r, ok := rates["us-central1"]
+	if !ok {
+		t.Fatal("expected us-central1 key in fetched rates; a matched small_ops SKU must create the region entry")
+	}
+	if abs(r.SmallOpsRate-0.000000123) > 1e-12 {
+		t.Errorf("SmallOpsRate = %.9f, want 0.000000123 (parsed from the live SKU, not left at the zero-value default)", r.SmallOpsRate)
+	}
+}
+
 // --------------------------------------------------------------------------
 // resolveFirestoreRates
 // --------------------------------------------------------------------------
 
 func TestResolveFirestoreRates_LiveRegionPresent(t *testing.T) {
 	live := map[string]firestoreRates{
-		"us-east4": {StorageRate: 0.099, StorageFreeGBMonth: 0.032258, ReadRate: 0.03 / 100000, ReadFreeOpsMonth: 1500000,
+		"us-east4": {StorageRate: 0.099, StorageFreeGBMonth: 1.0, ReadRate: 0.03 / 100000, ReadFreeOpsMonth: 1500000,
 			WriteRate: 0.09 / 100000, WriteFreeOpsMonth: 600000, DeleteRate: 0.01 / 100000, DeleteFreeOpsMonth: 600000,
 			TTLDeleteRate: 0.01 / 100000, PITRStorageRate: 0.099, ZonalBackupRate: 0.0198, RestoreRate: 0.20, CloneRate: 0.20},
 	}
@@ -563,7 +593,7 @@ func TestResolveFirestoreRates_SmallOpsExcludedFromFallbackFlag(t *testing.T) {
 	// genuinely always 0 live) must not, by itself, trip usedFallback.
 	live := map[string]firestoreRates{
 		"us-central1": {
-			StorageRate: 0.15, StorageFreeGBMonth: 0.032258,
+			StorageRate: 0.15, StorageFreeGBMonth: 1.0,
 			ReadRate: 0.03 / 100000, ReadFreeOpsMonth: 1500000,
 			WriteRate: 0.09 / 100000, WriteFreeOpsMonth: 600000,
 			DeleteRate: 0.01 / 100000, DeleteFreeOpsMonth: 600000,
@@ -574,6 +604,44 @@ func TestResolveFirestoreRates_SmallOpsExcludedFromFallbackFlag(t *testing.T) {
 	_, usedFallback := resolveFirestoreRates(live, "us-central1")
 	if usedFallback {
 		t.Error("usedFallback = true, want false (SmallOpsRate==0 is genuinely live, not missing)")
+	}
+}
+
+// TestResolveFirestoreRates_GenuineZeroFreeThresholdNotOverwritten proves the
+// pickRateFreeThreshold carve-out: a bucket that IS matched live (nonzero
+// Rate) but happens to have a genuine zero free threshold must keep that
+// zero, not have it silently replaced by the fallback's nonzero free
+// threshold. Before this fix, pickRate's "0 means missing" heuristic applied
+// directly to *FreeGBMonth/*FreeOpsMonth fields would incorrectly treat this
+// genuine zero as "missing" and substitute the fallback value instead — and
+// would also incorrectly flag usedFallback for a fully-live-matched bucket.
+func TestResolveFirestoreRates_GenuineZeroFreeThresholdNotOverwritten(t *testing.T) {
+	// Every field present and non-zero EXCEPT ReadFreeOpsMonth (deliberately
+	// 0, modeling "read bucket matched live but its free-tier SKU wasn't
+	// found") and SmallOpsRate (genuinely always 0 live) — neither should,
+	// by itself, trip usedFallback.
+	live := map[string]firestoreRates{
+		"us-central1": {
+			StorageRate: 0.15, StorageFreeGBMonth: 1.0,
+			// Read bucket matched live (nonzero ReadRate) but its free-tier
+			// SKU wasn't found/matched, so ReadFreeOpsMonth is genuinely 0 —
+			// distinct from "read bucket unmatched entirely" (ReadRate == 0).
+			ReadRate: 0.03 / 100000, ReadFreeOpsMonth: 0,
+			WriteRate: 0.09 / 100000, WriteFreeOpsMonth: 600000,
+			DeleteRate: 0.01 / 100000, DeleteFreeOpsMonth: 600000,
+			TTLDeleteRate: 0.01 / 100000, PITRStorageRate: 0.15, ZonalBackupRate: 0.03,
+			RestoreRate: 0.20, CloneRate: 0.20, SmallOpsRate: 0,
+		},
+	}
+	rates, usedFallback := resolveFirestoreRates(live, "us-central1")
+	if usedFallback {
+		t.Error("usedFallback = true, want false (ReadRate present live; ReadFreeOpsMonth==0 is genuine, not missing)")
+	}
+	if rates.ReadFreeOpsMonth != 0 {
+		t.Errorf("ReadFreeOpsMonth = %v, want 0 (genuine live zero must not be replaced by the fallback's %v)", rates.ReadFreeOpsMonth, firestoreFallbackRates.ReadFreeOpsMonth)
+	}
+	if abs(rates.ReadRate-0.03/100000) > 1e-12 {
+		t.Errorf("ReadRate = %v, want %v (live value)", rates.ReadRate, 0.03/100000)
 	}
 }
 
@@ -657,7 +725,7 @@ func TestPriceFirestore_RegionsHaveDistinctRates(t *testing.T) {
 			geo, _ := sku["geoTaxonomy"].(map[string]any)
 			regions, _ := geo["regions"].([]any)
 			if len(regions) == 1 && regions[0] == "us-east4" {
-				skus[i] = firestoreSKUFreeTier("Cloud Firestore Storage (with free tier)", "FirestoreStorage", "REGIONAL", []string{"us-east4"}, 0.032258, "0", 99000000)
+				skus[i] = firestoreSKUFreeTier("Cloud Firestore Storage (with free tier)", "FirestoreStorage", "REGIONAL", []string{"us-east4"}, 1.0, "0", 99000000)
 			}
 		}
 	}
@@ -771,6 +839,40 @@ func TestPriceFirestore_UnrecognizedRegionFallsBackAndFlags(t *testing.T) {
 	}
 }
 
+// TestPriceFirestore_RegionMatchIsCaseInsensitive verifies a differently
+// cased region string ("US-CENTRAL1") still matches the live "us-central1"
+// entry — proving region keys are normalized before both storing into and
+// looking up from the live rates map (issue #80: previously an exact-case
+// comparison meant any non-lowercase caller input would silently mismatch
+// and fall back, even for a genuinely live-covered region).
+func TestPriceFirestore_RegionMatchIsCaseInsensitive(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(firestoreSKUResponse(fakeFirestoreSKUsForRegion("us-central1")))
+	}))
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	ctx := context.Background()
+
+	spec := &models.FirestorePricingSpec{BasePricingSpec: models.BasePricingSpec{Region: "US-CENTRAL1"}}
+	prices, breakdown, err := p.priceFirestore(ctx, spec)
+	if err != nil {
+		t.Fatalf("priceFirestore: %v", err)
+	}
+	if v, ok := breakdown["region_unrecognized"]; ok {
+		t.Errorf("breakdown[region_unrecognized] = %v, want absent (differently-cased region must still match live us-central1)", v)
+	}
+	if v, ok := breakdown["fallback"]; ok && v == true {
+		t.Errorf("breakdown[fallback] = %v, want absent/false (region should resolve from live data, not fallback)", v)
+	}
+	for _, pr := range prices {
+		if pr.Attributes["dimension"] == "storage" && abs(pr.PricePerUnit-0.15) > 1e-9 {
+			t.Errorf("storage rate = %.6f, want live 0.150000 (not fallback)", pr.PricePerUnit)
+		}
+	}
+}
+
 // --------------------------------------------------------------------------
 // priceFirestore — free-tier vs no-free-tier cost math
 // --------------------------------------------------------------------------
@@ -785,7 +887,7 @@ func TestPriceFirestore_StorageCostMath_BelowFreeTier(t *testing.T) {
 	p := newTestProvider(t, ts)
 	ctx := context.Background()
 
-	qty := 0.01 // well within the 0.032258 GiBy.mo free allowance
+	qty := 0.01 // well within the 1.0 GiBy.mo free allowance
 	spec := &models.FirestorePricingSpec{StorageGB: &qty}
 	_, breakdown, err := p.priceFirestore(ctx, spec)
 	if err != nil {
@@ -807,7 +909,7 @@ func TestPriceFirestore_StorageCostMath_CrossesFreeTier(t *testing.T) {
 	p := newTestProvider(t, ts)
 	ctx := context.Background()
 
-	qty := 10.032258 // 0.032258 free + 10 paid GiB-months
+	qty := 11.0 // 1.0 free + 10 paid GiB-months
 	spec := &models.FirestorePricingSpec{StorageGB: &qty}
 	_, breakdown, err := p.priceFirestore(ctx, spec)
 	if err != nil {
@@ -953,7 +1055,7 @@ func TestPriceFirestore_MonthlyCostSumsAllDimensions(t *testing.T) {
 	p := newTestProvider(t, ts)
 	ctx := context.Background()
 
-	storageQty := 10.032258
+	storageQty := 11.0
 	restoreQty := 5.0
 	spec := &models.FirestorePricingSpec{StorageGB: &storageQty, RestoreGB: &restoreQty}
 	_, breakdown, err := p.priceFirestore(ctx, spec)
@@ -1011,6 +1113,13 @@ func TestPriceFirestore_FullFallback(t *testing.T) {
 	fb, ok := breakdown["fallback"]
 	if !ok || fb != true {
 		t.Errorf("expected fallback=true, got %v (ok=%v)", fb, ok)
+	}
+	// region_unrecognized must NOT be set here: the live catalog fetch
+	// returned zero SKUs for EVERY region (a fetch failure), not just
+	// "us-central1" specifically — the two failure modes must stay
+	// distinguishable (see priceFirestore's regionUnrecognized comment).
+	if v, ok := breakdown["region_unrecognized"]; ok {
+		t.Errorf("breakdown[region_unrecognized] = %v, want absent (live fetch failed entirely for ALL regions, not just this one)", v)
 	}
 	for _, pr := range prices {
 		if pr.Attributes["dimension"] == "storage" && abs(pr.PricePerUnit-firestoreFallbackRates.StorageRate) > 1e-9 {

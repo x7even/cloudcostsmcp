@@ -1330,6 +1330,26 @@ func TestFillDomain_ServiceInference_Datastore(t *testing.T) {
 	}
 }
 
+// TestGCPProvider_SupportsDatastoreAlias exercises the REAL gcp.Provider's
+// Supports() (not mockProvider, which unconditionally returns true for every
+// service) to prove "datastore" actually clears the Part-3 dispatch gate in
+// gcp_compute.go — the same gate that TestFillDomain_ServiceInference_Datastore
+// above cannot exercise, since it only proves lookup.go's service→domain
+// inference map, not the provider-side Supports() check that the real
+// request pipeline (get_price/bom/compare_bom) additionally enforces.
+func TestGCPProvider_SupportsDatastoreAlias(t *testing.T) {
+	p := realGCPProvider(t)
+	if !p.Supports(models.PricingDomainNoSQL, "datastore") {
+		t.Error("Supports(nosql, \"datastore\") = false, want true (datastore is a documented Firestore-domain alias, see gcp_catalog.go)")
+	}
+	if !p.Supports(models.PricingDomainNoSQL, "firestore") {
+		t.Error("Supports(nosql, \"firestore\") = false, want true")
+	}
+	if !p.Supports(models.PricingDomainNoSQL, "") {
+		t.Error("Supports(nosql, \"\") = false, want true (empty service defaults to firestore)")
+	}
+}
+
 // TestFillDomain_FirestoreFieldsDoNotCollideWithOtherDomains verifies that a
 // spec carrying ONLY Firestore-specific quantity fields (no service, no
 // domain, no storage_type) does NOT get misrouted to any other domain by
@@ -1349,22 +1369,28 @@ func TestFillDomain_FirestoreFieldsDoNotCollideWithOtherDomains(t *testing.T) {
 		},
 	}
 	h := tools.New(map[string]tools.Provider{"gcp": pvdr})
-	resp := callGetPrice(t, h, map[string]any{
-		"provider":                "gcp",
-		"region":                  "us-central1",
-		"reads_per_month":         5000000,
-		"writes_per_month":        1000000,
-		"deletes_per_month":       200000,
-		"ttl_deletes_per_month":   50000,
-		"pitr_storage_gb":         5,
-		"zonal_backup_storage_gb": 5,
-		"restore_gb":              2,
-		"clone_gb":                1,
-		// deliberately no "storage_gb" (which alone, with storage_type
-		// present, would trigger the storage/messaging heuristic — not
-		// applicable here since storage_type is absent too), no "service",
-		// no "domain".
-	})
+
+	// Built from gcpprovider.FirestoreValidQuantityFields (rather than a
+	// second hand-maintained literal list) so this audit stays honest as
+	// Firestore quantity fields are added/removed.
+	req := map[string]any{
+		"provider": "gcp",
+		"region":   "us-central1",
+		// no "service", no "domain" — that's what forces fillDomain to rely
+		// purely on field-name heuristics.
+	}
+	for _, field := range gcpprovider.FirestoreValidQuantityFields {
+		if field == "storage_gb" {
+			// Deliberately excluded: storage_gb alone, with storage_type
+			// present, would trigger the storage/messaging heuristic — not
+			// applicable here since storage_type is absent too, but kept out
+			// to preserve this test's original, narrower intent.
+			continue
+		}
+		req[field] = 1.0
+	}
+
+	resp := callGetPrice(t, h, req)
 	if _, ok := resp["error"]; !ok {
 		t.Errorf("expected an invalid_spec error (domain could not be inferred), got: %v", resp)
 	}

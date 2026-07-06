@@ -565,6 +565,10 @@ func normalizedPriceSummary(p models.NormalizedPrice, storageSpec *models.Storag
 		// (which correctly nets out free-tier allowances for storage/read/
 		// write/delete) over a flat PricePerUnit*quantity product, mirroring
 		// the pubsubSpec pattern above.
+		//
+		// The dimension strings below are independently enumerated in
+		// gcp_firestore.go's priceFirestore (see its doc comment for why
+		// this duplication is deliberately left unconsolidated).
 		dimension := p.Attributes["dimension"]
 		var quantity *float64
 		switch dimension {
