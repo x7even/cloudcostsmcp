@@ -1029,45 +1029,50 @@ var externalIPFallbackRate = map[string]float64{
 	"spot":     0.0025,
 }
 
-// skuLastNonZeroTierPrice returns the last tier with a non-zero unit price
-// from a SKU's pricingExpression. The two External IP Charge SKUs use
-// different tier shapes in the live catalog: the Standard VM SKU has a $0
-// free-quota tier at startUsageAmount=0 followed by the paid rate at
-// startUsageAmount=744, while the Spot Preemptible VM SKU has no free tier at
-// all — a single tier at startUsageAmount=0 carrying the paid rate directly.
-// Neither skuPrice (first tier only) nor skuPaidPrice (first tier with
-// start>0 only) handles both shapes; this does.
-func skuLastNonZeroTierPrice(sku map[string]any) float64 {
-	pi, _ := sku["pricingInfo"].([]any)
-	if len(pi) == 0 {
-		return 0
-	}
-	pe, _ := pi[0].(map[string]any)
-	if pe == nil {
-		return 0
-	}
-	expr, _ := pe["pricingExpression"].(map[string]any)
-	if expr == nil {
-		return 0
-	}
-	tiers, _ := expr["tieredRates"].([]any)
-	var last float64
-	for _, t := range tiers {
-		tier, _ := t.(map[string]any)
-		if tier == nil {
-			continue
-		}
-		up, _ := tier["unitPrice"].(map[string]any)
-		if up == nil {
-			continue
-		}
-		units, _ := up["units"].(string)
-		nanos, _ := up["nanos"].(float64)
-		if price := gcpMoney(units, int(nanos)); price > 0 {
-			last = price
+// externalIPRates holds the derived per-hour rate for each VM type, cached
+// under externalIPRatesCacheKey so repeated calls (e.g. on_demand then spot in
+// the same process) don't re-fetch and re-scan the full Compute Engine SKU
+// catalog.
+type externalIPRates struct {
+	Standard float64 `json:"standard"`
+	Spot     float64 `json:"spot"`
+}
+
+// externalIPRatesCacheKey caches the derived External IP rates.
+const externalIPRatesCacheKey = "gcp:externalip:rates"
+
+// fetchExternalIPRates returns the live per-hour External IP rates for
+// standard and spot VMs, caching the result. A zero field means no matching
+// SKU was found for that VM type and the caller should fall back.
+func (p *Provider) fetchExternalIPRates(ctx context.Context) externalIPRates {
+	if raw, ok := p.cache.GetMetadata(externalIPRatesCacheKey); ok {
+		var r externalIPRates
+		if err := json.Unmarshal(raw, &r); err == nil {
+			return r
 		}
 	}
-	return last
+
+	var rates externalIPRates
+	skus, err := p.fetchSKUs(ctx, computeServiceID)
+	if err != nil {
+		slog.Warn("gcp external_ip: fetch SKUs failed", "err", err)
+		return rates
+	}
+	for _, sku := range skus {
+		desc, _ := sku["description"].(string)
+		descLower := strings.ToLower(desc)
+		if rates.Standard == 0 && strings.Contains(descLower, strings.ToLower(externalIPStandardDescription)) {
+			rates.Standard = skuPaidPrice(sku)
+		}
+		if rates.Spot == 0 && strings.Contains(descLower, strings.ToLower(externalIPSpotDescription)) {
+			rates.Spot = skuPrice(sku)
+		}
+	}
+
+	if raw, err := json.Marshal(rates); err == nil {
+		p.cache.SetMetadata(externalIPRatesCacheKey, raw, p.cfg.MetadataTTL())
+	}
+	return rates
 }
 
 // priceNetworkExternalIP prices the External IP Charge for a standard or
@@ -1085,25 +1090,17 @@ func (p *Provider) priceNetworkExternalIP(
 		term = models.PricingTermSpot
 	}
 
+	rates := p.fetchExternalIPRates(ctx)
 	var rate float64
-	fallback := false
-	skus, err := p.fetchSKUs(ctx, computeServiceID)
-	if err != nil {
-		slog.Warn("gcp external_ip: fetch SKUs failed", "err", err)
-		fallback = true
+	if vmType == "standard" {
+		rate = rates.Standard
 	} else {
-		for _, sku := range skus {
-			desc, _ := sku["description"].(string)
-			if desc != wantDesc {
-				continue
-			}
-			rate = skuLastNonZeroTierPrice(sku)
-			break
-		}
+		rate = rates.Spot
 	}
 
-	fallback = fallback || rate == 0
+	fallback := false
 	if rate == 0 {
+		fallback = true
 		rate = externalIPFallbackRate[vmType]
 	}
 

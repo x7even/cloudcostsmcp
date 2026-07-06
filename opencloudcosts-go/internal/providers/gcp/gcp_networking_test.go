@@ -662,10 +662,9 @@ func TestPriceNetworkEgress_InternetTieredUnit(t *testing.T) {
 // makeExternalIPSKU builds a two-tier global SKU matching the real Billing
 // Catalog shape for the Standard VM External IP Charge SKU: a $0 tier at
 // startUsageAmount=0 (the account-level monthly free usage), followed by the
-// marginal per-hour rate at startUsageAmount=744. skuLastNonZeroTierPrice
-// must be used to extract paidUnits/paidNanos; skuPrice would incorrectly
-// return 0 (the free tier), and skuPaidPrice happens to work here too but
-// not for the single-tier spot shape below.
+// marginal per-hour rate at startUsageAmount=744. skuPaidPrice (first tier
+// with start>0) is used to extract paidUnits/paidNanos; skuPrice would
+// incorrectly return 0 (the free tier).
 func makeExternalIPSKU(desc string, paidUnits string, paidNanos int) map[string]any {
 	return map[string]any{
 		"description":    desc,
@@ -701,9 +700,9 @@ func makeExternalIPSKU(desc string, paidUnits string, paidNanos int) map[string]
 // makeExternalIPSKUSingleTier builds a single-tier global SKU matching the
 // real Billing Catalog shape for the Spot Preemptible VM External IP Charge
 // SKU: unlike the Standard VM SKU, it has no $0 free-quota tier at all — just
-// one tier at startUsageAmount=0 carrying the paid rate directly. skuPaidPrice
-// (which skips any tier with start<=0) would incorrectly return 0 for this
-// shape; skuLastNonZeroTierPrice is required.
+// one tier at startUsageAmount=0 carrying the paid rate directly. skuPrice
+// (first tier at start=0) is used to extract it; skuPaidPrice (which skips
+// any tier with start<=0) would incorrectly return 0 for this shape.
 func makeExternalIPSKUSingleTier(desc string, units string, nanos int) map[string]any {
 	return map[string]any{
 		"description":    desc,
@@ -933,6 +932,56 @@ func TestPriceNetwork_DispatchesExternalIP(t *testing.T) {
 	}
 	if len(prices) != 1 || prices[0].Service != "external_ip" {
 		t.Fatalf("priceNetwork did not dispatch to external_ip: %+v", prices)
+	}
+}
+
+// TestPriceNetworkExternalIP_RatesCached verifies that fetchExternalIPRates
+// reads its derived rate map from cache instead of calling fetchSKUs at all.
+// fetchSKUs has its own cache keyed by service ID, so counting HTTP hits
+// alone wouldn't distinguish "fetchExternalIPRates has its own cache" from
+// "fetchSKUs happens to already be cached" — this pre-seeds the derived-rate
+// cache key directly with rates that don't match any live SKU, and points at
+// a server that fails the test if it's ever hit, so a pass here can only mean
+// the cache read short-circuited before reaching fetchSKUs/HTTP.
+func TestPriceNetworkExternalIP_RatesCached(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("unexpected HTTP call: fetchExternalIPRates should have used the cached rate map")
+	}))
+	defer ts.Close()
+
+	p := newNetworkingTestProvider(t, ts)
+	ctx := context.Background()
+
+	seeded := externalIPRates{Standard: 0.0099, Spot: 0.0088}
+	raw, err := json.Marshal(seeded)
+	if err != nil {
+		t.Fatalf("marshal seeded rates: %v", err)
+	}
+	p.cache.SetMetadata(externalIPRatesCacheKey, raw, p.cfg.MetadataTTL())
+
+	onDemandSpec := &models.NetworkPricingSpec{
+		BasePricingSpec: models.BasePricingSpec{Term: models.PricingTermOnDemand},
+	}
+	prices, breakdown, err := p.priceNetworkExternalIP(ctx, onDemandSpec)
+	if err != nil {
+		t.Fatalf("on_demand call: %v", err)
+	}
+	if abs(prices[0].PricePerUnit-0.0099) > 1e-9 {
+		t.Errorf("standard external IP rate = %.6f, want 0.009900 (from cache)", prices[0].PricePerUnit)
+	}
+	if fb, ok := breakdown["fallback"]; ok && fb == true {
+		t.Error("expected no fallback when the derived-rate cache is populated")
+	}
+
+	spotSpec := &models.NetworkPricingSpec{
+		BasePricingSpec: models.BasePricingSpec{Term: models.PricingTermSpot},
+	}
+	prices, _, err = p.priceNetworkExternalIP(ctx, spotSpec)
+	if err != nil {
+		t.Fatalf("spot call: %v", err)
+	}
+	if abs(prices[0].PricePerUnit-0.0088) > 1e-9 {
+		t.Errorf("spot external IP rate = %.6f, want 0.008800 (from cache)", prices[0].PricePerUnit)
 	}
 }
 
