@@ -37,6 +37,7 @@ func gcpDescribeCatalog() *models.ProviderCatalog {
 			models.PricingDomainObservability,
 			models.PricingDomainInterRegionEgress,
 			models.PricingDomainSecurity,
+			models.PricingDomainDNS,
 		},
 		Services: map[string][]string{
 			"compute":             {"compute_engine"},
@@ -49,6 +50,7 @@ func gcpDescribeCatalog() *models.ProviderCatalog {
 			"observability":       {"cloud_monitoring"},
 			"inter_region_egress": {},
 			"security":            {"kms"},
+			"dns":                 {"cloud_dns"},
 		},
 		SupportedTerms: map[string][]string{
 			"compute/compute_engine":         {"on_demand", "spot", "cud_1yr", "cud_3yr", "sud", "flex_cud"},
@@ -69,6 +71,7 @@ func gcpDescribeCatalog() *models.ProviderCatalog {
 			"observability/cloud_monitoring": {"on_demand"},
 			"inter_region_egress":            {"on_demand"},
 			"security/kms":                   {"on_demand"},
+			"dns/cloud_dns":                  {"on_demand"},
 		},
 		FilterHints: map[string]map[string]any{
 			"compute/compute_engine": {
@@ -173,6 +176,20 @@ func gcpDescribeCatalog() *models.ProviderCatalog {
 				"note": fmt.Sprintf(
 					"All Cloud KMS pricing is region-invariant (scope='global'); region is accepted but ignored. HSM asymmetric key versions (EC/RSA3072/RSA4096/PKCS1v1.5) are volume-discounted: $%.2f/mo for the first %d key versions, $%.2f/mo thereafter — both tiers are returned in breakdown.",
 					kmsFallbackRates.HSMKeyVersionTier1, kmsHSMTierThreshold, kmsFallbackRates.HSMKeyVersionTier2,
+				),
+			},
+			"dns/cloud_dns": {
+				"zone_type":         "public (default) | private | forwarding | peering — informational only; does NOT change price, all zone types share one ManagedZone tier ladder",
+				"zone_count":        "Total managed-zone count (across all zone types) for a monthly cost estimate",
+				"queries_per_month": "Monthly DNS query volume (port 53) for a monthly cost estimate",
+				"service":           "cloud_dns",
+				"note": fmt.Sprintf(
+					"All Cloud DNS pricing is region-invariant (scope='global'); region is accepted but ignored. ManagedZone is volume-discounted: $%.2f/zone-month (zones 1-%d), $%.2f/zone-month (zones %d-%d), $%.2f/zone-month (zones %d+). DNS Query (port 53) is volume-discounted: $%.7f/query up to %d queries/mo, $%.7f/query thereafter. Routing-policy queries ($0.70/$0.35 per million) have no catalog SKU and are not priced by this endpoint.",
+					dnsFallbackRates.ZoneTier1, dnsZoneTier2Threshold,
+					dnsFallbackRates.ZoneTier2, dnsZoneTier2Threshold+1, dnsZoneTier3Threshold,
+					dnsFallbackRates.ZoneTier3, dnsZoneTier3Threshold+1,
+					dnsFallbackRates.QueryTier1, dnsQueryTier2Threshold,
+					dnsFallbackRates.QueryTier2,
 				),
 			},
 		},
@@ -336,6 +353,14 @@ func gcpDescribeCatalog() *models.ProviderCatalog {
 				"algorithm": "symmetric",
 				"unit":      "key_version_month",
 			},
+			"dns/cloud_dns": {
+				"provider":          "gcp",
+				"domain":            "dns",
+				"service":           "cloud_dns",
+				"zone_type":         "public",
+				"zone_count":        3.0,
+				"queries_per_month": 10000000.0,
+			},
 		},
 		DecisionMatrix: map[string]string{
 			"Cloud Storage":            "storage/gcs",
@@ -368,6 +393,11 @@ func gcpDescribeCatalog() *models.ProviderCatalog {
 			"KMS":                          "security/kms",
 			"Key Management":               "security/kms",
 			"Cloud HSM":                    "security/kms — set key_type='hsm'",
+			"Cloud DNS":                    "dns/cloud_dns",
+			"DNS":                          "dns/cloud_dns",
+			"Managed DNS":                  "dns/cloud_dns",
+			"DNS zones":                    "dns/cloud_dns — set zone_count",
+			"DNS queries":                  "dns/cloud_dns — set queries_per_month",
 		},
 	}
 }
@@ -465,6 +495,13 @@ func (p *Provider) getPart3Price(ctx context.Context, spec models.PricingSpec) (
 
 	case *models.KMSPricingSpec:
 		prices, breakdown, err := p.priceKMS(ctx, s)
+		if err != nil {
+			return nil, err
+		}
+		return buildResult(prices, breakdown), nil
+
+	case *models.DNSPricingSpec:
+		prices, breakdown, err := p.priceDNS(ctx, s)
 		if err != nil {
 			return nil, err
 		}

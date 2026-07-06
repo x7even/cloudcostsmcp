@@ -857,6 +857,61 @@ func TestUnmarshal_KMSFieldsAndDispatch(t *testing.T) {
 	}
 }
 
+func TestUnmarshal_DNSDefaults(t *testing.T) {
+	data := []byte(`{"domain":"dns","provider":"gcp","service":"cloud_dns","region":"us-central1"}`)
+	got, err := UnmarshalPricingSpec(data)
+	if err != nil {
+		t.Fatalf("UnmarshalPricingSpec: %v", err)
+	}
+	d, ok := got.(*DNSPricingSpec)
+	if !ok {
+		t.Fatalf("expected *DNSPricingSpec, got %T", got)
+	}
+	if d.ZoneType != "public" {
+		t.Errorf("ZoneType default: got %q, want %q", d.ZoneType, "public")
+	}
+	if d.ZoneCount != nil {
+		t.Errorf("ZoneCount default: got %v, want nil", d.ZoneCount)
+	}
+	if d.QueriesPerMonth != nil {
+		t.Errorf("QueriesPerMonth default: got %v, want nil", d.QueriesPerMonth)
+	}
+}
+
+func TestUnmarshal_DNSFieldsAndDispatch(t *testing.T) {
+	// Exercises the real MCP entry path (JSON -> UnmarshalPricingSpec ->
+	// DNSPricingSpec.UnmarshalJSON) with explicit non-default fields, so a
+	// discriminator or default-seeding regression here would be caught
+	// rather than only in tests that construct DNSPricingSpec directly.
+	data := []byte(`{"provider":"gcp","domain":"dns","service":"cloud_dns","zone_type":"private","zone_count":10,"queries_per_month":5000000}`)
+	got, err := UnmarshalPricingSpec(data)
+	if err != nil {
+		t.Fatalf("UnmarshalPricingSpec: %v", err)
+	}
+	d, ok := got.(*DNSPricingSpec)
+	if !ok {
+		t.Fatalf("expected *DNSPricingSpec, got %T", got)
+	}
+	if d.Provider != CloudProviderGCP {
+		t.Errorf("Provider: got %q, want %q", d.Provider, CloudProviderGCP)
+	}
+	if d.Domain != PricingDomainDNS {
+		t.Errorf("Domain: got %q, want %q", d.Domain, PricingDomainDNS)
+	}
+	if d.Service != "cloud_dns" {
+		t.Errorf("Service: got %q, want %q", d.Service, "cloud_dns")
+	}
+	if d.ZoneType != "private" {
+		t.Errorf("ZoneType: got %q, want %q", d.ZoneType, "private")
+	}
+	if d.ZoneCount == nil || *d.ZoneCount != 10 {
+		t.Errorf("ZoneCount: got %v, want 10", d.ZoneCount)
+	}
+	if d.QueriesPerMonth == nil || *d.QueriesPerMonth != 5000000 {
+		t.Errorf("QueriesPerMonth: got %v, want 5000000", d.QueriesPerMonth)
+	}
+}
+
 func TestUnmarshal_ContainerDefaults(t *testing.T) {
 	data := []byte(`{"domain":"container","provider":"aws","region":"us-east-1"}`)
 	got, err := UnmarshalPricingSpec(data)
@@ -1362,6 +1417,72 @@ func TestCacheKey_EgressPricingSpec(t *testing.T) {
 				t.Errorf("CacheKey() = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestCacheKey_DNSPricingSpec verifies zone_type is embedded in the cache key
+// (differentiating an informational-but-attribute-tagged request), and that
+// ZoneCount/QueriesPerMonth — being optional *float64 fields that directly
+// change the computed monthly_cost — are also embedded, mirroring the
+// nil-safe pointer-field convention used by StoragePricingSpec.CacheKey.
+// Omitting these from the cache key would let two requests that differ only
+// in zone_count or queries_per_month collide on the same key despite pricing
+// to different monthly costs.
+func TestCacheKey_DNSPricingSpec(t *testing.T) {
+	zoneCount := 10.0
+	queries := 5_000_000.0
+
+	tests := []struct {
+		name string
+		spec DNSPricingSpec
+		want string
+	}{
+		{
+			name: "zone_type only, no quantities",
+			spec: DNSPricingSpec{
+				BasePricingSpec: BasePricingSpec{
+					Provider: CloudProviderGCP,
+					Domain:   PricingDomainDNS,
+					Service:  "cloud_dns",
+					Term:     PricingTermOnDemand,
+				},
+				ZoneType: "public",
+			},
+			want: "gcp:dns:cloud_dns::on_demand:public::",
+		},
+		{
+			name: "zone_count and queries_per_month set",
+			spec: DNSPricingSpec{
+				BasePricingSpec: BasePricingSpec{
+					Provider: CloudProviderGCP,
+					Domain:   PricingDomainDNS,
+					Service:  "cloud_dns",
+					Term:     PricingTermOnDemand,
+				},
+				ZoneType:        "private",
+				ZoneCount:       &zoneCount,
+				QueriesPerMonth: &queries,
+			},
+			want: "gcp:dns:cloud_dns::on_demand:private:10:5e+06",
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			got := tc.spec.CacheKey()
+			if got != tc.want {
+				t.Errorf("CacheKey() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+
+	// Different zone_count values must not collide on the same cache key.
+	other := 20.0
+	a := DNSPricingSpec{ZoneType: "public", ZoneCount: &zoneCount}
+	b := DNSPricingSpec{ZoneType: "public", ZoneCount: &other}
+	if a.CacheKey() == b.CacheKey() {
+		t.Errorf("CacheKey() collided for different zone_count values: %q", a.CacheKey())
 	}
 }
 
