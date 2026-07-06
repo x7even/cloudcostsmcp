@@ -439,6 +439,46 @@ func skuPrice(sku map[string]any) float64 {
 	return 0
 }
 
+// newGlobalScopedPrice builds a global-scoped (Region="global",
+// Attributes["scope"]="global") NormalizedPrice with Provider=GCP,
+// PricingTerm=OnDemand, and Currency=USD already filled in — the fields
+// shared by every region-invariant GCP pricing domain (Cloud DNS, Cloud
+// Pub/Sub, ...). Domain-specific constructors like newDNSPrice/newPubSubPrice
+// wrap this with their fixed Service/ProductFamily so call sites keep their
+// existing, domain-named entry point.
+func newGlobalScopedPrice(service, productFamily, skuID, description string, pricePerUnit float64, unit models.PriceUnit, attrs map[string]string) *models.NormalizedPrice {
+	price := &models.NormalizedPrice{
+		Provider:      models.CloudProviderGCP,
+		Service:       service,
+		SKUID:         skuID,
+		ProductFamily: productFamily,
+		Description:   description,
+		PricingTerm:   models.PricingTermOnDemand,
+		PricePerUnit:  pricePerUnit,
+		Unit:          unit,
+		Currency:      "USD",
+		Attributes:    attrs,
+	}
+	stampGlobalScope(price)
+	return price
+}
+
+// isGlobalSKU reports whether a raw GCP SKU's geoTaxonomy defensively
+// qualifies as GLOBAL-scoped: true if geoTaxonomy is absent, or if
+// geoTaxonomy.type is empty or exactly "GLOBAL". A SKU whose geoTaxonomy.type
+// is present and any other value (e.g. "REGIONAL") is NOT global. Shared by
+// every region-invariant pricing function (Cloud DNS, Cloud Pub/Sub, ...)
+// that matches SKUs by description substring and defensively guards against
+// a regional SKU that happens to share matching wording.
+func isGlobalSKU(sku map[string]any) bool {
+	geo, ok := sku["geoTaxonomy"].(map[string]any)
+	if !ok {
+		return true
+	}
+	geoType, _ := geo["type"].(string)
+	return geoType == "" || geoType == "GLOBAL"
+}
+
 // --------------------------------------------------------------------------
 // Utility
 // --------------------------------------------------------------------------

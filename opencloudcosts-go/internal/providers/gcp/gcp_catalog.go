@@ -39,6 +39,22 @@ func dnsDecisionMatrixEntries() map[string]string {
 	}
 }
 
+// pubsubDecisionMatrixTarget is the single "domain/service" target string
+// for every Cloud Pub/Sub DecisionMatrix entry.
+const pubsubDecisionMatrixTarget = "messaging/pubsub"
+
+// pubsubDecisionMatrixEntries returns the DecisionMatrix entries that route
+// an LLM's natural-language service name to Cloud Pub/Sub, all derived from
+// pubsubDecisionMatrixTarget.
+func pubsubDecisionMatrixEntries() map[string]string {
+	return map[string]string{
+		"Pub/Sub":       pubsubDecisionMatrixTarget,
+		"Cloud Pub/Sub": pubsubDecisionMatrixTarget,
+		"PubSub":        pubsubDecisionMatrixTarget,
+		"Pub Sub":       pubsubDecisionMatrixTarget,
+	}
+}
+
 // gcpDescribeCatalog returns the full provider catalog describing every GCP
 // domain and service this provider can price, along with filter hints,
 // example invocations, and a decision matrix for LLM tool routing.
@@ -78,6 +94,9 @@ func gcpDescribeCatalog() *models.ProviderCatalog {
 	for k, v := range dnsDecisionMatrixEntries() {
 		decisionMatrix[k] = v
 	}
+	for k, v := range pubsubDecisionMatrixEntries() {
+		decisionMatrix[k] = v
+	}
 
 	return &models.ProviderCatalog{
 		Provider: models.CloudProviderGCP,
@@ -93,6 +112,7 @@ func gcpDescribeCatalog() *models.ProviderCatalog {
 			models.PricingDomainInterRegionEgress,
 			models.PricingDomainSecurity,
 			models.PricingDomainDNS,
+			models.PricingDomainMessaging,
 		},
 		Services: map[string][]string{
 			"compute":             {"compute_engine"},
@@ -106,6 +126,7 @@ func gcpDescribeCatalog() *models.ProviderCatalog {
 			"inter_region_egress": {},
 			"security":            {"kms"},
 			"dns":                 {"cloud_dns"},
+			"messaging":           {"pubsub"},
 		},
 		SupportedTerms: map[string][]string{
 			"compute/compute_engine":         {"on_demand", "spot", "cud_1yr", "cud_3yr", "sud", "flex_cud"},
@@ -127,6 +148,7 @@ func gcpDescribeCatalog() *models.ProviderCatalog {
 			"inter_region_egress":            {"on_demand"},
 			"security/kms":                   {"on_demand"},
 			"dns/cloud_dns":                  {"on_demand"},
+			"messaging/pubsub":               {"on_demand"},
 		},
 		FilterHints: map[string]map[string]any{
 			"compute/compute_engine": {
@@ -245,6 +267,24 @@ func gcpDescribeCatalog() *models.ProviderCatalog {
 					dnsFallbackRates.ZoneTier3, dnsZoneTier3Threshold+1,
 					dnsFallbackRates.QueryTier1, dnsQueryTier2Threshold,
 					dnsFallbackRates.QueryTier2,
+				),
+			},
+			"messaging/pubsub": {
+				"destination": "basic (default, 10 GiB/mo free then paid) | bigquery | cloud_storage_export | bigtable | " +
+					"kinesis_import | cloud_storage_import | azure_event_hubs_import | aws_msk_import | " +
+					"confluent_cloud_import | smt_udf | smt_ai_inference — affects the throughput rate",
+				"storage_type": "topic_backlog (default) | subscription_backlog | retained_acked_messages | snapshot_backlog — " +
+					"informational only; does NOT change price, all storage types share one rate",
+				"throughput_gb_per_month": "Monthly message-throughput volume (GiB) for a monthly cost estimate",
+				"storage_gb":              "Average monthly retained message backlog / retained-acknowledged-message volume (GiB) for a monthly cost estimate",
+				"service":                 "pubsub",
+				"note": fmt.Sprintf(
+					"All Cloud Pub/Sub pricing is region-invariant (scope='global'); region is accepted but ignored. Message Delivery Basic includes a %.0f GiB/month free allowance, then $%.7f/GiB ($40/TiB). BigQuery/Cloud-Storage-export/Bigtable/Kinesis-import destinations are $%.7f/GiB ($50/TiB) flat. Cloud-Storage-import/Azure-Event-Hubs/AWS-MSK/Confluent-Cloud import destinations are $%.7f/GiB ($80/TiB) flat. SMT (UDF) throughput is $%.7f/GiB ($40/TiB); SMT (AI inference) is $%.7f/GiB ($60/TiB). Message storage (topic/subscription/snapshot backlog, retained acknowledged messages) is $%.2f/GiB-month flat. Pub/Sub Lite and the ~61 continent-pair egress SKUs under this service are out of scope for this endpoint.",
+					pubsubBasicFreeTierGB, pubsubFallbackRates.BasicPaid,
+					pubsubFallbackRates.BigQuery,
+					pubsubFallbackRates.CloudStorageImport,
+					pubsubFallbackRates.SMTUDF, pubsubFallbackRates.SMTAIInference,
+					pubsubFallbackRates.Storage,
 				),
 			},
 		},
@@ -416,6 +456,15 @@ func gcpDescribeCatalog() *models.ProviderCatalog {
 				"zone_count":        3.0,
 				"queries_per_month": 10000000.0,
 			},
+			"messaging/pubsub": {
+				"provider":                "gcp",
+				"domain":                  "messaging",
+				"service":                 "pubsub",
+				"destination":             "basic",
+				"storage_type":            "topic_backlog",
+				"throughput_gb_per_month": 500.0,
+				"storage_gb":              50.0,
+			},
 		},
 		DecisionMatrix: decisionMatrix,
 	}
@@ -521,6 +570,13 @@ func (p *Provider) getPart3Price(ctx context.Context, spec models.PricingSpec) (
 
 	case *models.DNSPricingSpec:
 		prices, breakdown, err := p.priceDNS(ctx, s)
+		if err != nil {
+			return nil, err
+		}
+		return buildResult(prices, breakdown), nil
+
+	case *models.PubSubPricingSpec:
+		prices, breakdown, err := p.pricePubSub(ctx, s)
 		if err != nil {
 			return nil, err
 		}

@@ -161,10 +161,8 @@ func (p *Provider) fetchDNSRates(ctx context.Context) dnsRates {
 		desc, _ := sku["description"].(string)
 		descLower := strings.ToLower(desc)
 
-		if geo, ok := sku["geoTaxonomy"].(map[string]any); ok {
-			if geoType, _ := geo["type"].(string); geoType != "" && geoType != "GLOBAL" {
-				continue
-			}
+		if !isGlobalSKU(sku) {
+			continue
 		}
 
 		switch {
@@ -239,20 +237,7 @@ func resolveTieredRates(live []float64, fallback []float64) (rates []float64, us
 // already filled in and global scope already stamped, so priceDNS's
 // per-line-item construction only needs to supply what actually differs.
 func newDNSPrice(skuID, description string, pricePerUnit float64, unit models.PriceUnit, attrs map[string]string) *models.NormalizedPrice {
-	price := &models.NormalizedPrice{
-		Provider:      models.CloudProviderGCP,
-		Service:       "cloud_dns",
-		SKUID:         skuID,
-		ProductFamily: "Cloud DNS",
-		Description:   description,
-		PricingTerm:   models.PricingTermOnDemand,
-		PricePerUnit:  pricePerUnit,
-		Unit:          unit,
-		Currency:      "USD",
-		Attributes:    attrs,
-	}
-	stampGlobalScope(price)
-	return price
+	return newGlobalScopedPrice("cloud_dns", "Cloud DNS", skuID, description, pricePerUnit, unit, attrs)
 }
 
 // addTieredEstimate computes the tiered cost for quantity over tiers via

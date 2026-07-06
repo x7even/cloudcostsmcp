@@ -128,6 +128,12 @@ func (p *Provider) Supports(domain models.PricingDomain, service string) bool {
 		case "", "cloud_dns", "dns", "clouddns":
 			return true
 		}
+	// Part 3 domain — implemented in gcp_pubsub.go.
+	case models.PricingDomainMessaging:
+		switch service {
+		case "", "pubsub", "pub_sub":
+			return true
+		}
 	default:
 		return false
 	}
