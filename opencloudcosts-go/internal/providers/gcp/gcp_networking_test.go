@@ -101,6 +101,26 @@ func toFloat64(v any) float64 {
 	return 0
 }
 
+// mustFloat64 is toFloat64 but fails the test loudly (t.Fatalf) instead of
+// silently returning 0 when v is missing or an unrecognized type — use this
+// in tests where a shape/type regression should be distinguishable from a
+// wrong-value regression.
+func mustFloat64(t *testing.T, v any, name string) float64 {
+	t.Helper()
+	switch x := v.(type) {
+	case float64:
+		return x
+	case int:
+		return float64(x)
+	case int64:
+		return float64(x)
+	case map[string]any:
+		return mustFloat64(t, x["amount"], name+".amount")
+	}
+	t.Fatalf("%s missing or wrong type: %v", name, v)
+	return 0
+}
+
 // --------------------------------------------------------------------------
 // Cloud Load Balancing tests
 // --------------------------------------------------------------------------
