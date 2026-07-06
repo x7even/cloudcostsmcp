@@ -396,35 +396,10 @@ func (p *Provider) buildBigQueryIndex(ctx context.Context, region string) (bigqu
 // skuPaidPrice extracts the first paid-tier unit price (startUsageAmount > 0) from a SKU.
 // Used for BigQuery SKUs that have a free-quota tier at startUsageAmount == 0.
 func skuPaidPrice(sku map[string]any) float64 {
-	pi, _ := sku["pricingInfo"].([]any)
-	if len(pi) == 0 {
-		return 0
-	}
-	pe, _ := pi[0].(map[string]any)
-	if pe == nil {
-		return 0
-	}
-	expr, _ := pe["pricingExpression"].(map[string]any)
-	if expr == nil {
-		return 0
-	}
-	tiers, _ := expr["tieredRates"].([]any)
-	for _, t := range tiers {
-		tier, _ := t.(map[string]any)
-		if tier == nil {
-			continue
+	for _, t := range skuTierList(sku) {
+		if t.start > 0 {
+			return t.price
 		}
-		start, _ := tier["startUsageAmount"].(float64)
-		if start <= 0 {
-			continue
-		}
-		up, _ := tier["unitPrice"].(map[string]any)
-		if up == nil {
-			continue
-		}
-		units, _ := up["units"].(string)
-		nanos, _ := up["nanos"].(float64)
-		return gcpMoney(units, int(nanos))
 	}
 	return 0
 }

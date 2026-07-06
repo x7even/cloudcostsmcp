@@ -122,6 +122,12 @@ func (p *Provider) Supports(domain models.PricingDomain, service string) bool {
 		case "", "kms":
 			return true
 		}
+	// Part 3 domain — implemented in gcp_dns.go.
+	case models.PricingDomainDNS:
+		switch service {
+		case "", "cloud_dns", "dns", "clouddns":
+			return true
+		}
 	default:
 		return false
 	}

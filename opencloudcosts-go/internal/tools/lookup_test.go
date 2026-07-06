@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"reflect"
 	"strings"
 	"testing"
@@ -718,6 +719,148 @@ func TestGetPrice_StorageWithMBPS_SurfacesMonthlyEstimate(t *testing.T) {
 	// price_per_unit (0.048/MBPS-month) * throughput_mbps (250) = 12.0.
 	if monthly["amount"] != 0.048*250 {
 		t.Errorf("monthly_estimate.amount: got %v, want %v", monthly["amount"], 0.048*250)
+	}
+}
+
+// TestGetPrice_DNSZoneCount_SurfacesMonthlyEstimate covers the #78 follow-up
+// generalization of RC3-032 (#30) part (b) to Cloud DNS: a DNS spec (domain=
+// dns) with zone_count set must get a monthly_estimate on its per_zone_month
+// price scaled by zone_count, the same way per_gb_month/per_iops_month/
+// per_mbps_month storage prices already do.
+func TestGetPrice_DNSZoneCount_SurfacesMonthlyEstimate(t *testing.T) {
+	pvdr := &mockProvider{
+		name:          "gcp",
+		defaultRegion: "us-central1",
+		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
+			return makePriceResult(models.NormalizedPrice{
+				Provider:      models.CloudProviderGCP,
+				Service:       "cloud_dns",
+				SKUID:         "gcp:dns:managedzone:public",
+				ProductFamily: "Cloud DNS",
+				Description:   "Cloud DNS ManagedZone",
+				Region:        "global",
+				PricingTerm:   models.PricingTermOnDemand,
+				PricePerUnit:  0.20,
+				Unit:          models.PriceUnitPerZoneMonth,
+				Currency:      "USD",
+			}), nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"gcp": pvdr})
+	resp := callGetPrice(t, h, map[string]any{
+		"provider":   "gcp",
+		"domain":     "dns",
+		"service":    "cloud_dns",
+		"region":     "us-central1",
+		"zone_count": 3,
+	})
+
+	prices, ok := resp["public_prices"].([]any)
+	if !ok || len(prices) != 1 {
+		t.Fatalf("public_prices: got %v, want a single-element slice", resp["public_prices"])
+	}
+	p0 := prices[0].(map[string]any)
+
+	monthly, ok := p0["monthly_estimate"].(map[string]any)
+	if !ok {
+		t.Fatalf("monthly_estimate is not a map: %v", p0["monthly_estimate"])
+	}
+	if monthly["currency"] != "USD" {
+		t.Errorf("monthly_estimate.currency: got %v, want USD", monthly["currency"])
+	}
+	// price_per_unit (0.20/zone-month) * zone_count (3) = 0.60.
+	if amt, ok := monthly["amount"].(float64); !ok || math.Abs(amt-0.20*3) > 1e-9 {
+		t.Errorf("monthly_estimate.amount: got %v, want %v", monthly["amount"], 0.20*3)
+	}
+}
+
+// TestGetPrice_DNSQueriesPerMonth_SurfacesMonthlyEstimate is the per_query
+// counterpart of TestGetPrice_DNSZoneCount_SurfacesMonthlyEstimate.
+func TestGetPrice_DNSQueriesPerMonth_SurfacesMonthlyEstimate(t *testing.T) {
+	pvdr := &mockProvider{
+		name:          "gcp",
+		defaultRegion: "us-central1",
+		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
+			return makePriceResult(models.NormalizedPrice{
+				Provider:      models.CloudProviderGCP,
+				Service:       "cloud_dns",
+				SKUID:         "gcp:dns:query",
+				ProductFamily: "Cloud DNS",
+				Description:   "DNS Query (port 53)",
+				Region:        "global",
+				PricingTerm:   models.PricingTermOnDemand,
+				PricePerUnit:  0.0000004,
+				Unit:          models.PriceUnitPerQuery,
+				Currency:      "USD",
+			}), nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"gcp": pvdr})
+	resp := callGetPrice(t, h, map[string]any{
+		"provider":          "gcp",
+		"domain":            "dns",
+		"service":           "cloud_dns",
+		"region":            "us-central1",
+		"queries_per_month": 1_000_000,
+	})
+
+	prices, ok := resp["public_prices"].([]any)
+	if !ok || len(prices) != 1 {
+		t.Fatalf("public_prices: got %v, want a single-element slice", resp["public_prices"])
+	}
+	p0 := prices[0].(map[string]any)
+
+	monthly, ok := p0["monthly_estimate"].(map[string]any)
+	if !ok {
+		t.Fatalf("monthly_estimate is not a map: %v", p0["monthly_estimate"])
+	}
+	if monthly["currency"] != "USD" {
+		t.Errorf("monthly_estimate.currency: got %v, want USD", monthly["currency"])
+	}
+	// price_per_unit (0.0000004/query) * queries_per_month (1,000,000) = 0.40.
+	if amt, ok := monthly["amount"].(float64); !ok || math.Abs(amt-0.0000004*1_000_000) > 1e-9 {
+		t.Errorf("monthly_estimate.amount: got %v, want %v", monthly["amount"], 0.0000004*1_000_000)
+	}
+}
+
+// TestGetPrice_DNSWithoutQuantities_NoMonthlyEstimate is the negative
+// counterpart: omitting zone_count/queries_per_month from a DNS spec must
+// NOT produce a monthly_estimate — there's nothing to scale price_per_unit
+// by (mirrors TestGetPrice_StorageWithoutSizeGB_NoMonthlyEstimate).
+func TestGetPrice_DNSWithoutQuantities_NoMonthlyEstimate(t *testing.T) {
+	pvdr := &mockProvider{
+		name:          "gcp",
+		defaultRegion: "us-central1",
+		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
+			return makePriceResult(models.NormalizedPrice{
+				Provider:      models.CloudProviderGCP,
+				Service:       "cloud_dns",
+				SKUID:         "gcp:dns:managedzone:public",
+				ProductFamily: "Cloud DNS",
+				Description:   "Cloud DNS ManagedZone",
+				Region:        "global",
+				PricingTerm:   models.PricingTermOnDemand,
+				PricePerUnit:  0.20,
+				Unit:          models.PriceUnitPerZoneMonth,
+				Currency:      "USD",
+			}), nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"gcp": pvdr})
+	resp := callGetPrice(t, h, map[string]any{
+		"provider": "gcp",
+		"domain":   "dns",
+		"service":  "cloud_dns",
+		"region":   "us-central1",
+	})
+
+	prices, ok := resp["public_prices"].([]any)
+	if !ok || len(prices) != 1 {
+		t.Fatalf("public_prices: got %v, want a single-element slice", resp["public_prices"])
+	}
+	p0 := prices[0].(map[string]any)
+	if _, ok := p0["monthly_estimate"]; ok {
+		t.Errorf("expected no monthly_estimate when zone_count/queries_per_month are omitted, got: %v", p0["monthly_estimate"])
 	}
 }
 

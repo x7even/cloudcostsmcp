@@ -20,10 +20,65 @@ import (
 // DescribeCatalog
 // --------------------------------------------------------------------------
 
+// dnsDecisionMatrixTarget is the single "domain/service" target string for
+// every Cloud DNS DecisionMatrix entry. dnsDecisionMatrixEntries derives all
+// of its keys' values from this one constant instead of repeating
+// "dns/cloud_dns" (and its variants) independently per key.
+const dnsDecisionMatrixTarget = "dns/cloud_dns"
+
+// dnsDecisionMatrixEntries returns the DecisionMatrix entries that route an
+// LLM's natural-language service name to Cloud DNS, all derived from
+// dnsDecisionMatrixTarget.
+func dnsDecisionMatrixEntries() map[string]string {
+	return map[string]string{
+		"Cloud DNS":   dnsDecisionMatrixTarget,
+		"DNS":         dnsDecisionMatrixTarget,
+		"Managed DNS": dnsDecisionMatrixTarget,
+		"DNS zones":   dnsDecisionMatrixTarget + " — set zone_count",
+		"DNS queries": dnsDecisionMatrixTarget + " — set queries_per_month",
+	}
+}
+
 // gcpDescribeCatalog returns the full provider catalog describing every GCP
 // domain and service this provider can price, along with filter hints,
 // example invocations, and a decision matrix for LLM tool routing.
 func gcpDescribeCatalog() *models.ProviderCatalog {
+	decisionMatrix := map[string]string{
+		"Cloud Storage":            "storage/gcs",
+		"GCS":                      "storage/gcs",
+		"Compute Engine":           "compute/compute_engine",
+		"GCE":                      "compute/compute_engine",
+		"Cloud SQL":                "database/cloud_sql",
+		"Memorystore":              "database/memorystore",
+		"Redis":                    "database/memorystore",
+		"GKE":                      "container/gke",
+		"Google Kubernetes Engine": "container/gke",
+		"Vertex AI":                "ai/vertex",
+		"Gemini":                   "ai/gemini",
+		"BigQuery":                 "analytics/bigquery",
+		"Cloud Load Balancing":     "network/cloud_lb",
+		"Cloud CDN":                "network/cloud_cdn — GCP-native CDN (use provider='gcp', service='cloud_cdn')",
+		"CDN (GCP)":                "network/cloud_cdn — use provider='gcp', service='cloud_cdn', NOT provider='aws'",
+		"Cloud NAT":                "network/cloud_nat",
+		"Cloud Armor":              "network/cloud_armor",
+		"External IP":              "network/external_ip — set term='on_demand' (Standard VM) or term='spot' (Spot/Preemptible VM)",
+		"External IP Address":      "network/external_ip",
+		"Cloud Monitoring":         "observability/cloud_monitoring",
+		"GCP Egress":               "inter_region_egress — set source_region and data_gb",
+		"GCP Data Transfer":        "inter_region_egress — set source_region, dest_region (optional), data_gb",
+		"GCP Internet Egress":      "inter_region_egress — set source_region, data_gb (no dest_region)",
+		"GCP internet egress with tier breakdown":       "network/egress — set destination_type=internet + data_gb_per_month",
+		"GCP inter-region transfer with tier breakdown": "network/egress — set destination_type=cross_region + destination_region",
+		"Cloud KMS":                    "security/kms",
+		"Cloud Key Management Service": "security/kms",
+		"KMS":                          "security/kms",
+		"Key Management":               "security/kms",
+		"Cloud HSM":                    "security/kms — set key_type='hsm'",
+	}
+	for k, v := range dnsDecisionMatrixEntries() {
+		decisionMatrix[k] = v
+	}
+
 	return &models.ProviderCatalog{
 		Provider: models.CloudProviderGCP,
 		Domains: []models.PricingDomain{
@@ -37,6 +92,7 @@ func gcpDescribeCatalog() *models.ProviderCatalog {
 			models.PricingDomainObservability,
 			models.PricingDomainInterRegionEgress,
 			models.PricingDomainSecurity,
+			models.PricingDomainDNS,
 		},
 		Services: map[string][]string{
 			"compute":             {"compute_engine"},
@@ -49,6 +105,7 @@ func gcpDescribeCatalog() *models.ProviderCatalog {
 			"observability":       {"cloud_monitoring"},
 			"inter_region_egress": {},
 			"security":            {"kms"},
+			"dns":                 {"cloud_dns"},
 		},
 		SupportedTerms: map[string][]string{
 			"compute/compute_engine":         {"on_demand", "spot", "cud_1yr", "cud_3yr", "sud", "flex_cud"},
@@ -69,6 +126,7 @@ func gcpDescribeCatalog() *models.ProviderCatalog {
 			"observability/cloud_monitoring": {"on_demand"},
 			"inter_region_egress":            {"on_demand"},
 			"security/kms":                   {"on_demand"},
+			"dns/cloud_dns":                  {"on_demand"},
 		},
 		FilterHints: map[string]map[string]any{
 			"compute/compute_engine": {
@@ -173,6 +231,20 @@ func gcpDescribeCatalog() *models.ProviderCatalog {
 				"note": fmt.Sprintf(
 					"All Cloud KMS pricing is region-invariant (scope='global'); region is accepted but ignored. HSM asymmetric key versions (EC/RSA3072/RSA4096/PKCS1v1.5) are volume-discounted: $%.2f/mo for the first %d key versions, $%.2f/mo thereafter — both tiers are returned in breakdown.",
 					kmsFallbackRates.HSMKeyVersionTier1, kmsHSMTierThreshold, kmsFallbackRates.HSMKeyVersionTier2,
+				),
+			},
+			"dns/cloud_dns": {
+				"zone_type":         "public (default) | private | forwarding | peering — informational only; does NOT change price, all zone types share one ManagedZone tier ladder",
+				"zone_count":        "Total managed-zone count (across all zone types) for a monthly cost estimate",
+				"queries_per_month": "Monthly DNS query volume (port 53) for a monthly cost estimate",
+				"service":           "cloud_dns",
+				"note": fmt.Sprintf(
+					"All Cloud DNS pricing is region-invariant (scope='global'); region is accepted but ignored. ManagedZone is volume-discounted: $%.2f/zone-month (zones 1-%d), $%.2f/zone-month (zones %d-%d), $%.2f/zone-month (zones %d+). DNS Query (port 53) is volume-discounted: $%.7f/query up to %d queries/mo, $%.7f/query thereafter. Routing-policy queries ($0.70/$0.35 per million) have no catalog SKU and are not priced by this endpoint.",
+					dnsFallbackRates.ZoneTier1, dnsZoneTier2Threshold,
+					dnsFallbackRates.ZoneTier2, dnsZoneTier2Threshold+1, dnsZoneTier3Threshold,
+					dnsFallbackRates.ZoneTier3, dnsZoneTier3Threshold+1,
+					dnsFallbackRates.QueryTier1, dnsQueryTier2Threshold,
+					dnsFallbackRates.QueryTier2,
 				),
 			},
 		},
@@ -336,39 +408,16 @@ func gcpDescribeCatalog() *models.ProviderCatalog {
 				"algorithm": "symmetric",
 				"unit":      "key_version_month",
 			},
+			"dns/cloud_dns": {
+				"provider":          "gcp",
+				"domain":            "dns",
+				"service":           "cloud_dns",
+				"zone_type":         "public",
+				"zone_count":        3.0,
+				"queries_per_month": 10000000.0,
+			},
 		},
-		DecisionMatrix: map[string]string{
-			"Cloud Storage":            "storage/gcs",
-			"GCS":                      "storage/gcs",
-			"Compute Engine":           "compute/compute_engine",
-			"GCE":                      "compute/compute_engine",
-			"Cloud SQL":                "database/cloud_sql",
-			"Memorystore":              "database/memorystore",
-			"Redis":                    "database/memorystore",
-			"GKE":                      "container/gke",
-			"Google Kubernetes Engine": "container/gke",
-			"Vertex AI":                "ai/vertex",
-			"Gemini":                   "ai/gemini",
-			"BigQuery":                 "analytics/bigquery",
-			"Cloud Load Balancing":     "network/cloud_lb",
-			"Cloud CDN":                "network/cloud_cdn — GCP-native CDN (use provider='gcp', service='cloud_cdn')",
-			"CDN (GCP)":                "network/cloud_cdn — use provider='gcp', service='cloud_cdn', NOT provider='aws'",
-			"Cloud NAT":                "network/cloud_nat",
-			"Cloud Armor":              "network/cloud_armor",
-			"External IP":              "network/external_ip — set term='on_demand' (Standard VM) or term='spot' (Spot/Preemptible VM)",
-			"External IP Address":      "network/external_ip",
-			"Cloud Monitoring":         "observability/cloud_monitoring",
-			"GCP Egress":               "inter_region_egress — set source_region and data_gb",
-			"GCP Data Transfer":        "inter_region_egress — set source_region, dest_region (optional), data_gb",
-			"GCP Internet Egress":      "inter_region_egress — set source_region, data_gb (no dest_region)",
-			"GCP internet egress with tier breakdown":       "network/egress — set destination_type=internet + data_gb_per_month",
-			"GCP inter-region transfer with tier breakdown": "network/egress — set destination_type=cross_region + destination_region",
-			"Cloud KMS":                    "security/kms",
-			"Cloud Key Management Service": "security/kms",
-			"KMS":                          "security/kms",
-			"Key Management":               "security/kms",
-			"Cloud HSM":                    "security/kms — set key_type='hsm'",
-		},
+		DecisionMatrix: decisionMatrix,
 	}
 }
 
@@ -465,6 +514,13 @@ func (p *Provider) getPart3Price(ctx context.Context, spec models.PricingSpec) (
 
 	case *models.KMSPricingSpec:
 		prices, breakdown, err := p.priceKMS(ctx, s)
+		if err != nil {
+			return nil, err
+		}
+		return buildResult(prices, breakdown), nil
+
+	case *models.DNSPricingSpec:
+		prices, breakdown, err := p.priceDNS(ctx, s)
 		if err != nil {
 			return nil, err
 		}

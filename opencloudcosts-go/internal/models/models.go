@@ -59,6 +59,7 @@ const (
 	PricingDomainObservability     PricingDomain = "observability"
 	PricingDomainInterRegionEgress PricingDomain = "inter_region_egress"
 	PricingDomainSecurity          PricingDomain = "security"
+	PricingDomainDNS               PricingDomain = "dns"
 )
 
 // PriceUnit describes the unit of a price.
@@ -77,6 +78,7 @@ const (
 	PriceUnitPerUnit            PriceUnit = "per_unit"
 	PriceUnitPerKeyVersionMonth PriceUnit = "per_key_version_month"
 	PriceUnitPerOperation       PriceUnit = "per_operation"
+	PriceUnitPerZoneMonth       PriceUnit = "per_zone_month"
 )
 
 // PricingSpec is the marker interface for all pricing specification variants.
@@ -667,6 +669,67 @@ func (s *KMSPricingSpec) UnmarshalJSON(data []byte) error {
 	return json.Unmarshal(data, (*alias)(s))
 }
 
+// DNSPricingSpec prices GCP Cloud DNS managed zones and DNS queries
+// (domain=dns, service=cloud_dns).
+//
+// Cloud DNS bills along two independent, region-invariant dimensions:
+//   - a per-zone-month charge, volume-discounted by the total managed-zone
+//     count (zones 1-25, 26-10,000, 10,001+); and
+//   - a per-query charge for standard DNS resolution (port 53) queries,
+//     volume-discounted above 1,000,000,000 queries/month.
+//
+// zone_type does NOT change price: public, private, forwarding, and (by
+// inference) peering zones all resolve to the single shared ManagedZone tier
+// ladder (verified live against the GCP Cloud Billing Catalog API, issue
+// #78). ZoneType is retained as a validated, informational field only —
+// mirroring the role KeyType plays in KMSPricingSpec — not because it
+// selects a different rate.
+//
+// "Routing policy queries" ($0.70/$0.35 per million) are a real, documented
+// GCP charge but have no catalog SKU under this service ID; they are out of
+// scope for this spec.
+//
+// Pricing is region-invariant (scope="global" on every returned
+// NormalizedPrice); Region is accepted but ignored by the GCP provider.
+type DNSPricingSpec struct {
+	BasePricingSpec
+	// ZoneType is informational only — every zone type shares the single
+	// ManagedZone tier ladder, so this field never changes price.
+	// "public" (default) | "private" | "forwarding" | "peering".
+	ZoneType string `json:"zone_type,omitempty"`
+	// ZoneCount is the optional total managed-zone count (across all zone
+	// types) for a monthly cost estimate.
+	ZoneCount *float64 `json:"zone_count,omitempty"`
+	// QueriesPerMonth is the optional monthly DNS query volume (port 53) for
+	// a monthly cost estimate.
+	QueriesPerMonth *float64 `json:"queries_per_month,omitempty"`
+}
+
+var _ PricingSpec = (*DNSPricingSpec)(nil)
+
+// CacheKey implements PricingSpec.
+func (s *DNSPricingSpec) CacheKey() string {
+	zoneCount := ""
+	if s.ZoneCount != nil {
+		zoneCount = fmt.Sprintf("%v", *s.ZoneCount)
+	}
+	queries := ""
+	if s.QueriesPerMonth != nil {
+		queries = fmt.Sprintf("%v", *s.QueriesPerMonth)
+	}
+	return fmt.Sprintf("%s:%s:%s:%s", s.baseCacheKey(), s.ZoneType, zoneCount, queries)
+}
+
+// UnmarshalJSON pre-populates defaults then decodes.
+func (s *DNSPricingSpec) UnmarshalJSON(data []byte) error {
+	*s = DNSPricingSpec{
+		BasePricingSpec: defaultBase(),
+		ZoneType:        "public",
+	}
+	type alias DNSPricingSpec
+	return json.Unmarshal(data, (*alias)(s))
+}
+
 // NormalizePaymentOption returns the canonical SP payment option string or an
 // error for unknown values. The SP JSON uses these exact case-sensitive strings.
 func NormalizePaymentOption(s string) (string, error) {
@@ -697,7 +760,7 @@ type domainPeek struct {
 // Pydantic's discriminated-union behaviour on the PricingSpec type in models.py.
 //
 // Supported domains: compute, storage, database, container, ai, serverless,
-// analytics, network, observability, inter_region_egress, security.
+// analytics, network, observability, inter_region_egress, security, dns.
 func UnmarshalPricingSpec(data []byte) (PricingSpec, error) {
 	var peek domainPeek
 	if err := json.Unmarshal(data, &peek); err != nil {
@@ -779,6 +842,13 @@ func UnmarshalPricingSpec(data []byte) (PricingSpec, error) {
 		var s KMSPricingSpec
 		if err := json.Unmarshal(data, &s); err != nil {
 			return nil, fmt.Errorf("models: KMSPricingSpec: %w", err)
+		}
+		return &s, nil
+
+	case PricingDomainDNS:
+		var s DNSPricingSpec
+		if err := json.Unmarshal(data, &s); err != nil {
+			return nil, fmt.Errorf("models: DNSPricingSpec: %w", err)
 		}
 		return &s, nil
 
