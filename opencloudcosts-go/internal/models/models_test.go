@@ -798,6 +798,65 @@ func TestUnmarshal_DatabaseDefaults(t *testing.T) {
 	}
 }
 
+func TestUnmarshal_KMSDefaults(t *testing.T) {
+	data := []byte(`{"domain":"security","provider":"gcp","service":"kms","region":"us-central1"}`)
+	got, err := UnmarshalPricingSpec(data)
+	if err != nil {
+		t.Fatalf("UnmarshalPricingSpec: %v", err)
+	}
+	k, ok := got.(*KMSPricingSpec)
+	if !ok {
+		t.Fatalf("expected *KMSPricingSpec, got %T", got)
+	}
+	if k.KeyType != "software" {
+		t.Errorf("KeyType default: got %q, want %q", k.KeyType, "software")
+	}
+	if k.Algorithm != "symmetric" {
+		t.Errorf("Algorithm default: got %q, want %q", k.Algorithm, "symmetric")
+	}
+	if k.Unit != "key_version_month" {
+		t.Errorf("Unit default: got %q, want %q", k.Unit, "key_version_month")
+	}
+	if k.Autokey {
+		t.Errorf("Autokey default: got %v, want false", k.Autokey)
+	}
+}
+
+func TestUnmarshal_KMSFieldsAndDispatch(t *testing.T) {
+	// Exercises the real MCP entry path (JSON -> UnmarshalPricingSpec ->
+	// KMSPricingSpec.UnmarshalJSON) with explicit non-default fields, so a
+	// discriminator or default-seeding regression here would be caught
+	// rather than only in tests that construct KMSPricingSpec directly.
+	data := []byte(`{"provider":"gcp","domain":"security","service":"kms","key_type":"hsm","algorithm":"asymmetric-ec"}`)
+	got, err := UnmarshalPricingSpec(data)
+	if err != nil {
+		t.Fatalf("UnmarshalPricingSpec: %v", err)
+	}
+	k, ok := got.(*KMSPricingSpec)
+	if !ok {
+		t.Fatalf("expected *KMSPricingSpec, got %T", got)
+	}
+	if k.Provider != CloudProviderGCP {
+		t.Errorf("Provider: got %q, want %q", k.Provider, CloudProviderGCP)
+	}
+	if k.Domain != PricingDomainSecurity {
+		t.Errorf("Domain: got %q, want %q", k.Domain, PricingDomainSecurity)
+	}
+	if k.Service != "kms" {
+		t.Errorf("Service: got %q, want %q", k.Service, "kms")
+	}
+	if k.KeyType != "hsm" {
+		t.Errorf("KeyType: got %q, want %q", k.KeyType, "hsm")
+	}
+	if k.Algorithm != "asymmetric-ec" {
+		t.Errorf("Algorithm: got %q, want %q", k.Algorithm, "asymmetric-ec")
+	}
+	// Unit was omitted from the JSON, so the default-seeding must still win.
+	if k.Unit != "key_version_month" {
+		t.Errorf("Unit default not preserved: got %q, want %q", k.Unit, "key_version_month")
+	}
+}
+
 func TestUnmarshal_ContainerDefaults(t *testing.T) {
 	data := []byte(`{"domain":"container","provider":"aws","region":"us-east-1"}`)
 	got, err := UnmarshalPricingSpec(data)

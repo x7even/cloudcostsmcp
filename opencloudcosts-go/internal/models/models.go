@@ -58,22 +58,25 @@ const (
 	PricingDomainNetwork           PricingDomain = "network"
 	PricingDomainObservability     PricingDomain = "observability"
 	PricingDomainInterRegionEgress PricingDomain = "inter_region_egress"
+	PricingDomainSecurity          PricingDomain = "security"
 )
 
 // PriceUnit describes the unit of a price.
 type PriceUnit string
 
 const (
-	PriceUnitPerHour      PriceUnit = "per_hour"
-	PriceUnitPerMonth     PriceUnit = "per_month"
-	PriceUnitPerGBMonth   PriceUnit = "per_gb_month"
-	PriceUnitPerGB        PriceUnit = "per_gb"
-	PriceUnitPerIOPSMonth PriceUnit = "per_iops_month"
-	PriceUnitPerMBPSMonth PriceUnit = "per_mbps_month"
-	PriceUnitPerRequest   PriceUnit = "per_request"
-	PriceUnitPerGBSecond  PriceUnit = "per_gb_second"
-	PriceUnitPerQuery     PriceUnit = "per_query"
-	PriceUnitPerUnit      PriceUnit = "per_unit"
+	PriceUnitPerHour            PriceUnit = "per_hour"
+	PriceUnitPerMonth           PriceUnit = "per_month"
+	PriceUnitPerGBMonth         PriceUnit = "per_gb_month"
+	PriceUnitPerGB              PriceUnit = "per_gb"
+	PriceUnitPerIOPSMonth       PriceUnit = "per_iops_month"
+	PriceUnitPerMBPSMonth       PriceUnit = "per_mbps_month"
+	PriceUnitPerRequest         PriceUnit = "per_request"
+	PriceUnitPerGBSecond        PriceUnit = "per_gb_second"
+	PriceUnitPerQuery           PriceUnit = "per_query"
+	PriceUnitPerUnit            PriceUnit = "per_unit"
+	PriceUnitPerKeyVersionMonth PriceUnit = "per_key_version_month"
+	PriceUnitPerOperation       PriceUnit = "per_operation"
 )
 
 // PricingSpec is the marker interface for all pricing specification variants.
@@ -320,9 +323,9 @@ func (s *ComputePricingSpec) UnmarshalJSON(data []byte) error {
 // StoragePricingSpec prices block and object storage.
 type StoragePricingSpec struct {
 	BasePricingSpec
-	StorageType   string    `json:"storage_type"`
-	SizeGB        *float64  `json:"size_gb,omitempty"`
-	IOPS          *int      `json:"iops,omitempty"`
+	StorageType    string   `json:"storage_type"`
+	SizeGB         *float64 `json:"size_gb,omitempty"`
+	IOPS           *int     `json:"iops,omitempty"`
 	ThroughputMBPS *float64 `json:"throughput_mbps,omitempty"`
 }
 
@@ -612,6 +615,58 @@ func (s *EgressPricingSpec) UnmarshalJSON(data []byte) error {
 	return json.Unmarshal(data, (*alias)(s))
 }
 
+// KMSPricingSpec prices Cloud KMS / key-management key-versions and
+// cryptographic operations (domain=security, service=kms).
+//
+// Cloud KMS bills along two independent dimensions — active key-version-months
+// and cryptographic operation counts — bifurcated by protection level
+// (key_type) and, for HSM only, by algorithm (algorithm). Pricing is
+// region-invariant (scope="global" on every returned NormalizedPrice); Region
+// is accepted but ignored by the GCP provider.
+type KMSPricingSpec struct {
+	BasePricingSpec
+	// KeyType selects the protection level: "software" (default) | "hsm" | "external".
+	KeyType string `json:"key_type,omitempty"`
+	// Algorithm selects the key algorithm, which only affects price for key_type="hsm":
+	// "symmetric" (default) | "mac" | "asymmetric-rsa2048" | "asymmetric-rsa3072" |
+	// "asymmetric-rsa4096" | "asymmetric-ec" | "asymmetric-pkcs1v15" (limited
+	// availability: asia-south1/asia-south2 only).
+	Algorithm string `json:"algorithm,omitempty"`
+	// Unit selects the billing dimension: "key_version_month" (default) |
+	// "crypto_operations" | "random_bytes".
+	Unit string `json:"unit,omitempty"`
+	// Autokey, when true, prices the Cloud KMS Autokey SKU variant, which
+	// includes a monthly free allowance (100 key versions or 10,000
+	// operations) before the paid rate applies. The returned PricePerUnit is
+	// always the paid rate; the free allowance is reported in Breakdown.
+	Autokey bool `json:"autokey,omitempty"`
+	// KeyVersions is the optional key-version count for a monthly cost estimate
+	// (unit="key_version_month").
+	KeyVersions *float64 `json:"key_versions,omitempty"`
+	// OperationsPerMonth is the optional monthly operation count for a cost
+	// estimate (unit="crypto_operations" or "random_bytes").
+	OperationsPerMonth *float64 `json:"operations_per_month,omitempty"`
+}
+
+var _ PricingSpec = (*KMSPricingSpec)(nil)
+
+// CacheKey implements PricingSpec.
+func (s *KMSPricingSpec) CacheKey() string {
+	return fmt.Sprintf("%s:%s:%s:%s:%v", s.baseCacheKey(), s.KeyType, s.Algorithm, s.Unit, s.Autokey)
+}
+
+// UnmarshalJSON pre-populates defaults then decodes.
+func (s *KMSPricingSpec) UnmarshalJSON(data []byte) error {
+	*s = KMSPricingSpec{
+		BasePricingSpec: defaultBase(),
+		KeyType:         "software",
+		Algorithm:       "symmetric",
+		Unit:            "key_version_month",
+	}
+	type alias KMSPricingSpec
+	return json.Unmarshal(data, (*alias)(s))
+}
+
 // NormalizePaymentOption returns the canonical SP payment option string or an
 // error for unknown values. The SP JSON uses these exact case-sensitive strings.
 func NormalizePaymentOption(s string) (string, error) {
@@ -642,7 +697,7 @@ type domainPeek struct {
 // Pydantic's discriminated-union behaviour on the PricingSpec type in models.py.
 //
 // Supported domains: compute, storage, database, container, ai, serverless,
-// analytics, network, observability, inter_region_egress.
+// analytics, network, observability, inter_region_egress, security.
 func UnmarshalPricingSpec(data []byte) (PricingSpec, error) {
 	var peek domainPeek
 	if err := json.Unmarshal(data, &peek); err != nil {
@@ -717,6 +772,13 @@ func UnmarshalPricingSpec(data []byte) (PricingSpec, error) {
 		var s EgressPricingSpec
 		if err := json.Unmarshal(data, &s); err != nil {
 			return nil, fmt.Errorf("models: EgressPricingSpec: %w", err)
+		}
+		return &s, nil
+
+	case PricingDomainSecurity:
+		var s KMSPricingSpec
+		if err := json.Unmarshal(data, &s); err != nil {
+			return nil, fmt.Errorf("models: KMSPricingSpec: %w", err)
 		}
 		return &s, nil
 

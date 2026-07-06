@@ -36,6 +36,7 @@ func gcpDescribeCatalog() *models.ProviderCatalog {
 			models.PricingDomainNetwork,
 			models.PricingDomainObservability,
 			models.PricingDomainInterRegionEgress,
+			models.PricingDomainSecurity,
 		},
 		Services: map[string][]string{
 			"compute":             {"compute_engine"},
@@ -47,6 +48,7 @@ func gcpDescribeCatalog() *models.ProviderCatalog {
 			"network":             {"cloud_lb", "cloud_cdn", "cloud_nat", "cloud_armor", "egress", "external_ip"},
 			"observability":       {"cloud_monitoring"},
 			"inter_region_egress": {},
+			"security":            {"kms"},
 		},
 		SupportedTerms: map[string][]string{
 			"compute/compute_engine":         {"on_demand", "spot", "cud_1yr", "cud_3yr", "sud", "flex_cud"},
@@ -66,6 +68,7 @@ func gcpDescribeCatalog() *models.ProviderCatalog {
 			"network/external_ip":            {"on_demand", "spot"},
 			"observability/cloud_monitoring": {"on_demand"},
 			"inter_region_egress":            {"on_demand"},
+			"security/kms":                   {"on_demand"},
 		},
 		FilterHints: map[string]map[string]any{
 			"compute/compute_engine": {
@@ -158,6 +161,16 @@ func gcpDescribeCatalog() *models.ProviderCatalog {
 				"source_region": "GCP source region e.g. 'us-central1', 'europe-west1'",
 				"dest_region":   "GCP destination region (omit for internet egress)",
 				"data_gb":       "GB to transfer per month",
+			},
+			"security/kms": {
+				"key_type":             "software (default) | hsm | external",
+				"algorithm":            "symmetric (default) | mac | asymmetric-rsa2048 | asymmetric-rsa3072 | asymmetric-rsa4096 | asymmetric-ec | asymmetric-pkcs1v15 (asia-south1/asia-south2 only). Only affects price for key_type='hsm'.",
+				"unit":                 "key_version_month (default, active key-version monthly charge) | crypto_operations (per-operation charge) | random_bytes (Generate Random Bytes API calls)",
+				"autokey":              "bool — price the Cloud KMS Autokey SKU variant, which includes a monthly free allowance (100 key versions or 10,000 operations) before the paid rate applies",
+				"key_versions":         "Active key-version count for a monthly cost estimate (unit='key_version_month')",
+				"operations_per_month": "Monthly operation count for a cost estimate (unit='crypto_operations' or 'random_bytes')",
+				"service":              "kms",
+				"note":                 "All Cloud KMS pricing is region-invariant (scope='global'); region is accepted but ignored. HSM asymmetric key versions (EC/RSA3072/RSA4096/PKCS1v1.5) are volume-discounted: $2.50/mo for the first 2,000 key versions, $1.00/mo thereafter — both tiers are returned in breakdown.",
 			},
 		},
 		ExampleInvocations: map[string]map[string]any{
@@ -312,6 +325,14 @@ func gcpDescribeCatalog() *models.ProviderCatalog {
 				"service":  "external_ip",
 				"term":     "on_demand",
 			},
+			"security/kms": {
+				"provider":  "gcp",
+				"domain":    "security",
+				"service":   "kms",
+				"key_type":  "software",
+				"algorithm": "symmetric",
+				"unit":      "key_version_month",
+			},
 		},
 		DecisionMatrix: map[string]string{
 			"Cloud Storage":            "storage/gcs",
@@ -339,6 +360,11 @@ func gcpDescribeCatalog() *models.ProviderCatalog {
 			"GCP Internet Egress":      "inter_region_egress — set source_region, data_gb (no dest_region)",
 			"GCP internet egress with tier breakdown":       "network/egress — set destination_type=internet + data_gb_per_month",
 			"GCP inter-region transfer with tier breakdown": "network/egress — set destination_type=cross_region + destination_region",
+			"Cloud KMS":                    "security/kms",
+			"Cloud Key Management Service": "security/kms",
+			"KMS":                          "security/kms",
+			"Key Management":               "security/kms",
+			"Cloud HSM":                    "security/kms — set key_type='hsm'",
 		},
 	}
 }
@@ -433,7 +459,13 @@ func (p *Provider) getPart3Price(ctx context.Context, spec models.PricingSpec) (
 			return nil, err
 		}
 		return buildResult(prices, breakdown), nil
+
+	case *models.KMSPricingSpec:
+		prices, breakdown, err := p.priceKMS(ctx, s)
+		if err != nil {
+			return nil, err
+		}
+		return buildResult(prices, breakdown), nil
 	}
 	return nil, nil
 }
-
