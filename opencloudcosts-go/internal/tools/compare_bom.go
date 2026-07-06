@@ -765,7 +765,7 @@ func (h *Handler) HandleCompareBOM(
 			}
 
 			termOut := map[string]any{
-				"total_monthly": termRes.totalMonthly,
+				"total_monthly": moneyDict(termRes.totalMonthly, "/mo"),
 				"breakdown":     breakdownOut,
 			}
 
@@ -860,7 +860,8 @@ func buildCompareSummary(
 				continue
 			}
 		}
-		monthly, _ := termData["total_monthly"].(float64)
+		monthlyMap, _ := termData["total_monthly"].(map[string]any)
+		monthly, _ := monthlyMap["amount"].(float64)
 		if monthly <= 0 {
 			continue
 		}

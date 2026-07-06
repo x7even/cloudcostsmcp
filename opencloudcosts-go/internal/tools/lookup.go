@@ -433,7 +433,10 @@ func applyBaselineDeltas(entries []map[string]any, baselineRegion string, groupK
 
 // normalizedPriceSummary builds the LLM-readable summary dict for a NormalizedPrice.
 // Mirrors the summary() method in Python's NormalizedPrice.
-func normalizedPriceSummary(p models.NormalizedPrice) map[string]any {
+// sizeGB, when non-nil, is the caller-provided StoragePricingSpec.SizeGB —
+// used to scale a per_gb_month price_per_unit into a monthly_estimate the
+// same way per_hour/per_month prices already get one (RC3-032 / #30 part b).
+func normalizedPriceSummary(p models.NormalizedPrice, sizeGB *float64) map[string]any {
 	result := map[string]any{
 		"provider":    string(p.Provider),
 		"description": p.Description,
@@ -449,6 +452,8 @@ func normalizedPriceSummary(p models.NormalizedPrice) map[string]any {
 	}
 	if p.Unit == models.PriceUnitPerHour || p.Unit == models.PriceUnitPerMonth {
 		result["monthly_estimate"] = moneyDict(p.MonthlyCost(), "/mo")
+	} else if p.Unit == models.PriceUnitPerGBMonth && sizeGB != nil && *sizeGB > 0 {
+		result["monthly_estimate"] = moneyDict(p.PricePerUnit*(*sizeGB), "/mo")
 	}
 
 	// Include selected attributes — mirrors Python's filter set.
@@ -527,14 +532,14 @@ func isEmptyPricingResult(r *models.PricingResult) bool {
 		r.Note == ""
 }
 
-func pricingResultSummary(r *models.PricingResult) map[string]any {
+func pricingResultSummary(r *models.PricingResult, sizeGB *float64) map[string]any {
 	out := map[string]any{
-		"public_prices":  priceSummaries(r.PublicPrices),
+		"public_prices":  priceSummaries(r.PublicPrices, sizeGB),
 		"auth_available": r.AuthAvailable,
 		"source":         r.Source,
 	}
 	if len(r.ContractedPrices) > 0 {
-		out["contracted_prices"] = priceSummaries(r.ContractedPrices)
+		out["contracted_prices"] = priceSummaries(r.ContractedPrices, sizeGB)
 	}
 	if r.EffectivePrice != nil {
 		ep := r.EffectivePrice
@@ -561,10 +566,10 @@ func pricingResultSummary(r *models.PricingResult) map[string]any {
 }
 
 // priceSummaries converts a slice of NormalizedPrices to their summary dicts.
-func priceSummaries(prices []models.NormalizedPrice) []map[string]any {
+func priceSummaries(prices []models.NormalizedPrice, sizeGB *float64) []map[string]any {
 	out := make([]map[string]any, len(prices))
 	for i, p := range prices {
-		out[i] = normalizedPriceSummary(p)
+		out[i] = normalizedPriceSummary(p, sizeGB)
 	}
 	return out
 }
@@ -704,7 +709,14 @@ func (h *Handler) HandleGetPrice(
 		}
 		return jsonText(out), nil, nil
 	}
-	return jsonText(pricingResultSummary(result)), nil, nil
+	// RC3-032 / #30 part (b): storage specs may carry size_gb — thread it
+	// through so per_gb_month prices get a scaled monthly_estimate just like
+	// per_hour/per_month prices already do.
+	var sizeGB *float64
+	if sp, ok := spec.(*models.StoragePricingSpec); ok {
+		sizeGB = sp.SizeGB
+	}
+	return jsonText(pricingResultSummary(result, sizeGB)), nil, nil
 }
 
 // --------------------------------------------------------------------------

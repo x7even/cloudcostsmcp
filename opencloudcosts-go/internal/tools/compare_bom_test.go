@@ -83,7 +83,8 @@ func TestCompareBOM_TwoProviders(t *testing.T) {
 			continue
 		}
 
-		totalMonthly, _ := odData["total_monthly"].(float64)
+		totalMonthlyMap, _ := odData["total_monthly"].(map[string]any)
+		totalMonthly, _ := totalMonthlyMap["amount"].(float64)
 		if totalMonthly <= 0 {
 			t.Errorf("provider '%s': expected positive total_monthly, got %v", prov, totalMonthly)
 		}
@@ -202,7 +203,8 @@ func TestCompareBOM_BothTermsPresent(t *testing.T) {
 			t.Errorf("expected term '%s' in aws output, got %T", term, awsData[term])
 			continue
 		}
-		totalMonthly, _ := termData["total_monthly"].(float64)
+		totalMonthlyMap, _ := termData["total_monthly"].(map[string]any)
+		totalMonthly, _ := totalMonthlyMap["amount"].(float64)
 		if totalMonthly <= 0 {
 			t.Errorf("term '%s': expected positive total_monthly", term)
 		}
@@ -298,7 +300,8 @@ func TestCompareBOM_SingleProvider(t *testing.T) {
 	if !ok {
 		t.Fatal("expected on_demand data for aws")
 	}
-	totalMonthly, _ := odData["total_monthly"].(float64)
+	totalMonthlyMap, _ := odData["total_monthly"].(map[string]any)
+	totalMonthly, _ := totalMonthlyMap["amount"].(float64)
 	if totalMonthly < 270 || totalMonthly > 290 {
 		t.Errorf("expected total_monthly ~280.32 for 2x instances, got %.2f", totalMonthly)
 	}
@@ -411,7 +414,8 @@ func TestCompareBOM_FractionalQuantityCost(t *testing.T) {
 	// 2.7 x $0.192/hr x 730hr = $378.43. If quantity were truncated to 2,
 	// this would come out to ~$280.32 instead.
 	want := 0.192 * 730 * 2.7
-	totalMonthly, _ := odData["total_monthly"].(float64)
+	totalMonthlyMap, _ := odData["total_monthly"].(map[string]any)
+	totalMonthly, _ := totalMonthlyMap["amount"].(float64)
 	if diff := totalMonthly - want; diff > 0.01 || diff < -0.01 {
 		t.Errorf("expected total_monthly ~%.2f (fractional quantity honored), got %.2f", want, totalMonthly)
 	}

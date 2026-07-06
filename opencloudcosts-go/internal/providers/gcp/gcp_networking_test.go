@@ -84,7 +84,9 @@ func fakeLBSKUs() []map[string]any {
 	}
 }
 
-// toFloat64 safely converts a breakdown map value to float64.
+// toFloat64 safely converts a breakdown map value to float64. It also
+// unwraps the currency-typed money maps (map[string]any{"amount": ..., ...})
+// produced by breakdownMoney, so existing call sites keep working unchanged.
 func toFloat64(v any) float64 {
 	switch x := v.(type) {
 	case float64:
@@ -93,6 +95,8 @@ func toFloat64(v any) float64 {
 		return float64(x)
 	case int64:
 		return float64(x)
+	case map[string]any:
+		return toFloat64(x["amount"])
 	}
 	return 0
 }

@@ -546,6 +546,77 @@ func TestGetPrice_NotFallback_NoWarning(t *testing.T) {
 	}
 }
 
+// TestGetPrice_StorageWithSizeGB_SurfacesMonthlyEstimate covers RC3-032 (#30)
+// part (b): a storage spec (per_gb_month unit) with size_gb set must get a
+// monthly_estimate scaled by size_gb, exactly mirroring how per_hour/
+// per_month prices already surface one — otherwise callers have no way to
+// tell whether price_per_unit is a unit rate or a total.
+func TestGetPrice_StorageWithSizeGB_SurfacesMonthlyEstimate(t *testing.T) {
+	pvdr := &mockProvider{
+		name:          "gcp",
+		defaultRegion: "us-central1",
+		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
+			return makePriceResult(makeGCSStoragePrice(spec.GetRegion(), 0.020)), nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"gcp": pvdr})
+	resp := callGetPrice(t, h, map[string]any{
+		"provider":      "gcp",
+		"domain":        "storage",
+		"resource_type": "gcs_standard",
+		"region":        "us-central1",
+		"size_gb":       500,
+	})
+
+	prices, ok := resp["public_prices"].([]any)
+	if !ok || len(prices) != 1 {
+		t.Fatalf("public_prices: got %v, want a single-element slice", resp["public_prices"])
+	}
+	p0 := prices[0].(map[string]any)
+
+	monthly, ok := p0["monthly_estimate"].(map[string]any)
+	if !ok {
+		t.Fatalf("monthly_estimate is not a map: %v", p0["monthly_estimate"])
+	}
+	if monthly["currency"] != "USD" {
+		t.Errorf("monthly_estimate.currency: got %v, want USD", monthly["currency"])
+	}
+	// price_per_unit (0.020/GB-month) * size_gb (500) = 10.0.
+	if monthly["amount"] != 0.020*500 {
+		t.Errorf("monthly_estimate.amount: got %v, want %v", monthly["amount"], 0.020*500)
+	}
+}
+
+// TestGetPrice_StorageWithoutSizeGB_NoMonthlyEstimate is the negative
+// counterpart: omitting size_gb from a storage spec must NOT produce a
+// monthly_estimate (unchanged from current behavior) — there's nothing to
+// scale price_per_unit by.
+func TestGetPrice_StorageWithoutSizeGB_NoMonthlyEstimate(t *testing.T) {
+	pvdr := &mockProvider{
+		name:          "gcp",
+		defaultRegion: "us-central1",
+		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
+			return makePriceResult(makeGCSStoragePrice(spec.GetRegion(), 0.020)), nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"gcp": pvdr})
+	resp := callGetPrice(t, h, map[string]any{
+		"provider":      "gcp",
+		"domain":        "storage",
+		"resource_type": "gcs_standard",
+		"region":        "us-central1",
+	})
+
+	prices, ok := resp["public_prices"].([]any)
+	if !ok || len(prices) != 1 {
+		t.Fatalf("public_prices: got %v, want a single-element slice", resp["public_prices"])
+	}
+	p0 := prices[0].(map[string]any)
+	if _, ok := p0["monthly_estimate"]; ok {
+		t.Errorf("expected no monthly_estimate when size_gb is omitted, got: %v", p0["monthly_estimate"])
+	}
+}
+
 func TestGetPrice_NotSupportedError(t *testing.T) {
 	pvdr := &mockProvider{
 		name:          "aws",

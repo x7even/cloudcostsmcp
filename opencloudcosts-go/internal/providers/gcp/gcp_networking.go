@@ -588,6 +588,17 @@ func (p *Provider) GetEgressPrice(
 	return annotateFresh([]models.NormalizedPrice{price}), nil
 }
 
+// breakdownMoney wraps a dollar amount in a currency-typed display map,
+// mirroring internal/tools/lookup.go's moneyDict shape for cross-codebase
+// consistency (this package cannot import internal/tools due to layering).
+func breakdownMoney(amount float64, label string) map[string]any {
+	return map[string]any{
+		"amount":   amount,
+		"currency": "USD",
+		"display":  fmt.Sprintf("$%.2f%s", amount, label),
+	}
+}
+
 // --------------------------------------------------------------------------
 // Cloud Load Balancing
 // --------------------------------------------------------------------------
@@ -687,11 +698,12 @@ func (p *Provider) priceNetworkLB(
 	ruleMonthlyCost := ruleRate * ruleCount * hoursPerMonth
 	dataCost := dataRate * spec.DataGB
 	breakdown := map[string]any{
-		"lb_type":           lbType,
-		"rule_count":        spec.RuleCount,
-		"monthly_rule_cost": ruleMonthlyCost,
-		"monthly_data_cost": dataCost,
-		"monthly_total":     ruleMonthlyCost + dataCost,
+		"lb_type":            lbType,
+		"rule_count":         spec.RuleCount,
+		"monthly_rule_cost":  breakdownMoney(ruleMonthlyCost, "/mo"),
+		"monthly_data_cost":  breakdownMoney(dataCost, "/mo"),
+		"monthly_total":      breakdownMoney(ruleMonthlyCost+dataCost, "/mo"),
+		"monthly_total_note": "monthly_total = monthly_rule_cost + monthly_data_cost.",
 	}
 	if fallback {
 		breakdown["fallback"] = true
@@ -764,9 +776,10 @@ func (p *Provider) priceNetworkCDN(
 	}
 
 	breakdown := map[string]any{
-		"monthly_egress_cost":     egressRate * spec.EgressGB,
-		"monthly_cache_fill_cost": fillRate * spec.CacheFillGB,
-		"monthly_total":           egressRate*spec.EgressGB + fillRate*spec.CacheFillGB,
+		"monthly_egress_cost":     breakdownMoney(egressRate*spec.EgressGB, "/mo"),
+		"monthly_cache_fill_cost": breakdownMoney(fillRate*spec.CacheFillGB, "/mo"),
+		"monthly_total":           breakdownMoney(egressRate*spec.EgressGB+fillRate*spec.CacheFillGB, "/mo"),
+		"monthly_total_note":      "monthly_total = monthly_egress_cost + monthly_cache_fill_cost.",
 	}
 	if fallback {
 		breakdown["fallback"] = true
@@ -851,9 +864,10 @@ func (p *Provider) priceNetworkNAT(
 	dataCost := dataRate * spec.DataGB
 	breakdown := map[string]any{
 		"gateway_count":        spec.GatewayCount,
-		"monthly_gateway_cost": gwMonthlyCost,
-		"monthly_data_cost":    dataCost,
-		"monthly_total":        gwMonthlyCost + dataCost,
+		"monthly_gateway_cost": breakdownMoney(gwMonthlyCost, "/mo"),
+		"monthly_data_cost":    breakdownMoney(dataCost, "/mo"),
+		"monthly_total":        breakdownMoney(gwMonthlyCost+dataCost, "/mo"),
+		"monthly_total_note":   "monthly_total = monthly_gateway_cost + monthly_data_cost.",
 	}
 	if fallback {
 		breakdown["fallback"] = true
@@ -943,9 +957,10 @@ func (p *Provider) priceNetworkArmor(
 	policyCost := policyRate * float64(spec.PolicyCount)
 	reqCost := requestRate * spec.MonthlyRequestsMillions
 	breakdown := map[string]any{
-		"monthly_policy_cost":  policyCost,
-		"monthly_request_cost": reqCost,
-		"monthly_total":        policyCost + reqCost,
+		"monthly_policy_cost":  breakdownMoney(policyCost, "/mo"),
+		"monthly_request_cost": breakdownMoney(reqCost, "/mo"),
+		"monthly_total":        breakdownMoney(policyCost+reqCost, "/mo"),
+		"monthly_total_note":   "monthly_total = monthly_policy_cost + monthly_request_cost.",
 	}
 
 	var zeroDims []string
