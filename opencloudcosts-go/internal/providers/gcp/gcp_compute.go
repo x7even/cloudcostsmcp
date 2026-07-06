@@ -106,7 +106,7 @@ func (p *Provider) Supports(domain models.PricingDomain, service string) bool {
 	// Part 3 domains — implemented in gcp_networking.go and gcp_analytics.go.
 	case models.PricingDomainNetwork:
 		switch service {
-		case "", "cloud_lb", "cloud_cdn", "cloud_nat", "cloud_armor", "egress":
+		case "", "cloud_lb", "cloud_cdn", "cloud_nat", "cloud_armor", "egress", "external_ip":
 			return true
 		}
 	case models.PricingDomainObservability:
