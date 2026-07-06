@@ -227,6 +227,76 @@ func TestFetchDNSRates_Cached(t *testing.T) {
 	}
 }
 
+// TestFetchDNSRates_DuplicateMatchKeepsFirst verifies that if more than one
+// SKU matches the "managed zone" (or "dns query") substring pattern,
+// fetchDNSRates keeps the first match rather than silently letting a later
+// SKU overwrite it (last-write-wins).
+func TestFetchDNSRates_DuplicateMatchKeepsFirst(t *testing.T) {
+	skus := []map[string]any{
+		dnsSKUThreeTier("ManagedZone", 25, 10000,
+			"0", 200_000_000, // $0.20 — first match, should win
+			"0", 100_000_000,
+			"0", 30_000_000,
+		),
+		dnsSKUThreeTier("ManagedZone (duplicate catalog entry)", 25, 10000,
+			"0", 999_000_000, // $0.99 — later match, must be discarded
+			"0", 999_000_000,
+			"0", 999_000_000,
+		),
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(dnsSKUResponse(skus))
+	}))
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	ctx := context.Background()
+
+	rates := p.fetchDNSRates(ctx)
+	if abs(rates.ZoneTier1-0.20) > 1e-9 {
+		t.Errorf("ZoneTier1 = %.6f, want first match's 0.200000 (duplicate must not overwrite)", rates.ZoneTier1)
+	}
+}
+
+// TestFetchDNSRates_SkipsNonGlobalMatch verifies that a SKU whose
+// geoTaxonomy.type is present and not "GLOBAL" is skipped, even if its
+// description would otherwise match — Cloud DNS pricing is region-invariant
+// (see file header), so a regional SKU matching the same substring must
+// never be mistaken for the real rate.
+func TestFetchDNSRates_SkipsNonGlobalMatch(t *testing.T) {
+	regional := dnsSKUThreeTier("ManagedZone", 25, 10000,
+		"0", 999_000_000, // must be skipped
+		"0", 999_000_000,
+		"0", 999_000_000,
+	)
+	regional["geoTaxonomy"] = map[string]any{"type": "REGIONAL"}
+
+	skus := []map[string]any{
+		regional,
+		dnsSKUThreeTier("ManagedZone", 25, 10000,
+			"0", 200_000_000, // $0.20 — the real, GLOBAL-scoped SKU
+			"0", 100_000_000,
+			"0", 30_000_000,
+		),
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(dnsSKUResponse(skus))
+	}))
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	ctx := context.Background()
+
+	rates := p.fetchDNSRates(ctx)
+	if abs(rates.ZoneTier1-0.20) > 1e-9 {
+		t.Errorf("ZoneTier1 = %.6f, want 0.200000 (non-GLOBAL SKU must be skipped)", rates.ZoneTier1)
+	}
+}
+
 // --------------------------------------------------------------------------
 // priceDNS — headline rate, scope, and dispatch tests
 // --------------------------------------------------------------------------
@@ -345,9 +415,13 @@ func TestPriceDNS_DefaultZoneTypeIsPublic(t *testing.T) {
 	}
 }
 
-// TestPriceDNS_InvalidZoneType verifies that an unrecognized ZoneType value
-// returns an explicit error instead of silently defaulting to public.
-func TestPriceDNS_InvalidZoneType(t *testing.T) {
+// TestPriceDNS_UnrecognizedZoneTypeIsInformationalOnly verifies that an
+// unrecognized ZoneType value does NOT error — zone_type never affects price
+// (it's a purely descriptive attribute; see gcp_dns.go's file header and
+// dnsKnownZoneTypes doc comment), so an unfamiliar value is surfaced as an
+// informational breakdown note rather than rejected, and the price is still
+// computed normally (and identically to a recognized zone_type).
+func TestPriceDNS_UnrecognizedZoneTypeIsInformationalOnly(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(dnsSKUResponse(fakeDNSSKUs()))
@@ -358,9 +432,35 @@ func TestPriceDNS_InvalidZoneType(t *testing.T) {
 	ctx := context.Background()
 
 	spec := &models.DNSPricingSpec{ZoneType: "quantum"}
-	prices, _, err := p.priceDNS(ctx, spec)
-	if err == nil {
-		t.Fatalf("priceDNS: expected error for invalid zone_type, got prices %+v", prices)
+	prices, breakdown, err := p.priceDNS(ctx, spec)
+	if err != nil {
+		t.Fatalf("priceDNS: unexpected error for unrecognized zone_type: %v", err)
+	}
+	if len(prices) != 2 {
+		t.Fatalf("priceDNS: expected 2 prices, got %d", len(prices))
+	}
+
+	unrecognized, ok := breakdown["zone_type_unrecognized"]
+	if !ok || unrecognized != true {
+		t.Fatalf("priceDNS: expected breakdown[\"zone_type_unrecognized\"]=true, got %v (ok=%v)", unrecognized, ok)
+	}
+	if _, ok := breakdown["zone_type_unrecognized_note"].(string); !ok {
+		t.Fatalf("priceDNS: expected breakdown[\"zone_type_unrecognized_note\"] to be a string, got %v", breakdown["zone_type_unrecognized_note"])
+	}
+
+	// Price is unaffected: compare against the recognized "public" zone_type.
+	publicPrices, publicBreakdown, err := p.priceDNS(ctx, &models.DNSPricingSpec{ZoneType: "public"})
+	if err != nil {
+		t.Fatalf("priceDNS: unexpected error for zone_type=public: %v", err)
+	}
+	if _, ok := publicBreakdown["zone_type_unrecognized"]; ok {
+		t.Fatalf("priceDNS: did not expect zone_type_unrecognized for zone_type=public")
+	}
+	if prices[0].PricePerUnit != publicPrices[0].PricePerUnit {
+		t.Fatalf("priceDNS: zone rate differs by zone_type: quantum=%v public=%v", prices[0].PricePerUnit, publicPrices[0].PricePerUnit)
+	}
+	if prices[1].PricePerUnit != publicPrices[1].PricePerUnit {
+		t.Fatalf("priceDNS: query rate differs by zone_type: quantum=%v public=%v", prices[1].PricePerUnit, publicPrices[1].PricePerUnit)
 	}
 }
 

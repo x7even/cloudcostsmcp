@@ -120,11 +120,17 @@ type tieredCostResult struct {
 	TierBreakdown    []tierBreakdownRow `json:"tier_breakdown"`
 }
 
+// tierBreakdownRow describes one tier's contribution to a tiered cost
+// calculation. Quantity is the amount of the billed dimension consumed within
+// this tier — GB for network-egress callers (gcp_networking.go, gcp_kms.go),
+// but reused generically for other dimensions (e.g. zone-count/query-count in
+// gcp_dns.go) via the same shared computeTieredCost machinery, so the field
+// is named generically rather than "gbs" to avoid mislabeling non-GB callers.
 type tierBreakdownRow struct {
-	Tier    string  `json:"tier"`
-	GBs     float64 `json:"gbs"`
-	RateUSD float64 `json:"rate_usd"`
-	Cost    float64 `json:"cost"`
+	Tier     string  `json:"tier"`
+	Quantity float64 `json:"quantity"`
+	RateUSD  float64 `json:"rate_usd"`
+	Cost     float64 `json:"cost"`
 }
 
 // computeTieredCost calculates the total egress cost for dataGB over the given tiers.
@@ -155,10 +161,10 @@ func computeTieredCost(tiers []egressTier, dataGB float64) tieredCostResult {
 		}
 		cost := tierGB * tier.rate
 		rows = append(rows, tierBreakdownRow{
-			Tier:    tier.label,
-			GBs:     tierGB,
-			RateUSD: tier.rate,
-			Cost:    cost,
+			Tier:     tier.label,
+			Quantity: tierGB,
+			RateUSD:  tier.rate,
+			Cost:     cost,
 		})
 		totalCost += cost
 		remaining -= tierGB

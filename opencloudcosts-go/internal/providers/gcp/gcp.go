@@ -15,6 +15,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -375,40 +376,64 @@ func skuMatchesRegion(regions []any, region string) bool {
 	return false
 }
 
-// skuPrice extracts the first-tier unit price (startUsageAmount == 0) from a raw
-// GCP SKU map[string]any returned by the Billing Catalog API.
-func skuPrice(sku map[string]any) float64 {
+// tierRate is one parsed (startUsageAmount, unitPrice) pair from a raw GCP
+// SKU's pricingInfo[0].pricingExpression.tieredRates.
+type tierRate struct {
+	start float64
+	price float64
+}
+
+// skuTierList parses every tiered unit price out of a raw GCP SKU
+// (map[string]any as returned by the Billing Catalog API), sorted ascending
+// by startUsageAmount (ties keep their original relative order). It is the
+// single shared JSON-unwrap step behind skuPrice (below — first zero-start
+// tier), skuPaidPrice (gcp_ai.go — first tier with startUsageAmount > 0), and
+// skuAllTierRates (gcp_dns.go — every tier, for SKUs with more than two
+// tiers); previously each reimplemented this same
+// pricingInfo->pricingExpression->tieredRates unwrap independently.
+func skuTierList(sku map[string]any) []tierRate {
 	pi, _ := sku["pricingInfo"].([]any)
 	if len(pi) == 0 {
-		return 0
+		return nil
 	}
 	pe, _ := pi[0].(map[string]any)
 	if pe == nil {
-		return 0
+		return nil
 	}
 	expr, _ := pe["pricingExpression"].(map[string]any)
 	if expr == nil {
-		return 0
+		return nil
 	}
 	tiers, _ := expr["tieredRates"].([]any)
+
+	out := make([]tierRate, 0, len(tiers))
 	for _, t := range tiers {
 		tier, _ := t.(map[string]any)
 		if tier == nil {
-			continue
-		}
-		start, _ := tier["startUsageAmount"].(float64)
-		if start != 0 {
 			continue
 		}
 		up, _ := tier["unitPrice"].(map[string]any)
 		if up == nil {
 			continue
 		}
+		start, _ := tier["startUsageAmount"].(float64)
 		units, _ := up["units"].(string)
 		nanos, _ := up["nanos"].(float64)
-		price := gcpMoney(units, int(nanos))
-		if price > 0 {
-			return price
+		out = append(out, tierRate{start: start, price: gcpMoney(units, int(nanos))})
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].start < out[j].start })
+	return out
+}
+
+// skuPrice extracts the first-tier unit price (startUsageAmount == 0) from a raw
+// GCP SKU map[string]any returned by the Billing Catalog API.
+func skuPrice(sku map[string]any) float64 {
+	for _, t := range skuTierList(sku) {
+		if t.start != 0 {
+			continue
+		}
+		if t.price > 0 {
+			return t.price
 		}
 	}
 	return 0

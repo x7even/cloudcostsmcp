@@ -443,7 +443,18 @@ func applyBaselineDeltas(entries []map[string]any, baselineRegion string, groupK
 // scale a per_gb_month/per_iops_month/per_mbps_month price_per_unit into a
 // monthly_estimate the same way per_hour/per_month prices already get one
 // (RC3-032 / #30 part b).
-func normalizedPriceSummary(p models.NormalizedPrice, storageSpec *models.StoragePricingSpec) map[string]any {
+// dnsSpec, when non-nil, is the caller's DNSPricingSpec — used the same way
+// to scale a per_zone_month/per_query price_per_unit into a monthly_estimate
+// (#78 follow-up). Note this monthly_estimate is a flat rate*quantity
+// product using only the headline (tier1) rate: it will diverge from the
+// tier-accurate breakdown["zone_monthly_cost"]/breakdown["query_monthly_cost"]
+// once ZoneCount/QueriesPerMonth crosses a volume-discount tier boundary,
+// because this summary layer has no access to the gcp-package tiered-cost
+// machinery (computeTieredCost) that produced those breakdown figures — the
+// same architectural gap storageSpec's monthly_estimate has always had.
+// Prefer the breakdown fields over monthly_estimate for exact figures near a
+// tier boundary.
+func normalizedPriceSummary(p models.NormalizedPrice, storageSpec *models.StoragePricingSpec, dnsSpec *models.DNSPricingSpec) map[string]any {
 	result := map[string]any{
 		"provider":    string(p.Provider),
 		"description": p.Description,
@@ -473,6 +484,17 @@ func normalizedPriceSummary(p models.NormalizedPrice, storageSpec *models.Storag
 		case models.PriceUnitPerMBPSMonth:
 			if storageSpec.ThroughputMBPS != nil && *storageSpec.ThroughputMBPS > 0 {
 				result["monthly_estimate"] = moneyDict(p.PricePerUnit*(*storageSpec.ThroughputMBPS), "/mo")
+			}
+		}
+	case dnsSpec != nil:
+		switch p.Unit {
+		case models.PriceUnitPerZoneMonth:
+			if dnsSpec.ZoneCount != nil && *dnsSpec.ZoneCount > 0 {
+				result["monthly_estimate"] = moneyDict(p.PricePerUnit*(*dnsSpec.ZoneCount), "/mo")
+			}
+		case models.PriceUnitPerQuery:
+			if dnsSpec.QueriesPerMonth != nil && *dnsSpec.QueriesPerMonth > 0 {
+				result["monthly_estimate"] = moneyDict(p.PricePerUnit*(*dnsSpec.QueriesPerMonth), "/mo")
 			}
 		}
 	}
@@ -553,14 +575,14 @@ func isEmptyPricingResult(r *models.PricingResult) bool {
 		r.Note == ""
 }
 
-func pricingResultSummary(r *models.PricingResult, storageSpec *models.StoragePricingSpec) map[string]any {
+func pricingResultSummary(r *models.PricingResult, storageSpec *models.StoragePricingSpec, dnsSpec *models.DNSPricingSpec) map[string]any {
 	out := map[string]any{
-		"public_prices":  priceSummaries(r.PublicPrices, storageSpec),
+		"public_prices":  priceSummaries(r.PublicPrices, storageSpec, dnsSpec),
 		"auth_available": r.AuthAvailable,
 		"source":         r.Source,
 	}
 	if len(r.ContractedPrices) > 0 {
-		out["contracted_prices"] = priceSummaries(r.ContractedPrices, storageSpec)
+		out["contracted_prices"] = priceSummaries(r.ContractedPrices, storageSpec, dnsSpec)
 	}
 	if r.EffectivePrice != nil {
 		ep := r.EffectivePrice
@@ -587,10 +609,10 @@ func pricingResultSummary(r *models.PricingResult, storageSpec *models.StoragePr
 }
 
 // priceSummaries converts a slice of NormalizedPrices to their summary dicts.
-func priceSummaries(prices []models.NormalizedPrice, storageSpec *models.StoragePricingSpec) []map[string]any {
+func priceSummaries(prices []models.NormalizedPrice, storageSpec *models.StoragePricingSpec, dnsSpec *models.DNSPricingSpec) []map[string]any {
 	out := make([]map[string]any, len(prices))
 	for i, p := range prices {
-		out[i] = normalizedPriceSummary(p, storageSpec)
+		out[i] = normalizedPriceSummary(p, storageSpec, dnsSpec)
 	}
 	return out
 }
@@ -738,7 +760,14 @@ func (h *Handler) HandleGetPrice(
 	if sp, ok := spec.(*models.StoragePricingSpec); ok {
 		storageSpec = sp
 	}
-	return jsonText(pricingResultSummary(result, storageSpec)), nil, nil
+	// #78 follow-up: DNS specs may carry zone_count/queries_per_month — same
+	// pattern as storageSpec above, so per_zone_month/per_query prices get a
+	// scaled monthly_estimate too.
+	var dnsSpec *models.DNSPricingSpec
+	if dp, ok := spec.(*models.DNSPricingSpec); ok {
+		dnsSpec = dp
+	}
+	return jsonText(pricingResultSummary(result, storageSpec, dnsSpec)), nil, nil
 }
 
 // --------------------------------------------------------------------------

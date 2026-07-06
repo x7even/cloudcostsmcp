@@ -20,10 +20,65 @@ import (
 // DescribeCatalog
 // --------------------------------------------------------------------------
 
+// dnsDecisionMatrixTarget is the single "domain/service" target string for
+// every Cloud DNS DecisionMatrix entry. dnsDecisionMatrixEntries derives all
+// of its keys' values from this one constant instead of repeating
+// "dns/cloud_dns" (and its variants) independently per key.
+const dnsDecisionMatrixTarget = "dns/cloud_dns"
+
+// dnsDecisionMatrixEntries returns the DecisionMatrix entries that route an
+// LLM's natural-language service name to Cloud DNS, all derived from
+// dnsDecisionMatrixTarget.
+func dnsDecisionMatrixEntries() map[string]string {
+	return map[string]string{
+		"Cloud DNS":   dnsDecisionMatrixTarget,
+		"DNS":         dnsDecisionMatrixTarget,
+		"Managed DNS": dnsDecisionMatrixTarget,
+		"DNS zones":   dnsDecisionMatrixTarget + " — set zone_count",
+		"DNS queries": dnsDecisionMatrixTarget + " — set queries_per_month",
+	}
+}
+
 // gcpDescribeCatalog returns the full provider catalog describing every GCP
 // domain and service this provider can price, along with filter hints,
 // example invocations, and a decision matrix for LLM tool routing.
 func gcpDescribeCatalog() *models.ProviderCatalog {
+	decisionMatrix := map[string]string{
+		"Cloud Storage":            "storage/gcs",
+		"GCS":                      "storage/gcs",
+		"Compute Engine":           "compute/compute_engine",
+		"GCE":                      "compute/compute_engine",
+		"Cloud SQL":                "database/cloud_sql",
+		"Memorystore":              "database/memorystore",
+		"Redis":                    "database/memorystore",
+		"GKE":                      "container/gke",
+		"Google Kubernetes Engine": "container/gke",
+		"Vertex AI":                "ai/vertex",
+		"Gemini":                   "ai/gemini",
+		"BigQuery":                 "analytics/bigquery",
+		"Cloud Load Balancing":     "network/cloud_lb",
+		"Cloud CDN":                "network/cloud_cdn — GCP-native CDN (use provider='gcp', service='cloud_cdn')",
+		"CDN (GCP)":                "network/cloud_cdn — use provider='gcp', service='cloud_cdn', NOT provider='aws'",
+		"Cloud NAT":                "network/cloud_nat",
+		"Cloud Armor":              "network/cloud_armor",
+		"External IP":              "network/external_ip — set term='on_demand' (Standard VM) or term='spot' (Spot/Preemptible VM)",
+		"External IP Address":      "network/external_ip",
+		"Cloud Monitoring":         "observability/cloud_monitoring",
+		"GCP Egress":               "inter_region_egress — set source_region and data_gb",
+		"GCP Data Transfer":        "inter_region_egress — set source_region, dest_region (optional), data_gb",
+		"GCP Internet Egress":      "inter_region_egress — set source_region, data_gb (no dest_region)",
+		"GCP internet egress with tier breakdown":       "network/egress — set destination_type=internet + data_gb_per_month",
+		"GCP inter-region transfer with tier breakdown": "network/egress — set destination_type=cross_region + destination_region",
+		"Cloud KMS":                    "security/kms",
+		"Cloud Key Management Service": "security/kms",
+		"KMS":                          "security/kms",
+		"Key Management":               "security/kms",
+		"Cloud HSM":                    "security/kms — set key_type='hsm'",
+	}
+	for k, v := range dnsDecisionMatrixEntries() {
+		decisionMatrix[k] = v
+	}
+
 	return &models.ProviderCatalog{
 		Provider: models.CloudProviderGCP,
 		Domains: []models.PricingDomain{
@@ -362,43 +417,7 @@ func gcpDescribeCatalog() *models.ProviderCatalog {
 				"queries_per_month": 10000000.0,
 			},
 		},
-		DecisionMatrix: map[string]string{
-			"Cloud Storage":            "storage/gcs",
-			"GCS":                      "storage/gcs",
-			"Compute Engine":           "compute/compute_engine",
-			"GCE":                      "compute/compute_engine",
-			"Cloud SQL":                "database/cloud_sql",
-			"Memorystore":              "database/memorystore",
-			"Redis":                    "database/memorystore",
-			"GKE":                      "container/gke",
-			"Google Kubernetes Engine": "container/gke",
-			"Vertex AI":                "ai/vertex",
-			"Gemini":                   "ai/gemini",
-			"BigQuery":                 "analytics/bigquery",
-			"Cloud Load Balancing":     "network/cloud_lb",
-			"Cloud CDN":                "network/cloud_cdn — GCP-native CDN (use provider='gcp', service='cloud_cdn')",
-			"CDN (GCP)":                "network/cloud_cdn — use provider='gcp', service='cloud_cdn', NOT provider='aws'",
-			"Cloud NAT":                "network/cloud_nat",
-			"Cloud Armor":              "network/cloud_armor",
-			"External IP":              "network/external_ip — set term='on_demand' (Standard VM) or term='spot' (Spot/Preemptible VM)",
-			"External IP Address":      "network/external_ip",
-			"Cloud Monitoring":         "observability/cloud_monitoring",
-			"GCP Egress":               "inter_region_egress — set source_region and data_gb",
-			"GCP Data Transfer":        "inter_region_egress — set source_region, dest_region (optional), data_gb",
-			"GCP Internet Egress":      "inter_region_egress — set source_region, data_gb (no dest_region)",
-			"GCP internet egress with tier breakdown":       "network/egress — set destination_type=internet + data_gb_per_month",
-			"GCP inter-region transfer with tier breakdown": "network/egress — set destination_type=cross_region + destination_region",
-			"Cloud KMS":                    "security/kms",
-			"Cloud Key Management Service": "security/kms",
-			"KMS":                          "security/kms",
-			"Key Management":               "security/kms",
-			"Cloud HSM":                    "security/kms — set key_type='hsm'",
-			"Cloud DNS":                    "dns/cloud_dns",
-			"DNS":                          "dns/cloud_dns",
-			"Managed DNS":                  "dns/cloud_dns",
-			"DNS zones":                    "dns/cloud_dns — set zone_count",
-			"DNS queries":                  "dns/cloud_dns — set queries_per_month",
-		},
+		DecisionMatrix: decisionMatrix,
 	}
 }
 
