@@ -105,28 +105,19 @@ func TestPriceNetworkArmor_CostMath(t *testing.T) {
 	}
 
 	// policy_cost = 3 × $0.75 = $2.25
-	policyCost, ok := breakdown["monthly_policy_cost"].(float64)
-	if !ok {
-		t.Fatalf("monthly_policy_cost missing or wrong type: %v", breakdown["monthly_policy_cost"])
-	}
+	policyCost := mustFloat64(t, breakdown["monthly_policy_cost"], "monthly_policy_cost")
 	if abs(policyCost-2.25) > 1e-9 {
 		t.Errorf("monthly_policy_cost = %.4f, want 2.25", policyCost)
 	}
 
 	// request_cost = 50 × $0.75 = $37.50
-	reqCost, ok := breakdown["monthly_request_cost"].(float64)
-	if !ok {
-		t.Fatalf("monthly_request_cost missing or wrong type: %v", breakdown["monthly_request_cost"])
-	}
+	reqCost := mustFloat64(t, breakdown["monthly_request_cost"], "monthly_request_cost")
 	if abs(reqCost-37.50) > 1e-9 {
 		t.Errorf("monthly_request_cost = %.4f, want 37.50", reqCost)
 	}
 
 	// total = $39.75
-	total, ok := breakdown["monthly_total"].(float64)
-	if !ok {
-		t.Fatalf("monthly_total missing or wrong type: %v", breakdown["monthly_total"])
-	}
+	total := mustFloat64(t, breakdown["monthly_total"], "monthly_total")
 	if abs(total-39.75) > 1e-9 {
 		t.Errorf("monthly_total = %.4f, want 39.75", total)
 	}
@@ -413,7 +404,7 @@ func makeRegionSKU(desc, region string, units string, nanos int) map[string]any 
 // Expected: vcpu_rate == $0.0495, ram_rate == $0.006655, fallback == false.
 func TestPriceVertexAI_TrainingRateFromSKU(t *testing.T) {
 	vcpuSKU := makeRegionSKU("N1 Custom Training vCPU running in Americas", "us-central1", "0", 49_500_000) // $0.0495
-	ramSKU := makeRegionSKU("N1 Custom Training RAM running in Americas", "us-central1", "0", 6_655_000)   // $0.006655
+	ramSKU := makeRegionSKU("N1 Custom Training RAM running in Americas", "us-central1", "0", 6_655_000)    // $0.006655
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

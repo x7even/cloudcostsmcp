@@ -546,6 +546,181 @@ func TestGetPrice_NotFallback_NoWarning(t *testing.T) {
 	}
 }
 
+// TestGetPrice_StorageWithSizeGB_SurfacesMonthlyEstimate covers RC3-032 (#30)
+// part (b): a storage spec (per_gb_month unit) with size_gb set must get a
+// monthly_estimate scaled by size_gb, exactly mirroring how per_hour/
+// per_month prices already surface one — otherwise callers have no way to
+// tell whether price_per_unit is a unit rate or a total.
+func TestGetPrice_StorageWithSizeGB_SurfacesMonthlyEstimate(t *testing.T) {
+	pvdr := &mockProvider{
+		name:          "gcp",
+		defaultRegion: "us-central1",
+		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
+			return makePriceResult(makeGCSStoragePrice(spec.GetRegion(), 0.020)), nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"gcp": pvdr})
+	resp := callGetPrice(t, h, map[string]any{
+		"provider":      "gcp",
+		"domain":        "storage",
+		"resource_type": "gcs_standard",
+		"region":        "us-central1",
+		"size_gb":       500,
+	})
+
+	prices, ok := resp["public_prices"].([]any)
+	if !ok || len(prices) != 1 {
+		t.Fatalf("public_prices: got %v, want a single-element slice", resp["public_prices"])
+	}
+	p0 := prices[0].(map[string]any)
+
+	monthly, ok := p0["monthly_estimate"].(map[string]any)
+	if !ok {
+		t.Fatalf("monthly_estimate is not a map: %v", p0["monthly_estimate"])
+	}
+	if monthly["currency"] != "USD" {
+		t.Errorf("monthly_estimate.currency: got %v, want USD", monthly["currency"])
+	}
+	// price_per_unit (0.020/GB-month) * size_gb (500) = 10.0.
+	if monthly["amount"] != 0.020*500 {
+		t.Errorf("monthly_estimate.amount: got %v, want %v", monthly["amount"], 0.020*500)
+	}
+}
+
+// TestGetPrice_StorageWithoutSizeGB_NoMonthlyEstimate is the negative
+// counterpart: omitting size_gb from a storage spec must NOT produce a
+// monthly_estimate (unchanged from current behavior) — there's nothing to
+// scale price_per_unit by.
+func TestGetPrice_StorageWithoutSizeGB_NoMonthlyEstimate(t *testing.T) {
+	pvdr := &mockProvider{
+		name:          "gcp",
+		defaultRegion: "us-central1",
+		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
+			return makePriceResult(makeGCSStoragePrice(spec.GetRegion(), 0.020)), nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"gcp": pvdr})
+	resp := callGetPrice(t, h, map[string]any{
+		"provider":      "gcp",
+		"domain":        "storage",
+		"resource_type": "gcs_standard",
+		"region":        "us-central1",
+	})
+
+	prices, ok := resp["public_prices"].([]any)
+	if !ok || len(prices) != 1 {
+		t.Fatalf("public_prices: got %v, want a single-element slice", resp["public_prices"])
+	}
+	p0 := prices[0].(map[string]any)
+	if _, ok := p0["monthly_estimate"]; ok {
+		t.Errorf("expected no monthly_estimate when size_gb is omitted, got: %v", p0["monthly_estimate"])
+	}
+}
+
+// TestGetPrice_StorageWithIOPS_SurfacesMonthlyEstimate covers the
+// per_iops_month generalization of RC3-032 (#30) part (b): a storage spec
+// with iops set must get a monthly_estimate scaled by iops, the same way
+// per_gb_month prices already get one scaled by size_gb — real providers
+// (e.g. AWS io2) price provisioned IOPS this way.
+func TestGetPrice_StorageWithIOPS_SurfacesMonthlyEstimate(t *testing.T) {
+	pvdr := &mockProvider{
+		name:          "aws",
+		defaultRegion: "us-east-1",
+		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
+			return makePriceResult(models.NormalizedPrice{
+				Provider:      models.CloudProviderAWS,
+				Service:       "storage",
+				SKUID:         fmt.Sprintf("aws:ebs:io2:iops:%s", spec.GetRegion()),
+				ProductFamily: "Storage",
+				Description:   "io2 Provisioned IOPS SSD IOPS-months",
+				Region:        spec.GetRegion(),
+				PricingTerm:   models.PricingTermOnDemand,
+				PricePerUnit:  0.065,
+				Unit:          models.PriceUnitPerIOPSMonth,
+				Currency:      "USD",
+			}), nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"aws": pvdr})
+	resp := callGetPrice(t, h, map[string]any{
+		"provider":      "aws",
+		"domain":        "storage",
+		"resource_type": "io2",
+		"region":        "us-east-1",
+		"iops":          1000,
+	})
+
+	prices, ok := resp["public_prices"].([]any)
+	if !ok || len(prices) != 1 {
+		t.Fatalf("public_prices: got %v, want a single-element slice", resp["public_prices"])
+	}
+	p0 := prices[0].(map[string]any)
+
+	monthly, ok := p0["monthly_estimate"].(map[string]any)
+	if !ok {
+		t.Fatalf("monthly_estimate is not a map: %v", p0["monthly_estimate"])
+	}
+	if monthly["currency"] != "USD" {
+		t.Errorf("monthly_estimate.currency: got %v, want USD", monthly["currency"])
+	}
+	// price_per_unit (0.065/IOPS-month) * iops (1000) = 65.0.
+	if monthly["amount"] != 0.065*1000 {
+		t.Errorf("monthly_estimate.amount: got %v, want %v", monthly["amount"], 0.065*1000)
+	}
+}
+
+// TestGetPrice_StorageWithMBPS_SurfacesMonthlyEstimate covers the
+// per_mbps_month generalization of RC3-032 (#30) part (b): a storage spec
+// with throughput_mbps set must get a monthly_estimate scaled by
+// throughput_mbps — real providers (e.g. GCP Hyperdisk) price provisioned
+// throughput this way.
+func TestGetPrice_StorageWithMBPS_SurfacesMonthlyEstimate(t *testing.T) {
+	pvdr := &mockProvider{
+		name:          "gcp",
+		defaultRegion: "us-central1",
+		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
+			return makePriceResult(models.NormalizedPrice{
+				Provider:      models.CloudProviderGCP,
+				Service:       "storage",
+				SKUID:         fmt.Sprintf("gcp:hyperdisk:throughput:%s", spec.GetRegion()),
+				ProductFamily: "Persistent Disk",
+				Description:   "Hyperdisk Balanced provisioned throughput",
+				Region:        spec.GetRegion(),
+				PricingTerm:   models.PricingTermOnDemand,
+				PricePerUnit:  0.048,
+				Unit:          models.PriceUnitPerMBPSMonth,
+				Currency:      "USD",
+			}), nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"gcp": pvdr})
+	resp := callGetPrice(t, h, map[string]any{
+		"provider":        "gcp",
+		"domain":          "storage",
+		"resource_type":   "hyperdisk_balanced",
+		"region":          "us-central1",
+		"throughput_mbps": 250,
+	})
+
+	prices, ok := resp["public_prices"].([]any)
+	if !ok || len(prices) != 1 {
+		t.Fatalf("public_prices: got %v, want a single-element slice", resp["public_prices"])
+	}
+	p0 := prices[0].(map[string]any)
+
+	monthly, ok := p0["monthly_estimate"].(map[string]any)
+	if !ok {
+		t.Fatalf("monthly_estimate is not a map: %v", p0["monthly_estimate"])
+	}
+	if monthly["currency"] != "USD" {
+		t.Errorf("monthly_estimate.currency: got %v, want USD", monthly["currency"])
+	}
+	// price_per_unit (0.048/MBPS-month) * throughput_mbps (250) = 12.0.
+	if monthly["amount"] != 0.048*250 {
+		t.Errorf("monthly_estimate.amount: got %v, want %v", monthly["amount"], 0.048*250)
+	}
+}
+
 func TestGetPrice_NotSupportedError(t *testing.T) {
 	pvdr := &mockProvider{
 		name:          "aws",

@@ -433,7 +433,11 @@ func applyBaselineDeltas(entries []map[string]any, baselineRegion string, groupK
 
 // normalizedPriceSummary builds the LLM-readable summary dict for a NormalizedPrice.
 // Mirrors the summary() method in Python's NormalizedPrice.
-func normalizedPriceSummary(p models.NormalizedPrice) map[string]any {
+// storageSpec, when non-nil, is the caller's StoragePricingSpec — used to
+// scale a per_gb_month/per_iops_month/per_mbps_month price_per_unit into a
+// monthly_estimate the same way per_hour/per_month prices already get one
+// (RC3-032 / #30 part b).
+func normalizedPriceSummary(p models.NormalizedPrice, storageSpec *models.StoragePricingSpec) map[string]any {
 	result := map[string]any{
 		"provider":    string(p.Provider),
 		"description": p.Description,
@@ -447,8 +451,24 @@ func normalizedPriceSummary(p models.NormalizedPrice) map[string]any {
 		// callers to special-case field names per tool.
 		"price_per_unit": priceDict(p.PricePerUnit, string(p.Unit)),
 	}
-	if p.Unit == models.PriceUnitPerHour || p.Unit == models.PriceUnitPerMonth {
+	switch {
+	case p.Unit == models.PriceUnitPerHour || p.Unit == models.PriceUnitPerMonth:
 		result["monthly_estimate"] = moneyDict(p.MonthlyCost(), "/mo")
+	case storageSpec != nil:
+		switch p.Unit {
+		case models.PriceUnitPerGBMonth:
+			if storageSpec.SizeGB != nil && *storageSpec.SizeGB > 0 {
+				result["monthly_estimate"] = moneyDict(p.PricePerUnit*(*storageSpec.SizeGB), "/mo")
+			}
+		case models.PriceUnitPerIOPSMonth:
+			if storageSpec.IOPS != nil && *storageSpec.IOPS > 0 {
+				result["monthly_estimate"] = moneyDict(p.PricePerUnit*float64(*storageSpec.IOPS), "/mo")
+			}
+		case models.PriceUnitPerMBPSMonth:
+			if storageSpec.ThroughputMBPS != nil && *storageSpec.ThroughputMBPS > 0 {
+				result["monthly_estimate"] = moneyDict(p.PricePerUnit*(*storageSpec.ThroughputMBPS), "/mo")
+			}
+		}
 	}
 
 	// Include selected attributes — mirrors Python's filter set.
@@ -527,14 +547,14 @@ func isEmptyPricingResult(r *models.PricingResult) bool {
 		r.Note == ""
 }
 
-func pricingResultSummary(r *models.PricingResult) map[string]any {
+func pricingResultSummary(r *models.PricingResult, storageSpec *models.StoragePricingSpec) map[string]any {
 	out := map[string]any{
-		"public_prices":  priceSummaries(r.PublicPrices),
+		"public_prices":  priceSummaries(r.PublicPrices, storageSpec),
 		"auth_available": r.AuthAvailable,
 		"source":         r.Source,
 	}
 	if len(r.ContractedPrices) > 0 {
-		out["contracted_prices"] = priceSummaries(r.ContractedPrices)
+		out["contracted_prices"] = priceSummaries(r.ContractedPrices, storageSpec)
 	}
 	if r.EffectivePrice != nil {
 		ep := r.EffectivePrice
@@ -561,10 +581,10 @@ func pricingResultSummary(r *models.PricingResult) map[string]any {
 }
 
 // priceSummaries converts a slice of NormalizedPrices to their summary dicts.
-func priceSummaries(prices []models.NormalizedPrice) []map[string]any {
+func priceSummaries(prices []models.NormalizedPrice, storageSpec *models.StoragePricingSpec) []map[string]any {
 	out := make([]map[string]any, len(prices))
 	for i, p := range prices {
-		out[i] = normalizedPriceSummary(p)
+		out[i] = normalizedPriceSummary(p, storageSpec)
 	}
 	return out
 }
@@ -704,7 +724,15 @@ func (h *Handler) HandleGetPrice(
 		}
 		return jsonText(out), nil, nil
 	}
-	return jsonText(pricingResultSummary(result)), nil, nil
+	// RC3-032 / #30 part (b): storage specs may carry size_gb/iops/
+	// throughput_mbps — thread the spec through so per_gb_month/
+	// per_iops_month/per_mbps_month prices get a scaled monthly_estimate
+	// just like per_hour/per_month prices already do.
+	var storageSpec *models.StoragePricingSpec
+	if sp, ok := spec.(*models.StoragePricingSpec); ok {
+		storageSpec = sp
+	}
+	return jsonText(pricingResultSummary(result, storageSpec)), nil, nil
 }
 
 // --------------------------------------------------------------------------

@@ -21,6 +21,7 @@ import (
 
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/cache"
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/models"
+	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/utils"
 )
 
 // GCP service ID for Cloud Armor.
@@ -588,6 +589,18 @@ func (p *Provider) GetEgressPrice(
 	return annotateFresh([]models.NormalizedPrice{price}), nil
 }
 
+// breakdownMoney wraps a dollar amount in a currency-typed display map,
+// mirroring internal/tools/lookup.go's moneyDict shape via the shared
+// internal/utils.Money helper (the single source of truth for this format).
+func breakdownMoney(amount float64, label string) map[string]any {
+	m := utils.Money(amount, label)
+	return map[string]any{
+		"amount":   m.Amount,
+		"currency": m.Currency,
+		"display":  m.Display,
+	}
+}
+
 // --------------------------------------------------------------------------
 // Cloud Load Balancing
 // --------------------------------------------------------------------------
@@ -686,12 +699,17 @@ func (p *Provider) priceNetworkLB(
 	}
 	ruleMonthlyCost := ruleRate * ruleCount * hoursPerMonth
 	dataCost := dataRate * spec.DataGB
+	const (
+		keyMonthlyRuleCost = "monthly_rule_cost"
+		keyMonthlyDataCost = "monthly_data_cost"
+	)
 	breakdown := map[string]any{
-		"lb_type":           lbType,
-		"rule_count":        spec.RuleCount,
-		"monthly_rule_cost": ruleMonthlyCost,
-		"monthly_data_cost": dataCost,
-		"monthly_total":     ruleMonthlyCost + dataCost,
+		"lb_type":            lbType,
+		"rule_count":         spec.RuleCount,
+		keyMonthlyRuleCost:   breakdownMoney(ruleMonthlyCost, "/mo"),
+		keyMonthlyDataCost:   breakdownMoney(dataCost, "/mo"),
+		"monthly_total":      breakdownMoney(ruleMonthlyCost+dataCost, "/mo"),
+		"monthly_total_note": fmt.Sprintf("monthly_total = %s + %s.", keyMonthlyRuleCost, keyMonthlyDataCost),
 	}
 	if fallback {
 		breakdown["fallback"] = true
@@ -763,10 +781,15 @@ func (p *Provider) priceNetworkCDN(
 		},
 	}
 
+	const (
+		keyMonthlyEgressCost    = "monthly_egress_cost"
+		keyMonthlyCacheFillCost = "monthly_cache_fill_cost"
+	)
 	breakdown := map[string]any{
-		"monthly_egress_cost":     egressRate * spec.EgressGB,
-		"monthly_cache_fill_cost": fillRate * spec.CacheFillGB,
-		"monthly_total":           egressRate*spec.EgressGB + fillRate*spec.CacheFillGB,
+		keyMonthlyEgressCost:    breakdownMoney(egressRate*spec.EgressGB, "/mo"),
+		keyMonthlyCacheFillCost: breakdownMoney(fillRate*spec.CacheFillGB, "/mo"),
+		"monthly_total":         breakdownMoney(egressRate*spec.EgressGB+fillRate*spec.CacheFillGB, "/mo"),
+		"monthly_total_note":    fmt.Sprintf("monthly_total = %s + %s.", keyMonthlyEgressCost, keyMonthlyCacheFillCost),
 	}
 	if fallback {
 		breakdown["fallback"] = true
@@ -849,11 +872,16 @@ func (p *Provider) priceNetworkNAT(
 	}
 	gwMonthlyCost := gatewayRate * gatewayCount * hoursPerMonth
 	dataCost := dataRate * spec.DataGB
+	const (
+		keyMonthlyGatewayCost = "monthly_gateway_cost"
+		keyMonthlyDataCost    = "monthly_data_cost"
+	)
 	breakdown := map[string]any{
-		"gateway_count":        spec.GatewayCount,
-		"monthly_gateway_cost": gwMonthlyCost,
-		"monthly_data_cost":    dataCost,
-		"monthly_total":        gwMonthlyCost + dataCost,
+		"gateway_count":       spec.GatewayCount,
+		keyMonthlyGatewayCost: breakdownMoney(gwMonthlyCost, "/mo"),
+		keyMonthlyDataCost:    breakdownMoney(dataCost, "/mo"),
+		"monthly_total":       breakdownMoney(gwMonthlyCost+dataCost, "/mo"),
+		"monthly_total_note":  fmt.Sprintf("monthly_total = %s + %s.", keyMonthlyGatewayCost, keyMonthlyDataCost),
 	}
 	if fallback {
 		breakdown["fallback"] = true
@@ -942,10 +970,15 @@ func (p *Provider) priceNetworkArmor(
 
 	policyCost := policyRate * float64(spec.PolicyCount)
 	reqCost := requestRate * spec.MonthlyRequestsMillions
+	const (
+		keyMonthlyPolicyCost  = "monthly_policy_cost"
+		keyMonthlyRequestCost = "monthly_request_cost"
+	)
 	breakdown := map[string]any{
-		"monthly_policy_cost":  policyCost,
-		"monthly_request_cost": reqCost,
-		"monthly_total":        policyCost + reqCost,
+		keyMonthlyPolicyCost:  breakdownMoney(policyCost, "/mo"),
+		keyMonthlyRequestCost: breakdownMoney(reqCost, "/mo"),
+		"monthly_total":       breakdownMoney(policyCost+reqCost, "/mo"),
+		"monthly_total_note":  fmt.Sprintf("monthly_total = %s + %s.", keyMonthlyPolicyCost, keyMonthlyRequestCost),
 	}
 
 	var zeroDims []string

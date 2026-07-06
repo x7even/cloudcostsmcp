@@ -87,7 +87,7 @@ func (p *Provider) priceAnalytics(
 	}
 
 	if totalCost > 0 && len(components) > 0 {
-		breakdown["monthly_total"] = totalCost
+		breakdown["monthly_total"] = breakdownMoney(totalCost, "/mo")
 		// Prepend composite price so estimate_bom picks it up as the unit cost.
 		composite := models.NormalizedPrice{
 			Provider:      models.CloudProviderGCP,

@@ -765,7 +765,7 @@ func (h *Handler) HandleCompareBOM(
 			}
 
 			termOut := map[string]any{
-				"total_monthly": termRes.totalMonthly,
+				"total_monthly": moneyDict(termRes.totalMonthly, "/mo"),
 				"breakdown":     breakdownOut,
 			}
 
@@ -821,6 +821,18 @@ func (h *Handler) HandleCompareBOM(
 // Summary generation
 // --------------------------------------------------------------------------
 
+// amountOf safely extracts a float64 "amount" field out of a money-dict map
+// (map[string]any{"amount": ..., "currency": ..., "display": ...}), returning
+// 0 if v is not such a map or the amount field is missing/wrong-typed.
+func amountOf(v any) float64 {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return 0
+	}
+	amount, _ := m["amount"].(float64)
+	return amount
+}
+
 // buildCompareSummary generates a natural-language summary identifying the
 // cheapest provider and savings vs on-demand for the best committed term.
 func buildCompareSummary(
@@ -860,7 +872,7 @@ func buildCompareSummary(
 				continue
 			}
 		}
-		monthly, _ := termData["total_monthly"].(float64)
+		monthly := amountOf(termData["total_monthly"])
 		if monthly <= 0 {
 			continue
 		}
@@ -868,7 +880,7 @@ func buildCompareSummary(
 		savings := 0.0
 		savingPct := 0.0
 		if svo, ok := termData["savings_vs_on_demand"].(map[string]any); ok {
-			savings, _ = svo["amount"].(float64)
+			savings = amountOf(svo)
 			savingPct, _ = svo["percent"].(float64)
 		}
 

@@ -149,14 +149,9 @@ func (li bomLineItem) toMap() map[string]any {
 		"provider":    li.provider,
 		"service":     li.service,
 		"region":      li.region,
-		"quantity":    li.quantity,
-		"unit_price": map[string]any{
-			"amount": li.unitPrice.PricePerUnit,
-			"unit":   string(li.unitPrice.Unit),
-		},
-		"monthly_cost": map[string]any{
-			"amount": li.monthlyCost,
-		},
+		"quantity":       li.quantity,
+		"price_per_unit": priceDict(li.unitPrice.PricePerUnit, string(li.unitPrice.Unit)),
+		"monthly_cost":   moneyDict(li.monthlyCost, "/mo"),
 	}
 
 	// Surface the provider's fallback flag (mirrors compare_prices in
@@ -407,8 +402,8 @@ func (h *Handler) HandleEstimateBOM(
 	resp := map[string]any{
 		"line_items": lineItemMaps,
 		"totals": map[string]any{
-			"monthly": map[string]any{"amount": totalMonthly},
-			"annual":  map[string]any{"amount": totalAnnual},
+			"monthly": moneyDict(totalMonthly, "/mo"),
+			"annual":  moneyDict(totalAnnual, "/yr"),
 		},
 		"not_included":        nil,
 		"not_included_action": nil,

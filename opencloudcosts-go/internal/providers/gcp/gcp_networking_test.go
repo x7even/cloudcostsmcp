@@ -84,7 +84,9 @@ func fakeLBSKUs() []map[string]any {
 	}
 }
 
-// toFloat64 safely converts a breakdown map value to float64.
+// toFloat64 safely converts a breakdown map value to float64. It also
+// unwraps the currency-typed money maps (map[string]any{"amount": ..., ...})
+// produced by breakdownMoney, so existing call sites keep working unchanged.
 func toFloat64(v any) float64 {
 	switch x := v.(type) {
 	case float64:
@@ -93,7 +95,29 @@ func toFloat64(v any) float64 {
 		return float64(x)
 	case int64:
 		return float64(x)
+	case map[string]any:
+		return toFloat64(x["amount"])
 	}
+	return 0
+}
+
+// mustFloat64 is toFloat64 but fails the test loudly (t.Fatalf) instead of
+// silently returning 0 when v is missing or an unrecognized type — use this
+// in tests where a shape/type regression should be distinguishable from a
+// wrong-value regression.
+func mustFloat64(t *testing.T, v any, name string) float64 {
+	t.Helper()
+	switch x := v.(type) {
+	case float64:
+		return x
+	case int:
+		return float64(x)
+	case int64:
+		return float64(x)
+	case map[string]any:
+		return mustFloat64(t, x["amount"], name+".amount")
+	}
+	t.Fatalf("%s missing or wrong type: %v", name, v)
 	return 0
 }
 
