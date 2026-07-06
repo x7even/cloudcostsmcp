@@ -197,6 +197,9 @@ var serviceToDomain = map[string]models.PricingDomain{
 	"cloud_dns": models.PricingDomainDNS,
 	"dns":       models.PricingDomainDNS,
 	"clouddns":  models.PricingDomainDNS,
+	// messaging
+	"pubsub":  models.PricingDomainMessaging,
+	"pub_sub": models.PricingDomainMessaging,
 	// egress
 	// "egress" is intentionally absent: it is a valid service in BOTH domain=network
 	// (internet egress with tiered pricing via NetworkPricingSpec + destination_type=internet)
@@ -286,7 +289,7 @@ func specErrorResponse(err error, spec map[string]any) map[string]any {
 		(!hasDomain && strings.Contains(msgLower, "discriminator")):
 		resp["fix"] = "The 'domain' field is required and must be one of: " +
 			"compute, storage, database, ai, container, serverless, " +
-			"analytics, network, observability, inter_region_egress, security, dns"
+			"analytics, network, observability, inter_region_egress, security, dns, messaging"
 	case strings.Contains(msg, ".term") && strings.Contains(msgLower, "input should be"):
 		resp["fix"] = fmt.Sprintf("Valid term values: %s", validTerms)
 	case !hasProvider:
@@ -454,7 +457,17 @@ func applyBaselineDeltas(entries []map[string]any, baselineRegion string, groupK
 // same architectural gap storageSpec's monthly_estimate has always had.
 // Prefer the breakdown fields over monthly_estimate for exact figures near a
 // tier boundary.
-func normalizedPriceSummary(p models.NormalizedPrice, storageSpec *models.StoragePricingSpec, dnsSpec *models.DNSPricingSpec) map[string]any {
+// pubsubSpec, when non-nil, is the caller's PubSubPricingSpec — used the same
+// way to scale a per_gb (throughput) or per_gb_month (storage) price_per_unit
+// into a monthly_estimate (#79 follow-up). For destination="basic" this flat
+// rate*quantity product uses the *paid* per-GB rate at every volume, so it
+// overstates cost below the 10 GiB/month free allowance and near that
+// boundary — same caveat as DNS's tier boundaries above, plus this
+// unconditional free-tier gap. Prefer
+// breakdown["throughput_monthly_cost"]/breakdown["storage_monthly_cost"]
+// (computed via the tiered-cost machinery, which does account for the free
+// tier) over monthly_estimate for exact figures.
+func normalizedPriceSummary(p models.NormalizedPrice, storageSpec *models.StoragePricingSpec, dnsSpec *models.DNSPricingSpec, pubsubSpec *models.PubSubPricingSpec) map[string]any {
 	result := map[string]any{
 		"provider":    string(p.Provider),
 		"description": p.Description,
@@ -495,6 +508,17 @@ func normalizedPriceSummary(p models.NormalizedPrice, storageSpec *models.Storag
 		case models.PriceUnitPerQuery:
 			if dnsSpec.QueriesPerMonth != nil && *dnsSpec.QueriesPerMonth > 0 {
 				result["monthly_estimate"] = moneyDict(p.PricePerUnit*(*dnsSpec.QueriesPerMonth), "/mo")
+			}
+		}
+	case pubsubSpec != nil:
+		switch p.Unit {
+		case models.PriceUnitPerGB:
+			if pubsubSpec.ThroughputGBPerMonth != nil && *pubsubSpec.ThroughputGBPerMonth > 0 {
+				result["monthly_estimate"] = moneyDict(p.PricePerUnit*(*pubsubSpec.ThroughputGBPerMonth), "/mo")
+			}
+		case models.PriceUnitPerGBMonth:
+			if pubsubSpec.StorageGB != nil && *pubsubSpec.StorageGB > 0 {
+				result["monthly_estimate"] = moneyDict(p.PricePerUnit*(*pubsubSpec.StorageGB), "/mo")
 			}
 		}
 	}
@@ -575,14 +599,14 @@ func isEmptyPricingResult(r *models.PricingResult) bool {
 		r.Note == ""
 }
 
-func pricingResultSummary(r *models.PricingResult, storageSpec *models.StoragePricingSpec, dnsSpec *models.DNSPricingSpec) map[string]any {
+func pricingResultSummary(r *models.PricingResult, storageSpec *models.StoragePricingSpec, dnsSpec *models.DNSPricingSpec, pubsubSpec *models.PubSubPricingSpec) map[string]any {
 	out := map[string]any{
-		"public_prices":  priceSummaries(r.PublicPrices, storageSpec, dnsSpec),
+		"public_prices":  priceSummaries(r.PublicPrices, storageSpec, dnsSpec, pubsubSpec),
 		"auth_available": r.AuthAvailable,
 		"source":         r.Source,
 	}
 	if len(r.ContractedPrices) > 0 {
-		out["contracted_prices"] = priceSummaries(r.ContractedPrices, storageSpec, dnsSpec)
+		out["contracted_prices"] = priceSummaries(r.ContractedPrices, storageSpec, dnsSpec, pubsubSpec)
 	}
 	if r.EffectivePrice != nil {
 		ep := r.EffectivePrice
@@ -609,10 +633,10 @@ func pricingResultSummary(r *models.PricingResult, storageSpec *models.StoragePr
 }
 
 // priceSummaries converts a slice of NormalizedPrices to their summary dicts.
-func priceSummaries(prices []models.NormalizedPrice, storageSpec *models.StoragePricingSpec, dnsSpec *models.DNSPricingSpec) []map[string]any {
+func priceSummaries(prices []models.NormalizedPrice, storageSpec *models.StoragePricingSpec, dnsSpec *models.DNSPricingSpec, pubsubSpec *models.PubSubPricingSpec) []map[string]any {
 	out := make([]map[string]any, len(prices))
 	for i, p := range prices {
-		out[i] = normalizedPriceSummary(p, storageSpec, dnsSpec)
+		out[i] = normalizedPriceSummary(p, storageSpec, dnsSpec, pubsubSpec)
 	}
 	return out
 }
@@ -767,7 +791,14 @@ func (h *Handler) HandleGetPrice(
 	if dp, ok := spec.(*models.DNSPricingSpec); ok {
 		dnsSpec = dp
 	}
-	return jsonText(pricingResultSummary(result, storageSpec, dnsSpec)), nil, nil
+	// #79 follow-up: Pub/Sub specs may carry throughput_gb_per_month/
+	// storage_gb — same pattern as storageSpec/dnsSpec above, so
+	// per_gb/per_gb_month prices get a scaled monthly_estimate too.
+	var pubsubSpec *models.PubSubPricingSpec
+	if pp, ok := spec.(*models.PubSubPricingSpec); ok {
+		pubsubSpec = pp
+	}
+	return jsonText(pricingResultSummary(result, storageSpec, dnsSpec, pubsubSpec)), nil, nil
 }
 
 // --------------------------------------------------------------------------

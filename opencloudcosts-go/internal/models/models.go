@@ -60,6 +60,7 @@ const (
 	PricingDomainInterRegionEgress PricingDomain = "inter_region_egress"
 	PricingDomainSecurity          PricingDomain = "security"
 	PricingDomainDNS               PricingDomain = "dns"
+	PricingDomainMessaging         PricingDomain = "messaging"
 )
 
 // PriceUnit describes the unit of a price.
@@ -730,6 +731,91 @@ func (s *DNSPricingSpec) UnmarshalJSON(data []byte) error {
 	return json.Unmarshal(data, (*alias)(s))
 }
 
+// PubSubPricingSpec prices GCP Cloud Pub/Sub message throughput and message
+// storage/retention (domain=messaging, service=pubsub).
+//
+// Cloud Pub/Sub bills along two independent, region-invariant dimensions:
+//   - a per-GiB throughput charge for message delivery, bifurcated by
+//     destination — Basic delivery includes a 10 GiB/month free allowance
+//     before the paid rate applies, while BigQuery/Cloud-Storage/Bigtable
+//     direct-write "ingestion" destinations and cross-cloud/on-prem "import"
+//     destinations (Kinesis, Azure Event Hubs, AWS MSK, Confluent Cloud) and
+//     Single Message Transform (SMT) throughput (UDF and AI-inference) are
+//     each billed a flat rate with no free tier; and
+//   - a per-GiB-month storage charge for retained message backlog (topics,
+//     subscriptions, snapshots) and retained acknowledged messages — all four
+//     of which share one identical rate.
+//
+// Verified live against the GCP Cloud Billing Catalog API (service
+// A1E8-BE35-7EBC, "Cloud Pub/Sub", issue #79): all 77 SKUs under this service
+// are tagged serviceRegions=["global"] with geoTaxonomy.type either "GLOBAL"
+// or absent (never "REGIONAL") — pricing is genuinely region-invariant, not
+// merely a documentation convention. This confirms (rather than merely
+// assumes) the issue's "candidate for scope:global" framing.
+//
+// Out of scope for this spec (deliberately, not gaps):
+//   - Pub/Sub Lite (a distinct service, serviceId 3A1B-66C4-2BAE) — different
+//     pricing model (provisioned capacity + storage), not covered here.
+//   - The 61 Network/egress SKUs under this same service ID. They are also
+//     tagged serviceRegions=["global"] at the API level, but encode actual
+//     geography as continent-pair corridors inside the SKU description
+//     string (not a flat global rate) — a materially more complex shape
+//     that is deferred to a future, dedicated egress spec.
+//   - Schema Registry, seek/replay, filtered messages, and dead-letter
+//     topics/ordering keys are confirmed NOT billed as separate line items
+//     (no corresponding SKU exists) — these are not gaps in this
+//     implementation, they are genuinely free.
+//
+// Pricing is region-invariant (scope="global" on every returned
+// NormalizedPrice); Region is accepted but ignored by the GCP provider.
+type PubSubPricingSpec struct {
+	BasePricingSpec
+	// Destination selects the message-delivery throughput rate and DOES
+	// affect price: "basic" (default, 10 GiB/month free then paid) |
+	// "bigquery" | "cloud_storage_export" | "bigtable" | "kinesis_import" |
+	// "cloud_storage_import" | "azure_event_hubs_import" | "aws_msk_import" |
+	// "confluent_cloud_import" | "smt_udf" | "smt_ai_inference".
+	Destination string `json:"destination,omitempty"`
+	// StorageType is informational only — topic backlog, subscription
+	// backlog, retained acknowledged messages, and snapshot backlog all
+	// share the single storage rate, so this field never changes price.
+	// "topic_backlog" (default) | "subscription_backlog" |
+	// "retained_acked_messages" | "snapshot_backlog".
+	StorageType string `json:"storage_type,omitempty"`
+	// ThroughputGBPerMonth is the optional monthly message-throughput volume
+	// (GiB) for a monthly cost estimate.
+	ThroughputGBPerMonth *float64 `json:"throughput_gb_per_month,omitempty"`
+	// StorageGB is the optional average monthly retained message backlog /
+	// retained-acknowledged-message volume (GiB) for a monthly cost estimate.
+	StorageGB *float64 `json:"storage_gb,omitempty"`
+}
+
+var _ PricingSpec = (*PubSubPricingSpec)(nil)
+
+// CacheKey implements PricingSpec.
+func (s *PubSubPricingSpec) CacheKey() string {
+	throughput := ""
+	if s.ThroughputGBPerMonth != nil {
+		throughput = fmt.Sprintf("%v", *s.ThroughputGBPerMonth)
+	}
+	storage := ""
+	if s.StorageGB != nil {
+		storage = fmt.Sprintf("%v", *s.StorageGB)
+	}
+	return fmt.Sprintf("%s:%s:%s:%s:%s", s.baseCacheKey(), s.Destination, s.StorageType, throughput, storage)
+}
+
+// UnmarshalJSON pre-populates defaults then decodes.
+func (s *PubSubPricingSpec) UnmarshalJSON(data []byte) error {
+	*s = PubSubPricingSpec{
+		BasePricingSpec: defaultBase(),
+		Destination:     "basic",
+		StorageType:     "topic_backlog",
+	}
+	type alias PubSubPricingSpec
+	return json.Unmarshal(data, (*alias)(s))
+}
+
 // NormalizePaymentOption returns the canonical SP payment option string or an
 // error for unknown values. The SP JSON uses these exact case-sensitive strings.
 func NormalizePaymentOption(s string) (string, error) {
@@ -760,7 +846,8 @@ type domainPeek struct {
 // Pydantic's discriminated-union behaviour on the PricingSpec type in models.py.
 //
 // Supported domains: compute, storage, database, container, ai, serverless,
-// analytics, network, observability, inter_region_egress, security, dns.
+// analytics, network, observability, inter_region_egress, security, dns,
+// messaging.
 func UnmarshalPricingSpec(data []byte) (PricingSpec, error) {
 	var peek domainPeek
 	if err := json.Unmarshal(data, &peek); err != nil {
@@ -849,6 +936,13 @@ func UnmarshalPricingSpec(data []byte) (PricingSpec, error) {
 		var s DNSPricingSpec
 		if err := json.Unmarshal(data, &s); err != nil {
 			return nil, fmt.Errorf("models: DNSPricingSpec: %w", err)
+		}
+		return &s, nil
+
+	case PricingDomainMessaging:
+		var s PubSubPricingSpec
+		if err := json.Unmarshal(data, &s); err != nil {
+			return nil, fmt.Errorf("models: PubSubPricingSpec: %w", err)
 		}
 		return &s, nil
 

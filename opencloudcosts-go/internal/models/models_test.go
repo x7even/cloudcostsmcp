@@ -912,6 +912,67 @@ func TestUnmarshal_DNSFieldsAndDispatch(t *testing.T) {
 	}
 }
 
+func TestUnmarshal_PubSubDefaults(t *testing.T) {
+	data := []byte(`{"domain":"messaging","provider":"gcp","service":"pubsub","region":"us-central1"}`)
+	got, err := UnmarshalPricingSpec(data)
+	if err != nil {
+		t.Fatalf("UnmarshalPricingSpec: %v", err)
+	}
+	ps, ok := got.(*PubSubPricingSpec)
+	if !ok {
+		t.Fatalf("expected *PubSubPricingSpec, got %T", got)
+	}
+	if ps.Destination != "basic" {
+		t.Errorf("Destination default: got %q, want %q", ps.Destination, "basic")
+	}
+	if ps.StorageType != "topic_backlog" {
+		t.Errorf("StorageType default: got %q, want %q", ps.StorageType, "topic_backlog")
+	}
+	if ps.ThroughputGBPerMonth != nil {
+		t.Errorf("ThroughputGBPerMonth default: got %v, want nil", ps.ThroughputGBPerMonth)
+	}
+	if ps.StorageGB != nil {
+		t.Errorf("StorageGB default: got %v, want nil", ps.StorageGB)
+	}
+}
+
+func TestUnmarshal_PubSubFieldsAndDispatch(t *testing.T) {
+	// Exercises the real MCP entry path (JSON -> UnmarshalPricingSpec ->
+	// PubSubPricingSpec.UnmarshalJSON) with explicit non-default fields, so a
+	// discriminator or default-seeding regression here would be caught
+	// rather than only in tests that construct PubSubPricingSpec directly.
+	data := []byte(`{"provider":"gcp","domain":"messaging","service":"pubsub","destination":"bigquery","storage_type":"subscription_backlog","throughput_gb_per_month":500,"storage_gb":200}`)
+	got, err := UnmarshalPricingSpec(data)
+	if err != nil {
+		t.Fatalf("UnmarshalPricingSpec: %v", err)
+	}
+	ps, ok := got.(*PubSubPricingSpec)
+	if !ok {
+		t.Fatalf("expected *PubSubPricingSpec, got %T", got)
+	}
+	if ps.Provider != CloudProviderGCP {
+		t.Errorf("Provider: got %q, want %q", ps.Provider, CloudProviderGCP)
+	}
+	if ps.Domain != PricingDomainMessaging {
+		t.Errorf("Domain: got %q, want %q", ps.Domain, PricingDomainMessaging)
+	}
+	if ps.Service != "pubsub" {
+		t.Errorf("Service: got %q, want %q", ps.Service, "pubsub")
+	}
+	if ps.Destination != "bigquery" {
+		t.Errorf("Destination: got %q, want %q", ps.Destination, "bigquery")
+	}
+	if ps.StorageType != "subscription_backlog" {
+		t.Errorf("StorageType: got %q, want %q", ps.StorageType, "subscription_backlog")
+	}
+	if ps.ThroughputGBPerMonth == nil || *ps.ThroughputGBPerMonth != 500 {
+		t.Errorf("ThroughputGBPerMonth: got %v, want 500", ps.ThroughputGBPerMonth)
+	}
+	if ps.StorageGB == nil || *ps.StorageGB != 200 {
+		t.Errorf("StorageGB: got %v, want 200", ps.StorageGB)
+	}
+}
+
 func TestUnmarshal_ContainerDefaults(t *testing.T) {
 	data := []byte(`{"domain":"container","provider":"aws","region":"us-east-1"}`)
 	got, err := UnmarshalPricingSpec(data)
