@@ -55,6 +55,25 @@ func pubsubDecisionMatrixEntries() map[string]string {
 	}
 }
 
+// firestoreDecisionMatrixTarget is the single "domain/service" target string
+// for every Cloud Firestore DecisionMatrix entry.
+const firestoreDecisionMatrixTarget = "nosql/firestore"
+
+// firestoreDecisionMatrixEntries returns the DecisionMatrix entries that
+// route an LLM's natural-language service name to Cloud Firestore, all
+// derived from firestoreDecisionMatrixTarget.
+func firestoreDecisionMatrixEntries() map[string]string {
+	return map[string]string{
+		"Firestore":         firestoreDecisionMatrixTarget,
+		"Cloud Firestore":   firestoreDecisionMatrixTarget,
+		"Datastore":         firestoreDecisionMatrixTarget + " — Datastore mode shares the same pricing as Firestore Native mode; there is no separate Datastore service ID",
+		"Cloud Datastore":   firestoreDecisionMatrixTarget + " — Datastore mode shares the same pricing as Firestore Native mode; there is no separate Datastore service ID",
+		"Firestore reads":   firestoreDecisionMatrixTarget + " — set reads_per_month",
+		"Firestore writes":  firestoreDecisionMatrixTarget + " — set writes_per_month",
+		"Firestore storage": firestoreDecisionMatrixTarget + " — set storage_gb",
+	}
+}
+
 // gcpDescribeCatalog returns the full provider catalog describing every GCP
 // domain and service this provider can price, along with filter hints,
 // example invocations, and a decision matrix for LLM tool routing.
@@ -97,6 +116,9 @@ func gcpDescribeCatalog() *models.ProviderCatalog {
 	for k, v := range pubsubDecisionMatrixEntries() {
 		decisionMatrix[k] = v
 	}
+	for k, v := range firestoreDecisionMatrixEntries() {
+		decisionMatrix[k] = v
+	}
 
 	return &models.ProviderCatalog{
 		Provider: models.CloudProviderGCP,
@@ -113,6 +135,7 @@ func gcpDescribeCatalog() *models.ProviderCatalog {
 			models.PricingDomainSecurity,
 			models.PricingDomainDNS,
 			models.PricingDomainMessaging,
+			models.PricingDomainNoSQL,
 		},
 		Services: map[string][]string{
 			"compute":             {"compute_engine"},
@@ -127,6 +150,7 @@ func gcpDescribeCatalog() *models.ProviderCatalog {
 			"security":            {"kms"},
 			"dns":                 {"cloud_dns"},
 			"messaging":           {"pubsub"},
+			"nosql":               {"firestore"},
 		},
 		SupportedTerms: map[string][]string{
 			"compute/compute_engine":         {"on_demand", "spot", "cud_1yr", "cud_3yr", "sud", "flex_cud"},
@@ -149,6 +173,7 @@ func gcpDescribeCatalog() *models.ProviderCatalog {
 			"security/kms":                   {"on_demand"},
 			"dns/cloud_dns":                  {"on_demand"},
 			"messaging/pubsub":               {"on_demand"},
+			"nosql/firestore":                {"on_demand"},
 		},
 		FilterHints: map[string]map[string]any{
 			"compute/compute_engine": {
@@ -285,6 +310,26 @@ func gcpDescribeCatalog() *models.ProviderCatalog {
 					pubsubFallbackRates.CloudStorageImport,
 					pubsubFallbackRates.SMTUDF, pubsubFallbackRates.SMTAIInference,
 					pubsubFallbackRates.Storage,
+				),
+			},
+			"nosql/firestore": {
+				"region":                  "GCP region e.g. 'us-central1', 'us-east4', 'europe-west1', or a multi-region name ('nam5', 'nam7', 'eur3'). Firestore is genuinely per-region priced — rates vary significantly by region and are NOT well-approximated across regions.",
+				"storage_gb":              "Average monthly stored data volume (GiB) for a monthly cost estimate; has a genuine (verified live) free allowance",
+				"reads_per_month":         "Monthly entity read operation count for a monthly cost estimate; has a genuine (verified live) free allowance",
+				"writes_per_month":        "Monthly entity write (put) operation count for a monthly cost estimate; has a genuine (verified live) free allowance",
+				"deletes_per_month":       "Monthly entity delete operation count for a monthly cost estimate; has a genuine (verified live) free allowance",
+				"ttl_deletes_per_month":   "Monthly TTL (time-to-live) delete operation count for a monthly cost estimate; NO genuine free tier",
+				"pitr_storage_gb":         "Average monthly point-in-time-recovery storage volume (GiB) for a monthly cost estimate; NO genuine free tier",
+				"zonal_backup_storage_gb": "Average monthly zonal backup storage volume (GiB) for a monthly cost estimate; NO genuine free tier",
+				"restore_gb":              "Monthly backup restore volume (GiB) for a monthly cost estimate; NO genuine free tier",
+				"clone_gb":                "Monthly database clone volume (GiB) for a monthly cost estimate; NO genuine free tier",
+				"service":                 "firestore",
+				"note": fmt.Sprintf(
+					"Cloud Firestore is genuinely per-region priced (unlike Cloud DNS/KMS/Pub/Sub, which are region-invariant) — region is a real, rate-selecting field. Representative us-central1 rates: storage $%.2f/GiB-month, reads $%.7f/op, writes $%.7f/op, deletes $%.7f/op (all four with a genuine free allowance); TTL deletes $%.7f/op, PITR storage $%.2f/GiB-month, zonal backup storage $%.2f/GiB-month, backup restore $%.2f/GiB, database clone $%.2f/GiB (NONE of these last five have a genuine free tier, despite a '(with free tier)' SKU description variant existing for each). Small Operations are always $0.00 regardless of volume. Firestore Enterprise edition, its 4 GLOBAL CUD-metadata SKUs, and Firestore/Datastore network bandwidth are out of scope for this endpoint.",
+					firestoreFallbackRates.StorageRate,
+					firestoreFallbackRates.ReadRate, firestoreFallbackRates.WriteRate, firestoreFallbackRates.DeleteRate,
+					firestoreFallbackRates.TTLDeleteRate, firestoreFallbackRates.PITRStorageRate,
+					firestoreFallbackRates.ZonalBackupRate, firestoreFallbackRates.RestoreRate, firestoreFallbackRates.CloneRate,
 				),
 			},
 		},
@@ -465,6 +510,16 @@ func gcpDescribeCatalog() *models.ProviderCatalog {
 				"throughput_gb_per_month": 500.0,
 				"storage_gb":              50.0,
 			},
+			"nosql/firestore": {
+				"provider":          "gcp",
+				"domain":            "nosql",
+				"service":           "firestore",
+				"region":            "us-central1",
+				"storage_gb":        10.0,
+				"reads_per_month":   5000000.0,
+				"writes_per_month":  1000000.0,
+				"deletes_per_month": 200000.0,
+			},
 		},
 		DecisionMatrix: decisionMatrix,
 	}
@@ -577,6 +632,13 @@ func (p *Provider) getPart3Price(ctx context.Context, spec models.PricingSpec) (
 
 	case *models.PubSubPricingSpec:
 		prices, breakdown, err := p.pricePubSub(ctx, s)
+		if err != nil {
+			return nil, err
+		}
+		return buildResult(prices, breakdown), nil
+
+	case *models.FirestorePricingSpec:
+		prices, breakdown, err := p.priceFirestore(ctx, s)
 		if err != nil {
 			return nil, err
 		}

@@ -973,6 +973,136 @@ func TestUnmarshal_PubSubFieldsAndDispatch(t *testing.T) {
 	}
 }
 
+func TestUnmarshal_FirestoreDefaults(t *testing.T) {
+	data := []byte(`{"domain":"nosql","provider":"gcp","service":"firestore","region":"us-central1"}`)
+	got, err := UnmarshalPricingSpec(data)
+	if err != nil {
+		t.Fatalf("UnmarshalPricingSpec: %v", err)
+	}
+	fs, ok := got.(*FirestorePricingSpec)
+	if !ok {
+		t.Fatalf("expected *FirestorePricingSpec, got %T", got)
+	}
+	if fs.StorageGB != nil {
+		t.Errorf("StorageGB default: got %v, want nil", fs.StorageGB)
+	}
+	if fs.ReadsPerMonth != nil {
+		t.Errorf("ReadsPerMonth default: got %v, want nil", fs.ReadsPerMonth)
+	}
+	if fs.WritesPerMonth != nil {
+		t.Errorf("WritesPerMonth default: got %v, want nil", fs.WritesPerMonth)
+	}
+	if fs.DeletesPerMonth != nil {
+		t.Errorf("DeletesPerMonth default: got %v, want nil", fs.DeletesPerMonth)
+	}
+	if fs.TTLDeletesPerMonth != nil {
+		t.Errorf("TTLDeletesPerMonth default: got %v, want nil", fs.TTLDeletesPerMonth)
+	}
+	if fs.PITRStorageGB != nil {
+		t.Errorf("PITRStorageGB default: got %v, want nil", fs.PITRStorageGB)
+	}
+	if fs.ZonalBackupStorageGB != nil {
+		t.Errorf("ZonalBackupStorageGB default: got %v, want nil", fs.ZonalBackupStorageGB)
+	}
+	if fs.RestoreGB != nil {
+		t.Errorf("RestoreGB default: got %v, want nil", fs.RestoreGB)
+	}
+	if fs.CloneGB != nil {
+		t.Errorf("CloneGB default: got %v, want nil", fs.CloneGB)
+	}
+	if fs.Term != PricingTermOnDemand {
+		t.Errorf("Term default: got %q, want %q", fs.Term, PricingTermOnDemand)
+	}
+}
+
+func TestUnmarshal_FirestoreFieldsAndDispatch(t *testing.T) {
+	// Exercises the real MCP entry path (JSON -> UnmarshalPricingSpec ->
+	// FirestorePricingSpec.UnmarshalJSON) with explicit non-default fields, so
+	// a discriminator or default-seeding regression here would be caught
+	// rather than only in tests that construct FirestorePricingSpec directly.
+	data := []byte(`{"provider":"gcp","domain":"nosql","service":"firestore","region":"us-east4","storage_gb":10,"reads_per_month":5000000,"writes_per_month":1000000,"deletes_per_month":200000,"ttl_deletes_per_month":50000,"pitr_storage_gb":5,"zonal_backup_storage_gb":5,"restore_gb":2,"clone_gb":1}`)
+	got, err := UnmarshalPricingSpec(data)
+	if err != nil {
+		t.Fatalf("UnmarshalPricingSpec: %v", err)
+	}
+	fs, ok := got.(*FirestorePricingSpec)
+	if !ok {
+		t.Fatalf("expected *FirestorePricingSpec, got %T", got)
+	}
+	if fs.Provider != CloudProviderGCP {
+		t.Errorf("Provider: got %q, want %q", fs.Provider, CloudProviderGCP)
+	}
+	if fs.Domain != PricingDomainNoSQL {
+		t.Errorf("Domain: got %q, want %q", fs.Domain, PricingDomainNoSQL)
+	}
+	if fs.Service != "firestore" {
+		t.Errorf("Service: got %q, want %q", fs.Service, "firestore")
+	}
+	if fs.Region != "us-east4" {
+		t.Errorf("Region: got %q, want %q", fs.Region, "us-east4")
+	}
+	cases := []struct {
+		name string
+		got  *float64
+		want float64
+	}{
+		{"StorageGB", fs.StorageGB, 10},
+		{"ReadsPerMonth", fs.ReadsPerMonth, 5000000},
+		{"WritesPerMonth", fs.WritesPerMonth, 1000000},
+		{"DeletesPerMonth", fs.DeletesPerMonth, 200000},
+		{"TTLDeletesPerMonth", fs.TTLDeletesPerMonth, 50000},
+		{"PITRStorageGB", fs.PITRStorageGB, 5},
+		{"ZonalBackupStorageGB", fs.ZonalBackupStorageGB, 5},
+		{"RestoreGB", fs.RestoreGB, 2},
+		{"CloneGB", fs.CloneGB, 1},
+	}
+	for _, c := range cases {
+		if c.got == nil || *c.got != c.want {
+			t.Errorf("%s: got %v, want %v", c.name, c.got, c.want)
+		}
+	}
+}
+
+// TestFirestorePricingSpec_CacheKey_RegionDifferentiates verifies two specs
+// differing only by Region produce different cache keys — Cloud Firestore is
+// genuinely per-region priced, unlike DNSPricingSpec/PubSubPricingSpec, so a
+// cache-key collision across regions would silently serve the wrong rates.
+func TestFirestorePricingSpec_CacheKey_RegionDifferentiates(t *testing.T) {
+	qty := 10.0
+	a := &FirestorePricingSpec{
+		BasePricingSpec: BasePricingSpec{Provider: CloudProviderGCP, Domain: PricingDomainNoSQL, Service: "firestore", Region: "us-central1", Term: PricingTermOnDemand},
+		StorageGB:       &qty,
+	}
+	b := &FirestorePricingSpec{
+		BasePricingSpec: BasePricingSpec{Provider: CloudProviderGCP, Domain: PricingDomainNoSQL, Service: "firestore", Region: "us-east4", Term: PricingTermOnDemand},
+		StorageGB:       &qty,
+	}
+	if a.CacheKey() == b.CacheKey() {
+		t.Errorf("CacheKey collision across regions: %q == %q", a.CacheKey(), b.CacheKey())
+	}
+}
+
+// TestFirestorePricingSpec_CacheKey_QuantityDifferentiates verifies two
+// specs differing only by a quantity field produce different cache keys.
+func TestFirestorePricingSpec_CacheKey_QuantityDifferentiates(t *testing.T) {
+	qtyA := 10.0
+	qtyB := 20.0
+	base := BasePricingSpec{Provider: CloudProviderGCP, Domain: PricingDomainNoSQL, Service: "firestore", Region: "us-central1", Term: PricingTermOnDemand}
+	a := &FirestorePricingSpec{BasePricingSpec: base, StorageGB: &qtyA}
+	b := &FirestorePricingSpec{BasePricingSpec: base, StorageGB: &qtyB}
+	if a.CacheKey() == b.CacheKey() {
+		t.Errorf("CacheKey collision across StorageGB values: %q == %q", a.CacheKey(), b.CacheKey())
+	}
+}
+
+func TestUnmarshal_FirestoreInvalidJSON(t *testing.T) {
+	data := []byte(`{"domain":"nosql","provider":"gcp","storage_gb":"not-a-number"}`)
+	_, err := UnmarshalPricingSpec(data)
+	if err == nil {
+		t.Fatal("expected an error for storage_gb with a non-numeric value, got nil")
+	}
+}
+
 func TestUnmarshal_ContainerDefaults(t *testing.T) {
 	data := []byte(`{"domain":"container","provider":"aws","region":"us-east-1"}`)
 	got, err := UnmarshalPricingSpec(data)

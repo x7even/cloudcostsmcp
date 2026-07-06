@@ -61,6 +61,7 @@ const (
 	PricingDomainSecurity          PricingDomain = "security"
 	PricingDomainDNS               PricingDomain = "dns"
 	PricingDomainMessaging         PricingDomain = "messaging"
+	PricingDomainNoSQL             PricingDomain = "nosql"
 )
 
 // PriceUnit describes the unit of a price.
@@ -816,6 +817,130 @@ func (s *PubSubPricingSpec) UnmarshalJSON(data []byte) error {
 	return json.Unmarshal(data, (*alias)(s))
 }
 
+// FirestorePricingSpec prices GCP Cloud Firestore storage, read/write/delete
+// operations, TTL deletes, point-in-time-recovery (PITR) storage, zonal
+// backup storage, backup restore operations, and database clone operations
+// (domain=nosql, service=firestore).
+//
+// Unlike Cloud DNS/Cloud KMS/Cloud Pub/Sub (all genuinely region-invariant,
+// scope="global"), Cloud Firestore is genuinely per-region priced: verified
+// live against the GCP Cloud Billing Catalog API (service EE2C-7FAC-5E08,
+// "Cloud Firestore", 2072 SKUs total, fully paginated — see issue #80).
+// serviceRegions is misleadingly ["global"] on every Firestore SKU regardless
+// of actual region-specificity; the authoritative region signal is
+// geoTaxonomy.type ("REGIONAL" | "MULTI_REGIONAL" | "GLOBAL") and
+// geoTaxonomy.regions. Region is therefore a real, rate-selecting dimension
+// on this spec (unlike DNSPricingSpec/PubSubPricingSpec, where Region is
+// accepted but ignored) — see gcp_firestore.go for the region-keyed rate
+// cache and matching strategy.
+//
+// Billing dimensions:
+//   - StorageGB: average monthly stored data, $/GiB-month, with a genuine
+//     (verified live) free allowance.
+//   - ReadsPerMonth / WritesPerMonth / DeletesPerMonth: entity read/write/
+//     delete operation counts, each with a genuine (verified live) free
+//     allowance.
+//   - TTLDeletesPerMonth: TTL (time-to-live) delete operation count. No
+//     genuine free allowance despite a "(with free tier)" SKU description —
+//     verified live that both description variants carry byte-identical
+//     tiered rates.
+//   - PITRStorageGB: point-in-time-recovery storage, $/GiB-month. No genuine
+//     free allowance (same "(with free tier)" naming caveat as above).
+//   - ZonalBackupStorageGB: zonal backup storage, $/GiB-month. No genuine
+//     free allowance.
+//   - RestoreGB: backup restore operation volume, $/GiB restored. No genuine
+//     free allowance.
+//   - CloneGB: database clone operation volume, $/GiB cloned. No genuine
+//     free allowance. (Verified live under the Enterprise/Datastore
+//     resourceGroup "DatastoreOps", but is itself a Standard-edition SKU, not
+//     an Enterprise-edition one — see gcp_firestore.go.)
+//
+// Explicitly out of scope (deliberately, not gaps):
+//   - Firestore Enterprise edition (MongoDB-compatible) — a materially
+//     different pricing model (resourceGroup DatastoreOps/DatastoreBandwidth,
+//     or any description containing "Enterprise") is excluded entirely.
+//   - The 4 GLOBAL "CUD metadata" SKUs found under the FirestoreReadOps
+//     resourceGroup — these are not genuine regional read-operation rates.
+//   - Firestore/Datastore network bandwidth and egress SKUs (resourceGroup
+//     FirestoreBandwidth / DatastoreBandwidth) — deferred to a future,
+//     dedicated egress spec, same precedent as Cloud Pub/Sub's egress SKUs
+//     (#79).
+//   - "Small operations" (resourceGroup FirestoreSmallOps) are confirmed
+//     live to always be $0 regardless of volume — genuinely free, not a gap.
+type FirestorePricingSpec struct {
+	BasePricingSpec
+	// StorageGB is the optional average monthly stored data volume (GiB) for
+	// a monthly cost estimate.
+	StorageGB *float64 `json:"storage_gb,omitempty"`
+	// ReadsPerMonth is the optional monthly entity read operation count for a
+	// monthly cost estimate.
+	ReadsPerMonth *float64 `json:"reads_per_month,omitempty"`
+	// WritesPerMonth is the optional monthly entity write (put) operation
+	// count for a monthly cost estimate.
+	WritesPerMonth *float64 `json:"writes_per_month,omitempty"`
+	// DeletesPerMonth is the optional monthly entity delete operation count
+	// for a monthly cost estimate.
+	DeletesPerMonth *float64 `json:"deletes_per_month,omitempty"`
+	// TTLDeletesPerMonth is the optional monthly TTL delete operation count
+	// for a monthly cost estimate. No genuine free tier — see type doc.
+	TTLDeletesPerMonth *float64 `json:"ttl_deletes_per_month,omitempty"`
+	// PITRStorageGB is the optional average monthly point-in-time-recovery
+	// storage volume (GiB) for a monthly cost estimate. No genuine free
+	// tier — see type doc.
+	PITRStorageGB *float64 `json:"pitr_storage_gb,omitempty"`
+	// ZonalBackupStorageGB is the optional average monthly zonal backup
+	// storage volume (GiB) for a monthly cost estimate. No genuine free
+	// tier — see type doc.
+	ZonalBackupStorageGB *float64 `json:"zonal_backup_storage_gb,omitempty"`
+	// RestoreGB is the optional monthly backup restore volume (GiB) for a
+	// monthly cost estimate. No genuine free tier — see type doc.
+	RestoreGB *float64 `json:"restore_gb,omitempty"`
+	// CloneGB is the optional monthly database clone volume (GiB) for a
+	// monthly cost estimate. No genuine free tier — see type doc.
+	CloneGB *float64 `json:"clone_gb,omitempty"`
+}
+
+var _ PricingSpec = (*FirestorePricingSpec)(nil)
+
+// firestoreCacheKeyPart formats an optional *float64 for CacheKey, mirroring
+// the inline pattern used by DNSPricingSpec.CacheKey/PubSubPricingSpec.CacheKey.
+func firestoreCacheKeyPart(v *float64) string {
+	if v == nil {
+		return ""
+	}
+	return fmt.Sprintf("%v", *v)
+}
+
+// CacheKey implements PricingSpec. Region is already part of baseCacheKey(),
+// which (unlike DNSPricingSpec/PubSubPricingSpec, where region is accepted
+// but ignored by the provider) actually matters here: Cloud Firestore is
+// genuinely per-region priced, so two specs differing only by Region must
+// never collide on the same cache entry.
+func (s *FirestorePricingSpec) CacheKey() string {
+	parts := []string{
+		s.baseCacheKey(),
+		firestoreCacheKeyPart(s.StorageGB),
+		firestoreCacheKeyPart(s.ReadsPerMonth),
+		firestoreCacheKeyPart(s.WritesPerMonth),
+		firestoreCacheKeyPart(s.DeletesPerMonth),
+		firestoreCacheKeyPart(s.TTLDeletesPerMonth),
+		firestoreCacheKeyPart(s.PITRStorageGB),
+		firestoreCacheKeyPart(s.ZonalBackupStorageGB),
+		firestoreCacheKeyPart(s.RestoreGB),
+		firestoreCacheKeyPart(s.CloneGB),
+	}
+	return strings.Join(parts, ":")
+}
+
+// UnmarshalJSON pre-populates defaults then decodes.
+func (s *FirestorePricingSpec) UnmarshalJSON(data []byte) error {
+	*s = FirestorePricingSpec{
+		BasePricingSpec: defaultBase(),
+	}
+	type alias FirestorePricingSpec
+	return json.Unmarshal(data, (*alias)(s))
+}
+
 // NormalizePaymentOption returns the canonical SP payment option string or an
 // error for unknown values. The SP JSON uses these exact case-sensitive strings.
 func NormalizePaymentOption(s string) (string, error) {
@@ -847,7 +972,7 @@ type domainPeek struct {
 //
 // Supported domains: compute, storage, database, container, ai, serverless,
 // analytics, network, observability, inter_region_egress, security, dns,
-// messaging.
+// messaging, nosql.
 func UnmarshalPricingSpec(data []byte) (PricingSpec, error) {
 	var peek domainPeek
 	if err := json.Unmarshal(data, &peek); err != nil {
@@ -943,6 +1068,13 @@ func UnmarshalPricingSpec(data []byte) (PricingSpec, error) {
 		var s PubSubPricingSpec
 		if err := json.Unmarshal(data, &s); err != nil {
 			return nil, fmt.Errorf("models: PubSubPricingSpec: %w", err)
+		}
+		return &s, nil
+
+	case PricingDomainNoSQL:
+		var s FirestorePricingSpec
+		if err := json.Unmarshal(data, &s); err != nil {
+			return nil, fmt.Errorf("models: FirestorePricingSpec: %w", err)
 		}
 		return &s, nil
 
