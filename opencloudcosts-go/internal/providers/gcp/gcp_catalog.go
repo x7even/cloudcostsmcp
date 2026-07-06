@@ -170,7 +170,10 @@ func gcpDescribeCatalog() *models.ProviderCatalog {
 				"key_versions":         "Active key-version count for a monthly cost estimate (unit='key_version_month')",
 				"operations_per_month": "Monthly operation count for a cost estimate (unit='crypto_operations' or 'random_bytes')",
 				"service":              "kms",
-				"note":                 "All Cloud KMS pricing is region-invariant (scope='global'); region is accepted but ignored. HSM asymmetric key versions (EC/RSA3072/RSA4096/PKCS1v1.5) are volume-discounted: $2.50/mo for the first 2,000 key versions, $1.00/mo thereafter — both tiers are returned in breakdown.",
+				"note": fmt.Sprintf(
+					"All Cloud KMS pricing is region-invariant (scope='global'); region is accepted but ignored. HSM asymmetric key versions (EC/RSA3072/RSA4096/PKCS1v1.5) are volume-discounted: $%.2f/mo for the first %d key versions, $%.2f/mo thereafter — both tiers are returned in breakdown.",
+					kmsFallbackRates.HSMKeyVersionTier1, kmsHSMTierThreshold, kmsFallbackRates.HSMKeyVersionTier2,
+				),
 			},
 		},
 		ExampleInvocations: map[string]map[string]any{

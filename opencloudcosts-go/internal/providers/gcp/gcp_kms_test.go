@@ -184,12 +184,6 @@ func fakeKMSSKUs() []map[string]any {
 	}
 }
 
-// newKMSTestProvider creates a Provider backed by the given httptest.Server.
-func newKMSTestProvider(t *testing.T, server *httptest.Server) *Provider {
-	t.Helper()
-	return newTestProvider(t, server)
-}
-
 // --------------------------------------------------------------------------
 // Key-version-month tests
 // --------------------------------------------------------------------------
@@ -203,7 +197,7 @@ func TestPriceKMS_SoftwareKeyVersion(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	p := newKMSTestProvider(t, ts)
+	p := newTestProvider(t, ts)
 	ctx := context.Background()
 
 	spec := &models.KMSPricingSpec{KeyType: "software"}
@@ -235,7 +229,7 @@ func TestPriceKMS_HSMRSA2048FlatNotTiered(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	p := newKMSTestProvider(t, ts)
+	p := newTestProvider(t, ts)
 	ctx := context.Background()
 
 	spec := &models.KMSPricingSpec{KeyType: "hsm", Algorithm: "asymmetric-rsa2048"}
@@ -261,7 +255,7 @@ func TestPriceKMS_HSMECTiered(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	p := newKMSTestProvider(t, ts)
+	p := newTestProvider(t, ts)
 	ctx := context.Background()
 
 	spec := &models.KMSPricingSpec{KeyType: "hsm", Algorithm: "asymmetric-ec"}
@@ -291,7 +285,7 @@ func TestPriceKMS_ExternalKeyVersion(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	p := newKMSTestProvider(t, ts)
+	p := newTestProvider(t, ts)
 	ctx := context.Background()
 
 	spec := &models.KMSPricingSpec{KeyType: "external"}
@@ -315,7 +309,7 @@ func TestPriceKMS_AutokeyKeyVersionUsesPaidRate(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	p := newKMSTestProvider(t, ts)
+	p := newTestProvider(t, ts)
 	ctx := context.Background()
 
 	spec := &models.KMSPricingSpec{KeyType: "hsm", Autokey: true}
@@ -346,7 +340,7 @@ func TestPriceKMS_LowOperationRate(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	p := newKMSTestProvider(t, ts)
+	p := newTestProvider(t, ts)
 	ctx := context.Background()
 
 	spec := &models.KMSPricingSpec{KeyType: "hsm", Algorithm: "symmetric", Unit: "crypto_operations"}
@@ -368,7 +362,7 @@ func TestPriceKMS_HSMHighOperationRate(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	p := newKMSTestProvider(t, ts)
+	p := newTestProvider(t, ts)
 	ctx := context.Background()
 
 	spec := &models.KMSPricingSpec{KeyType: "hsm", Algorithm: "asymmetric-ec", Unit: "crypto_operations"}
@@ -391,7 +385,7 @@ func TestPriceKMS_AutokeyOperationUsesPaidRate(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	p := newKMSTestProvider(t, ts)
+	p := newTestProvider(t, ts)
 	ctx := context.Background()
 
 	spec := &models.KMSPricingSpec{KeyType: "hsm", Autokey: true, Unit: "crypto_operations"}
@@ -417,7 +411,7 @@ func TestPriceKMS_RandomBytes(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	p := newKMSTestProvider(t, ts)
+	p := newTestProvider(t, ts)
 	ctx := context.Background()
 
 	spec := &models.KMSPricingSpec{Unit: "random_bytes"}
@@ -443,7 +437,7 @@ func TestPriceKMS_CostMath(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	p := newKMSTestProvider(t, ts)
+	p := newTestProvider(t, ts)
 	ctx := context.Background()
 
 	keyVersions := 500.0
@@ -469,7 +463,7 @@ func TestPriceKMS_CostMath_Operations(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	p := newKMSTestProvider(t, ts)
+	p := newTestProvider(t, ts)
 	ctx := context.Background()
 
 	ops := 100000.0
@@ -495,7 +489,7 @@ func TestPriceKMS_CostMath_TieredCrossesThreshold(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	p := newKMSTestProvider(t, ts)
+	p := newTestProvider(t, ts)
 	ctx := context.Background()
 
 	keyVersions := 5000.0
@@ -522,7 +516,7 @@ func TestPriceKMS_CostMath_AutokeyFreeAllowance(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	p := newKMSTestProvider(t, ts)
+	p := newTestProvider(t, ts)
 	ctx := context.Background()
 
 	t.Run("key_version_month", func(t *testing.T) {
@@ -568,7 +562,7 @@ func TestPriceKMS_AutokeyHSMAsymmetricInvalidCombo(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	p := newKMSTestProvider(t, ts)
+	p := newTestProvider(t, ts)
 	ctx := context.Background()
 
 	spec := &models.KMSPricingSpec{KeyType: "hsm", Algorithm: "asymmetric-ec", Autokey: true}
@@ -601,7 +595,7 @@ func TestPriceKMS_RandomBytesAutokeyNotApplied(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	p := newKMSTestProvider(t, ts)
+	p := newTestProvider(t, ts)
 	ctx := context.Background()
 
 	ops := 15000.0
@@ -647,7 +641,7 @@ func TestPriceKMS_AutokeySoftwareKeyTypeNotAnnotated(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	p := newKMSTestProvider(t, ts)
+	p := newTestProvider(t, ts)
 	ctx := context.Background()
 
 	t.Run("key_version_month", func(t *testing.T) {
@@ -695,7 +689,7 @@ func TestPriceKMS_Fallback(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	p := newKMSTestProvider(t, ts)
+	p := newTestProvider(t, ts)
 	ctx := context.Background()
 
 	spec := &models.KMSPricingSpec{}
@@ -724,7 +718,7 @@ func TestPriceKMS_SingleTenantHSMExcluded(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	p := newKMSTestProvider(t, ts)
+	p := newTestProvider(t, ts)
 	ctx := context.Background()
 
 	rates := p.fetchKMSRates(ctx)
@@ -743,7 +737,7 @@ func TestPriceKMS_DispatchViaGetPrice(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	p := newKMSTestProvider(t, ts)
+	p := newTestProvider(t, ts)
 	ctx := context.Background()
 
 	if !p.Supports(models.PricingDomainSecurity, "kms") {
@@ -775,7 +769,7 @@ func TestPriceKMS_RatesCached(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	p := newKMSTestProvider(t, ts)
+	p := newTestProvider(t, ts)
 	ctx := context.Background()
 
 	seeded := kmsRates{SoftwareKeyVersion: 0.099}
@@ -795,5 +789,121 @@ func TestPriceKMS_RatesCached(t *testing.T) {
 	}
 	if fb, ok := breakdown["fallback"]; ok && fb == true {
 		t.Error("expected no fallback when the derived-rate cache is populated")
+	}
+}
+
+// TestPriceKMS_TieredFallbackWhenTier2Zero verifies that priceKMS engages the
+// fallback path when the live rate map has a nonzero HSMKeyVersionTier1 but a
+// zero HSMKeyVersionTier2 (e.g. a live catalog response that is missing the
+// second tier for one SKU). Regression test: the tiered branch previously
+// only checked `if rate == 0` (tier1) to decide whether to fall back, so a
+// zero tier2Rate alone silently priced all usage above the threshold at
+// $0.00/mo instead of the fallback rate.
+func TestPriceKMS_TieredFallbackWhenTier2Zero(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("unexpected HTTP call: fetchKMSRates should have used the cached rate map")
+	}))
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	ctx := context.Background()
+
+	// Seed a live rates map with a nonzero tier1 but a zero tier2 — the
+	// scenario that must trigger fallback for BOTH tiers, not just tier2.
+	seeded := kmsRates{HSMKeyVersionTier1: 9.99, HSMKeyVersionTier2: 0}
+	raw, err := json.Marshal(seeded)
+	if err != nil {
+		t.Fatalf("marshal seeded rates: %v", err)
+	}
+	p.cache.SetMetadata(kmsRatesCacheKey, raw, p.cfg.MetadataTTL())
+
+	spec := &models.KMSPricingSpec{KeyType: "hsm", Algorithm: "asymmetric-ec"}
+	prices, breakdown, err := p.priceKMS(ctx, spec)
+	if err != nil {
+		t.Fatalf("priceKMS: %v", err)
+	}
+	fb, ok := breakdown["fallback"]
+	if !ok || fb != true {
+		t.Errorf("expected fallback=true when tier2 resolves to 0, got %v (ok=%v)", fb, ok)
+	}
+	if abs(prices[0].PricePerUnit-kmsFallbackRates.HSMKeyVersionTier1) > 1e-9 {
+		t.Errorf("headline rate = %.6f, want %.6f (fallback tier1)", prices[0].PricePerUnit, kmsFallbackRates.HSMKeyVersionTier1)
+	}
+	tier2 := mustFloat64(t, breakdown["tier2_rate"], "tier2_rate")
+	if abs(tier2-kmsFallbackRates.HSMKeyVersionTier2) > 1e-9 {
+		t.Errorf("tier2_rate = %.6f, want %.6f (fallback tier2, not $0.00)", tier2, kmsFallbackRates.HSMKeyVersionTier2)
+	}
+
+	// Verify tier2 usage is actually priced at the fallback rate, not $0.00:
+	// 3,000 versions crosses the 2,000 threshold, so 1,000 must be billed at
+	// the fallback tier2 rate.
+	keyVersions := 3000.0
+	spec.KeyVersions = &keyVersions
+	_, breakdown, err = p.priceKMS(ctx, spec)
+	if err != nil {
+		t.Fatalf("priceKMS: %v", err)
+	}
+	want := kmsHSMTierThreshold*kmsFallbackRates.HSMKeyVersionTier1 + (3000.0-kmsHSMTierThreshold)*kmsFallbackRates.HSMKeyVersionTier2
+	got := toFloat64(breakdown["monthly_cost"])
+	if abs(got-want) > 1e-6 {
+		t.Errorf("monthly_cost = %.4f, want %.4f (tier2 usage priced at fallback rate, not $0.00)", got, want)
+	}
+}
+
+// TestPriceKMS_InvalidAlgorithm verifies that an unrecognized Algorithm
+// value returns an explicit error instead of silently falling through to a
+// wrong-but-plausible rate bucket.
+func TestPriceKMS_InvalidAlgorithm(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(kmsSKUResponse(fakeKMSSKUs()))
+	}))
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	ctx := context.Background()
+
+	spec := &models.KMSPricingSpec{KeyType: "hsm", Algorithm: "asymmetric-rsa9999"}
+	prices, _, err := p.priceKMS(ctx, spec)
+	if err == nil {
+		t.Fatalf("priceKMS: expected error for invalid algorithm, got prices %+v", prices)
+	}
+}
+
+// TestPriceKMS_InvalidUnit verifies that an unrecognized Unit value returns
+// an explicit error instead of silently defaulting to key_version_month.
+func TestPriceKMS_InvalidUnit(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(kmsSKUResponse(fakeKMSSKUs()))
+	}))
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	ctx := context.Background()
+
+	spec := &models.KMSPricingSpec{KeyType: "software", Unit: "per_gigabyte"}
+	prices, _, err := p.priceKMS(ctx, spec)
+	if err == nil {
+		t.Fatalf("priceKMS: expected error for invalid unit, got prices %+v", prices)
+	}
+}
+
+// TestPriceKMS_InvalidKeyType verifies that an unrecognized KeyType value
+// returns an explicit error instead of silently defaulting to software.
+func TestPriceKMS_InvalidKeyType(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(kmsSKUResponse(fakeKMSSKUs()))
+	}))
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	ctx := context.Background()
+
+	spec := &models.KMSPricingSpec{KeyType: "quantum"}
+	prices, _, err := p.priceKMS(ctx, spec)
+	if err == nil {
+		t.Fatalf("priceKMS: expected error for invalid key_type, got prices %+v", prices)
 	}
 }

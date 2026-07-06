@@ -50,6 +50,14 @@ const kmsSourceURL = "https://cloud.google.com/kms/pricing"
 // monthly free-usage allowances (verified live: tiered SKUs 77F8-D8AF-3CCE
 // and 88D6-F2EE-C781 have a $0.00 tier at startUsageAmount=0, then the paid
 // rate starting at 100 key versions / 10,000 operations respectively).
+//
+// Known limitation: these thresholds (and kmsHSMTierThreshold below) are
+// hardcoded Go constants rather than being derived from the live SKU
+// tieredRates.startUsageAmount values fetchKMSRates already parses. Deriving
+// them live would require plumbing thresholds through kmsRates/fetchKMSRates
+// as well as rates, which is a larger restructuring than this pass covers;
+// GCP changing a tier boundary without also changing the corresponding rate
+// is considered unlikely. Revisit if that assumption ever breaks.
 const (
 	kmsAutokeyFreeKeyVersions = 100
 	kmsAutokeyFreeOperations  = 10000
@@ -201,6 +209,45 @@ var kmsHighAlgorithms = map[string]bool{
 	"asymmetric-pkcs1v15": true,
 }
 
+// kmsValidKeyTypes, kmsValidAlgorithms, and kmsValidUnits are the complete
+// sets of recognized KMSPricingSpec.KeyType / Algorithm / Unit values.
+// priceKMS rejects anything outside these sets with an explicit error rather
+// than silently falling through the rate-selection switch into a
+// wrong-but-plausible bucket (e.g. an unrecognized HSM algorithm landing on
+// the flat $1.00/mo rate instead of the intended tiered rate).
+var (
+	kmsValidKeyTypes = map[string]bool{
+		"software": true,
+		"hsm":      true,
+		"external": true,
+	}
+	kmsValidAlgorithms = map[string]bool{
+		"symmetric":           true,
+		"mac":                 true,
+		"asymmetric-rsa2048":  true,
+		"asymmetric-rsa3072":  true,
+		"asymmetric-rsa4096":  true,
+		"asymmetric-ec":       true,
+		"asymmetric-pkcs1v15": true,
+	}
+	kmsValidUnits = map[string]bool{
+		"key_version_month": true,
+		"crypto_operations": true,
+		"random_bytes":      true,
+	}
+)
+
+// pickRate returns live if it is nonzero, otherwise it returns fallback and
+// reports usedFallback=true. Centralizing this in one helper means the
+// fallback bookkeeping (breakdown["fallback"]=true) cannot be silently
+// omitted when a future rate bucket is added to priceKMS.
+func pickRate(live, fallback float64) (rate float64, usedFallback bool) {
+	if live == 0 {
+		return fallback, true
+	}
+	return live, false
+}
+
 // priceKMS returns Cloud KMS pricing for the given KMSPricingSpec.
 func (p *Provider) priceKMS(
 	ctx context.Context,
@@ -220,11 +267,27 @@ func (p *Provider) priceKMS(
 	if unit == "" {
 		unit = "key_version_month"
 	}
+
+	// Reject unrecognized enum values explicitly rather than letting them
+	// fall through the rate-selection switches below into a
+	// wrong-but-plausible bucket (e.g. a typo'd algorithm silently pricing
+	// at the flat HSM rate instead of the intended tiered rate). This check
+	// runs after the empty-string defaulting above, so omitted fields never
+	// error.
+	if !kmsValidKeyTypes[keyType] {
+		return nil, nil, fmt.Errorf("gcp kms: invalid key_type %q: must be 'software', 'hsm', or 'external'", spec.KeyType)
+	}
+	if !kmsValidAlgorithms[algorithm] {
+		return nil, nil, fmt.Errorf("gcp kms: invalid algorithm %q: must be one of 'symmetric', 'mac', 'asymmetric-rsa2048', 'asymmetric-rsa3072', 'asymmetric-rsa4096', 'asymmetric-ec', 'asymmetric-pkcs1v15'", spec.Algorithm)
+	}
+	if !kmsValidUnits[unit] {
+		return nil, nil, fmt.Errorf("gcp kms: invalid unit %q: must be one of 'key_version_month', 'crypto_operations', 'random_bytes'", spec.Unit)
+	}
+
 	isHighAlgo := kmsHighAlgorithms[algorithm]
 	limitedAvailability := algorithm == "asymmetric-pkcs1v15" // asia-south1/asia-south2 only, verified live
 
 	var rate, tier2Rate float64
-	tiered := false
 	fallback := false
 	// autokeyApplied is set only inside the two rate-selection branches that
 	// actually choose an Autokey rate (below) — never derived independently
@@ -241,12 +304,8 @@ func (p *Provider) priceKMS(
 	switch unit {
 	case "random_bytes":
 		priceUnit = models.PriceUnitPerOperation
-		rate = rates.RandomBytesOperation
 		description = "Generate Random Bytes Call"
-		if rate == 0 {
-			fallback = true
-			rate = kmsFallbackRates.RandomBytesOperation
-		}
+		rate, fallback = pickRate(rates.RandomBytesOperation, kmsFallbackRates.RandomBytesOperation)
 
 	case "crypto_operations":
 		priceUnit = models.PriceUnitPerOperation
@@ -256,73 +315,49 @@ func (p *Provider) priceKMS(
 		// that falls through to the ordinary algorithm-specific rate below.
 		case spec.Autokey && keyType == "hsm" && algorithm == "symmetric":
 			autokeyApplied = true
-			rate = rates.AutokeyOperationPaid
 			description = "HSM symmetric cryptographic operations for Autokey (paid rate; first 10,000 ops/month free)"
-			if rate == 0 {
-				fallback = true
-				rate = kmsFallbackRates.AutokeyOperationPaid
-			}
+			rate, fallback = pickRate(rates.AutokeyOperationPaid, kmsFallbackRates.AutokeyOperationPaid)
 		case keyType == "hsm" && isHighAlgo:
-			rate = rates.HSMOperationHigh
 			description = fmt.Sprintf("HSM cryptographic operations with a %s key", algorithm)
-			if rate == 0 {
-				fallback = true
-				rate = kmsFallbackRates.HSMOperationHigh
-			}
+			rate, fallback = pickRate(rates.HSMOperationHigh, kmsFallbackRates.HSMOperationHigh)
 		default:
-			rate = rates.LowOperation
 			description = fmt.Sprintf("%s cryptographic operations (%s)", keyType, algorithm)
-			if rate == 0 {
-				fallback = true
-				rate = kmsFallbackRates.LowOperation
-			}
+			rate, fallback = pickRate(rates.LowOperation, kmsFallbackRates.LowOperation)
 		}
 
 	default: // "key_version_month"
 		priceUnit = models.PriceUnitPerKeyVersionMonth
 		switch {
 		case keyType == "external":
-			rate = rates.ExternalKeyVersion
 			description = "Active external key versions"
-			if rate == 0 {
-				fallback = true
-				rate = kmsFallbackRates.ExternalKeyVersion
-			}
+			rate, fallback = pickRate(rates.ExternalKeyVersion, kmsFallbackRates.ExternalKeyVersion)
 		// Autokey (verified live: 77F8-D8AF-3CCE) only exists for HSM
 		// symmetric keys; hsm+asymmetric+autokey is an invalid combination
 		// that falls through to the tiered/flat rate below instead.
 		case keyType == "hsm" && algorithm == "symmetric" && spec.Autokey:
 			autokeyApplied = true
-			rate = rates.AutokeyKeyVersionPaid
 			description = "Active HSM symmetric key versions for Autokey (paid rate; first 100 versions/month free)"
-			if rate == 0 {
-				fallback = true
-				rate = kmsFallbackRates.AutokeyKeyVersionPaid
-			}
+			rate, fallback = pickRate(rates.AutokeyKeyVersionPaid, kmsFallbackRates.AutokeyKeyVersionPaid)
 		case keyType == "hsm" && isHighAlgo:
-			tiered = true
-			rate = rates.HSMKeyVersionTier1
-			tier2Rate = rates.HSMKeyVersionTier2
 			description = fmt.Sprintf("Active HSM %s key versions", algorithm)
-			if rate == 0 {
+			// A tiered rate is only fully resolved when BOTH tiers come back
+			// nonzero from the live catalog; if either is zero (e.g. a live
+			// response populates tier1 but omits tier2), both must fall back
+			// together so tier2 is never silently priced at $0.00.
+			var fb1, fb2 bool
+			rate, fb1 = pickRate(rates.HSMKeyVersionTier1, kmsFallbackRates.HSMKeyVersionTier1)
+			tier2Rate, fb2 = pickRate(rates.HSMKeyVersionTier2, kmsFallbackRates.HSMKeyVersionTier2)
+			if fb1 || fb2 {
 				fallback = true
 				rate = kmsFallbackRates.HSMKeyVersionTier1
 				tier2Rate = kmsFallbackRates.HSMKeyVersionTier2
 			}
 		case keyType == "hsm":
-			rate = rates.HSMKeyVersionFlat
 			description = fmt.Sprintf("Active HSM %s key versions", algorithm)
-			if rate == 0 {
-				fallback = true
-				rate = kmsFallbackRates.HSMKeyVersionFlat
-			}
+			rate, fallback = pickRate(rates.HSMKeyVersionFlat, kmsFallbackRates.HSMKeyVersionFlat)
 		default: // software
-			rate = rates.SoftwareKeyVersion
 			description = "Active software key versions"
-			if rate == 0 {
-				fallback = true
-				rate = kmsFallbackRates.SoftwareKeyVersion
-			}
+			rate, fallback = pickRate(rates.SoftwareKeyVersion, kmsFallbackRates.SoftwareKeyVersion)
 		}
 	}
 
@@ -330,7 +365,6 @@ func (p *Provider) priceKMS(
 		"key_type":  keyType,
 		"algorithm": algorithm,
 		"unit":      unit,
-		"scope":     "global",
 	}
 	if autokeyApplied {
 		attrs["autokey"] = "true"
@@ -345,13 +379,13 @@ func (p *Provider) priceKMS(
 		SKUID:         fmt.Sprintf("gcp:kms:%s:%s:%s", keyType, algorithm, unit),
 		ProductFamily: "Cloud KMS",
 		Description:   description,
-		Region:        "global",
 		PricingTerm:   models.PricingTermOnDemand,
 		PricePerUnit:  rate,
 		Unit:          priceUnit,
 		Currency:      "USD",
 		Attributes:    attrs,
 	}
+	stampGlobalScope(&price)
 
 	breakdown := map[string]any{
 		"key_type":  keyType,
@@ -362,7 +396,10 @@ func (p *Provider) priceKMS(
 		breakdown["fallback"] = true
 		breakdown["fallback_note"] = "Using hardcoded fallback rate; live SKU catalog unavailable or returned no match. Verify current rates at " + kmsSourceURL + "."
 	}
-	if tiered {
+	// tier2Rate is only ever populated (nonzero) by the tiered HSM-asymmetric
+	// branch above, so it doubles as the "was this priced as tiered" flag
+	// without a separate bool to keep in sync.
+	if tier2Rate != 0 {
 		breakdown["tier1_rate"] = breakdownMoney(rate, "/mo (0-2,000 key versions)")
 		breakdown["tier2_rate"] = breakdownMoney(tier2Rate, "/mo (2,000+ key versions)")
 		breakdown["tier_threshold_key_versions"] = kmsHSMTierThreshold
@@ -383,41 +420,45 @@ func (p *Provider) priceKMS(
 	// structure surfaced above — a flat rate*quantity product silently
 	// overcharges for tiered HSM asymmetric key versions (rate here is only
 	// the tier1 rate) and ignores the Autokey free allowance entirely.
+	// All three shapes (flat, tiered volume-discount, and free-then-paid
+	// Autokey allowance) are expressed as an []egressTier list and priced
+	// through the shared computeTieredCost helper (gcp_networking.go) rather
+	// than each hand-rolling its own clamp-and-subtract arithmetic.
+	// egressTier.thresholdGB is reused here as a generic tier threshold
+	// (key-version count or operation count, not gigabytes) — the field name
+	// is a holdover from its original egress-pricing use.
 	switch {
 	case unit == "key_version_month" && spec.KeyVersions != nil:
 		qty := *spec.KeyVersions
-		var cost float64
+		var tiers []egressTier
 		switch {
-		case tiered:
-			billed1 := qty
-			if billed1 > kmsHSMTierThreshold {
-				billed1 = kmsHSMTierThreshold
+		case tier2Rate != 0:
+			tiers = []egressTier{
+				{thresholdGB: 0, rate: rate, label: "tier1"},
+				{thresholdGB: kmsHSMTierThreshold, rate: tier2Rate, label: "tier2"},
 			}
-			billed2 := qty - kmsHSMTierThreshold
-			if billed2 < 0 {
-				billed2 = 0
-			}
-			cost = billed1*rate + billed2*tier2Rate
 		case autokeyApplied:
-			billable := qty - kmsAutokeyFreeKeyVersions
-			if billable < 0 {
-				billable = 0
+			tiers = []egressTier{
+				{thresholdGB: 0, rate: 0, label: "free"},
+				{thresholdGB: kmsAutokeyFreeKeyVersions, rate: rate, label: "paid"},
 			}
-			cost = billable * rate
 		default:
-			cost = qty * rate
+			tiers = []egressTier{{thresholdGB: 0, rate: rate, label: "flat"}}
 		}
+		cost := computeTieredCost(tiers, qty).TotalCost
 		breakdown["monthly_cost"] = breakdownMoney(cost, "/mo")
 	case (unit == "crypto_operations" || unit == "random_bytes") && spec.OperationsPerMonth != nil:
 		ops := *spec.OperationsPerMonth
-		cost := ops * rate
+		var tiers []egressTier
 		if autokeyApplied {
-			billable := ops - kmsAutokeyFreeOperations
-			if billable < 0 {
-				billable = 0
+			tiers = []egressTier{
+				{thresholdGB: 0, rate: 0, label: "free"},
+				{thresholdGB: kmsAutokeyFreeOperations, rate: rate, label: "paid"},
 			}
-			cost = billable * rate
+		} else {
+			tiers = []egressTier{{thresholdGB: 0, rate: rate, label: "flat"}}
 		}
+		cost := computeTieredCost(tiers, ops).TotalCost
 		breakdown["monthly_cost"] = breakdownMoney(cost, "/mo")
 	}
 

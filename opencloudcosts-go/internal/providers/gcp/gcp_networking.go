@@ -1110,16 +1110,15 @@ func (p *Provider) priceNetworkExternalIP(
 		SKUID:         fmt.Sprintf("gcp:external_ip:%s", vmType),
 		ProductFamily: "External IP Address",
 		Description:   wantDesc,
-		Region:        "global",
 		PricingTerm:   term,
 		PricePerUnit:  rate,
 		Unit:          models.PriceUnitPerHour,
 		Currency:      "USD",
 		Attributes: map[string]string{
 			"vm_type": vmType,
-			"scope":   "global",
 		},
 	}
+	stampGlobalScope(&price)
 
 	hoursPerMonth := spec.HoursPerMonth
 	if hoursPerMonth <= 0 {
