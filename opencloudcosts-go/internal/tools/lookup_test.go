@@ -864,6 +864,221 @@ func TestGetPrice_DNSWithoutQuantities_NoMonthlyEstimate(t *testing.T) {
 	}
 }
 
+// --------------------------------------------------------------------------
+// Tests: Pub/Sub monthly_estimate (issue #79 follow-up fix) — verifies
+// monthly_estimate reuses breakdown["throughput_monthly_cost"]/
+// ["storage_monthly_cost"] (the tiered-cost-aware figures computed by
+// gcp_pubsub.go's pricePubSub) rather than a flat price_per_unit*quantity
+// product, which would ignore the Basic destination's free monthly
+// allowance. These tests hand-build a *models.PricingResult with a
+// Breakdown map (gcp_pubsub_test.go's fakePubSubSKUs/httptest fixtures are
+// unexported to package gcp and unreachable from this package_test package,
+// so the tiered-cost *math* is proven correct over there; these tests prove
+// monthly_estimate mirrors whatever breakdown already contains).
+// --------------------------------------------------------------------------
+
+// testMoneyDict builds a breakdown-style money map matching the shape
+// produced by internal/tools.moneyDict / gcp package's breakdownMoney (both
+// unexported, so this test package — tools_test — mirrors the shape rather
+// than calling either directly).
+func testMoneyDict(amount float64, label string) map[string]any {
+	return map[string]any{
+		"amount":   amount,
+		"currency": "USD",
+		"display":  fmt.Sprintf("$%.2f%s", amount, label),
+	}
+}
+
+// TestGetPrice_PubSubThroughputBelowFreeTier_MonthlyEstimateMatchesBreakdown
+// covers usage entirely within the free allowance: price_per_unit is the
+// nonzero PAID rate, but breakdown["throughput_monthly_cost"] is $0 (all 5
+// GiB fall inside the free tier). monthly_estimate must equal the breakdown
+// figure ($0), not price_per_unit*quantity (which would incorrectly be
+// $0.1953125).
+func TestGetPrice_PubSubThroughputBelowFreeTier_MonthlyEstimateMatchesBreakdown(t *testing.T) {
+	paidRate := 40.0 / 1024.0 // $40/TiB -> $/GiB
+	pvdr := &mockProvider{
+		name:          "gcp",
+		defaultRegion: "global",
+		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
+			return &models.PricingResult{
+				PublicPrices: []models.NormalizedPrice{{
+					Provider:      models.CloudProviderGCP,
+					Service:       "pubsub",
+					SKUID:         "gcp:pubsub:throughput:basic",
+					ProductFamily: "Cloud Pub/Sub",
+					Description:   "Message Delivery Basic",
+					Region:        "global",
+					PricingTerm:   models.PricingTermOnDemand,
+					PricePerUnit:  paidRate,
+					Unit:          models.PriceUnitPerGB,
+					Currency:      "USD",
+				}},
+				Breakdown: map[string]any{
+					"throughput_monthly_cost": testMoneyDict(0, "/mo"),
+				},
+				AuthAvailable: false,
+				Source:        "catalog",
+				SchemaVersion: "1",
+			}, nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"gcp": pvdr})
+	throughput := 5.0
+	resp := callGetPrice(t, h, map[string]any{
+		"provider":                "gcp",
+		"domain":                  "messaging",
+		"service":                 "pubsub",
+		"destination":             "basic",
+		"throughput_gb_per_month": throughput,
+		"region":                  "global",
+	})
+
+	prices, ok := resp["public_prices"].([]any)
+	if !ok || len(prices) != 1 {
+		t.Fatalf("public_prices: got %v, want a single-element slice", resp["public_prices"])
+	}
+	p0 := prices[0].(map[string]any)
+	monthly, ok := p0["monthly_estimate"].(map[string]any)
+	if !ok {
+		t.Fatalf("monthly_estimate is not a map: %v", p0["monthly_estimate"])
+	}
+	if amt, ok := monthly["amount"].(float64); !ok || amt != 0 {
+		t.Errorf("monthly_estimate.amount: got %v, want 0 (all 5 GiB within the free allowance; flat rate*qty would wrongly give %v)", monthly["amount"], paidRate*throughput)
+	}
+}
+
+// TestGetPrice_PubSubThroughputAboveFreeTier_MonthlyEstimateMatchesBreakdown
+// covers usage crossing the free allowance: 15 GiB = 10 GiB free + 5 GiB @
+// paid rate. breakdown["throughput_monthly_cost"] carries the correct
+// tiered figure (5*paidRate); monthly_estimate must equal it, not the flat
+// 15*paidRate a naive price_per_unit*quantity product would give.
+func TestGetPrice_PubSubThroughputAboveFreeTier_MonthlyEstimateMatchesBreakdown(t *testing.T) {
+	paidRate := 40.0 / 1024.0 // $40/TiB -> $/GiB
+	tieredCost := 5.0 * paidRate
+	pvdr := &mockProvider{
+		name:          "gcp",
+		defaultRegion: "global",
+		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
+			return &models.PricingResult{
+				PublicPrices: []models.NormalizedPrice{{
+					Provider:      models.CloudProviderGCP,
+					Service:       "pubsub",
+					SKUID:         "gcp:pubsub:throughput:basic",
+					ProductFamily: "Cloud Pub/Sub",
+					Description:   "Message Delivery Basic",
+					Region:        "global",
+					PricingTerm:   models.PricingTermOnDemand,
+					PricePerUnit:  paidRate,
+					Unit:          models.PriceUnitPerGB,
+					Currency:      "USD",
+				}},
+				Breakdown: map[string]any{
+					"throughput_monthly_cost": testMoneyDict(tieredCost, "/mo"),
+				},
+				AuthAvailable: false,
+				Source:        "catalog",
+				SchemaVersion: "1",
+			}, nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"gcp": pvdr})
+	throughput := 15.0
+	resp := callGetPrice(t, h, map[string]any{
+		"provider":                "gcp",
+		"domain":                  "messaging",
+		"service":                 "pubsub",
+		"destination":             "basic",
+		"throughput_gb_per_month": throughput,
+		"region":                  "global",
+	})
+
+	prices, ok := resp["public_prices"].([]any)
+	if !ok || len(prices) != 1 {
+		t.Fatalf("public_prices: got %v, want a single-element slice", resp["public_prices"])
+	}
+	p0 := prices[0].(map[string]any)
+	monthly, ok := p0["monthly_estimate"].(map[string]any)
+	if !ok {
+		t.Fatalf("monthly_estimate is not a map: %v", p0["monthly_estimate"])
+	}
+	flatWrong := paidRate * throughput
+	if amt, ok := monthly["amount"].(float64); !ok || math.Abs(amt-tieredCost) > 1e-9 {
+		t.Errorf("monthly_estimate.amount: got %v, want %v (tiered breakdown figure, not flat rate*qty=%v)", monthly["amount"], tieredCost, flatWrong)
+	}
+
+	breakdown, ok := resp["breakdown"].(map[string]any)
+	if !ok {
+		t.Fatalf("breakdown is not a map: %v", resp["breakdown"])
+	}
+	throughputCost, ok := breakdown["throughput_monthly_cost"].(map[string]any)
+	if !ok {
+		t.Fatalf("breakdown.throughput_monthly_cost is not a map: %v", breakdown["throughput_monthly_cost"])
+	}
+	if monthly["amount"] != throughputCost["amount"] {
+		t.Errorf("monthly_estimate.amount (%v) must equal breakdown.throughput_monthly_cost.amount (%v)", monthly["amount"], throughputCost["amount"])
+	}
+}
+
+// TestGetPrice_PubSubStorage_MonthlyEstimateMatchesBreakdown covers the
+// per_gb_month (storage) side of the same fix: monthly_estimate must equal
+// breakdown["storage_monthly_cost"], not a hand-rolled price_per_unit*qty
+// product (they happen to agree for storage, which is always flat-rate, but
+// the fix's reuse must hold for both breakdown keys, not just throughput).
+func TestGetPrice_PubSubStorage_MonthlyEstimateMatchesBreakdown(t *testing.T) {
+	storageRate := 0.27
+	storageGB := 200.0
+	tieredCost := storageRate * storageGB
+	pvdr := &mockProvider{
+		name:          "gcp",
+		defaultRegion: "global",
+		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
+			return &models.PricingResult{
+				PublicPrices: []models.NormalizedPrice{{
+					Provider:      models.CloudProviderGCP,
+					Service:       "pubsub",
+					SKUID:         "gcp:pubsub:storage",
+					ProductFamily: "Cloud Pub/Sub",
+					Description:   "Message Storage",
+					Region:        "global",
+					PricingTerm:   models.PricingTermOnDemand,
+					PricePerUnit:  storageRate,
+					Unit:          models.PriceUnitPerGBMonth,
+					Currency:      "USD",
+				}},
+				Breakdown: map[string]any{
+					"storage_monthly_cost": testMoneyDict(tieredCost, "/mo"),
+				},
+				AuthAvailable: false,
+				Source:        "catalog",
+				SchemaVersion: "1",
+			}, nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"gcp": pvdr})
+	resp := callGetPrice(t, h, map[string]any{
+		"provider":     "gcp",
+		"domain":       "messaging",
+		"service":      "pubsub",
+		"storage_type": "topic_backlog",
+		"storage_gb":   storageGB,
+		"region":       "global",
+	})
+
+	prices, ok := resp["public_prices"].([]any)
+	if !ok || len(prices) != 1 {
+		t.Fatalf("public_prices: got %v, want a single-element slice", resp["public_prices"])
+	}
+	p0 := prices[0].(map[string]any)
+	monthly, ok := p0["monthly_estimate"].(map[string]any)
+	if !ok {
+		t.Fatalf("monthly_estimate is not a map: %v", p0["monthly_estimate"])
+	}
+	if amt, ok := monthly["amount"].(float64); !ok || math.Abs(amt-tieredCost) > 1e-9 {
+		t.Errorf("monthly_estimate.amount: got %v, want %v (from breakdown.storage_monthly_cost)", monthly["amount"], tieredCost)
+	}
+}
+
 func TestGetPrice_NotSupportedError(t *testing.T) {
 	pvdr := &mockProvider{
 		name:          "aws",
@@ -2685,6 +2900,44 @@ func TestFillDomain_StorageTypeInference(t *testing.T) {
 	})
 	if capturedDomain != models.PricingDomainStorage {
 		t.Errorf("domain: got %q, want storage", capturedDomain)
+	}
+}
+
+// TestFillDomain_StorageTypeVsPubSubCollision reproduces the exact
+// domain-inference collision fixed alongside issue #79: PubSubPricingSpec
+// also carries a "storage_type" field (e.g. "subscription_backlog"), so a
+// spec with no explicit "domain"/"service" but with both "storage_type" and
+// pubsub-only fields (here "storage_gb", distinct from StoragePricingSpec's
+// "size_gb") must infer domain=messaging, not domain=storage.
+func TestFillDomain_StorageTypeVsPubSubCollision(t *testing.T) {
+	var capturedDomain models.PricingDomain
+	pvdr := &mockProvider{
+		name:          "gcp",
+		defaultRegion: "us-central1",
+		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
+			capturedDomain = spec.GetDomain()
+			return makePriceResult(models.NormalizedPrice{
+				Provider:     models.CloudProviderGCP,
+				Service:      "pubsub",
+				Description:  "Message Storage",
+				Region:       "global",
+				PricingTerm:  models.PricingTermOnDemand,
+				PricePerUnit: 0.27,
+				Unit:         models.PriceUnitPerGBMonth,
+				Currency:     "USD",
+			}), nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"gcp": pvdr})
+	callGetPrice(t, h, map[string]any{
+		"provider":     "gcp",
+		"storage_type": "subscription_backlog",
+		"storage_gb":   200,
+		// no domain, no service, no destination — must NOT be misrouted to
+		// domain=storage via the storage_type heuristic.
+	})
+	if capturedDomain != models.PricingDomainMessaging {
+		t.Errorf("domain: got %q, want messaging (storage_type/storage_gb collision must resolve to pubsub, not storage)", capturedDomain)
 	}
 }
 

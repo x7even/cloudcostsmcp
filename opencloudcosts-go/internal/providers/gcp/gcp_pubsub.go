@@ -109,6 +109,13 @@ type pubsubRates struct {
 	// Storage rate, $/GiB-month — shared by topic backlog, subscription
 	// backlog, retained acknowledged messages, and snapshot backlog.
 	Storage float64 `json:"storage"`
+
+	// BasicFreeTierGB is the monthly free allowance (in GiB) for Basic
+	// message delivery, derived from the live Basic SKU's second tier
+	// startUsageAmount (converted TiB->GiB) rather than hardcoded — see
+	// fetchPubSubRates. A zero value means no matching tiered SKU was found
+	// and the caller should fall back to pubsubFallbackRates.BasicFreeTierGB.
+	BasicFreeTierGB float64 `json:"basic_free_tier_gb"`
 }
 
 // pubsubFallbackRates holds the published, live-verified rates (issue #79)
@@ -128,29 +135,71 @@ var pubsubFallbackRates = pubsubRates{
 	SMTUDF:               40.00 / pubsubGiBPerTiB,
 	SMTAIInference:       60.00 / pubsubGiBPerTiB,
 	Storage:              0.27,
+	BasicFreeTierGB:      pubsubBasicFreeTierGB,
 }
 
 // pubsubRatesCacheKey caches the derived Cloud Pub/Sub rates.
 const pubsubRatesCacheKey = "gcp:pubsub:rates"
 
-// pubsubValidDestinations is the complete set of recognized
-// PubSubPricingSpec.Destination values. Destination DOES select the
-// throughput rate, so pricePubSub rejects anything outside this set with an
-// explicit error rather than silently falling through into a
-// wrong-but-plausible bucket.
-var pubsubValidDestinations = map[string]bool{
-	"basic":                   true,
-	"bigquery":                true,
-	"cloud_storage_export":    true,
-	"bigtable":                true,
-	"kinesis_import":          true,
-	"cloud_storage_import":    true,
-	"azure_event_hubs_import": true,
-	"aws_msk_import":          true,
-	"confluent_cloud_import":  true,
-	"smt_udf":                 true,
-	"smt_ai_inference":        true,
+// pubsubDestinations is the ordered, single source of truth for every
+// recognized PubSubPricingSpec.Destination value and its human-readable
+// line-item description. It replaces what were three independently
+// hand-synchronized structures (a pubsubValidDestinations set, a
+// pubsubDestinationDescriptions map, and a hardcoded destination list
+// embedded in pricePubSub's invalid-destination error message) with one
+// list, derived into pubsubValidDestinations/pubsubDestinationDescriptions/
+// pubsubValidDestinationsErrorList below at package init.
+//
+// Deliberately NOT consolidated here (left as their existing independent
+// switch statements): the SKU-description-matching switch in
+// fetchPubSubRates and the rate-selection switch in pricePubSub. Both are
+// order-dependent (e.g. the SMT-AI-inference case must be checked before
+// the more general SMT case; Cloud Storage needs "to"/"from" directional
+// disambiguation unlike every other import destination) in a way a
+// generic per-entry match-predicate table would have to reproduce exactly
+// to avoid silently changing behavior — a correctness risk judged to
+// outweigh the deduplication benefit for this fix pass.
+var pubsubDestinations = []struct {
+	key         string
+	description string
+}{
+	{"basic", "Message Delivery Basic (paid rate; first 10 GiB/month free)"},
+	{"bigquery", "Message Delivery to BigQuery (direct-write ingestion)"},
+	{"cloud_storage_export", "Message Delivery to Cloud Storage (direct-write export)"},
+	{"bigtable", "Message Delivery to Bigtable (direct-write ingestion)"},
+	{"kinesis_import", "Message Import from Amazon Kinesis"},
+	{"cloud_storage_import", "Message Import from Cloud Storage"},
+	{"azure_event_hubs_import", "Message Import from Azure Event Hubs"},
+	{"aws_msk_import", "Message Import from AWS MSK"},
+	{"confluent_cloud_import", "Message Import from Confluent Cloud"},
+	{"smt_udf", "Single Message Transform (UDF) throughput"},
+	{"smt_ai_inference", "Single Message Transform (AI inference) throughput"},
 }
+
+// pubsubValidDestinations is the complete set of recognized
+// PubSubPricingSpec.Destination values, derived from pubsubDestinations.
+// Destination DOES select the throughput rate, so pricePubSub rejects
+// anything outside this set with an explicit error rather than silently
+// falling through into a wrong-but-plausible bucket.
+var pubsubValidDestinations = func() map[string]bool {
+	m := make(map[string]bool, len(pubsubDestinations))
+	for _, d := range pubsubDestinations {
+		m[d.key] = true
+	}
+	return m
+}()
+
+// pubsubValidDestinationsErrorList is the comma-separated, single-quoted
+// destination list used in pricePubSub's invalid-destination error message,
+// derived from pubsubDestinations so the error text can never drift out of
+// sync with the actual valid set.
+var pubsubValidDestinationsErrorList = func() string {
+	parts := make([]string, len(pubsubDestinations))
+	for i, d := range pubsubDestinations {
+		parts[i] = "'" + d.key + "'"
+	}
+	return strings.Join(parts, ", ")
+}()
 
 // pubsubKnownStorageTypes is the set of PubSubPricingSpec.StorageType values
 // verified against the public pricing page. storage_type is a purely
@@ -217,15 +266,26 @@ func (p *Provider) fetchPubSubRates(ctx context.Context) pubsubRates {
 		desc, _ := sku["description"].(string)
 		descLower := strings.ToLower(desc)
 
-		if geo, ok := sku["geoTaxonomy"].(map[string]any); ok {
-			if geoType, _ := geo["type"].(string); geoType != "" && geoType != "GLOBAL" {
-				continue
-			}
+		if !isGlobalSKU(sku) {
+			continue
 		}
 
 		switch {
 		case strings.Contains(descLower, "message delivery basic"):
+			firstMatch := !matched["basic"]
 			setOnce("basic", &rates.BasicPaid, desc, skuPaidPrice(sku)/pubsubGiBPerTiB)
+			if firstMatch {
+				// The free-tier boundary is the second tier's
+				// startUsageAmount (the first, zero-priced tier starts at
+				// 0; the paid tier begins where the free allowance ends),
+				// expressed in TiB by GCP and converted to GiB here — same
+				// unit convention as the rate itself (see file header).
+				if tiers := skuTierList(sku); len(tiers) >= 2 {
+					rates.BasicFreeTierGB = tiers[1].start * pubsubGiBPerTiB
+				} else {
+					slog.Warn("gcp pubsub: basic SKU has fewer than 2 tiers; cannot derive free-tier boundary, falling back to hardcoded constant", "description", desc, "tier_count", len(tiers))
+				}
+			}
 
 		case strings.Contains(descLower, "to bigquery"):
 			setOnce("bigquery", &rates.BigQuery, desc, skuPrice(sku)/pubsubGiBPerTiB)
@@ -276,6 +336,23 @@ func (p *Provider) fetchPubSubRates(ctx context.Context) pubsubRates {
 				rates.Storage = r
 				storageMatchedDesc = desc
 			} else if r != rates.Storage {
+				// This slog.Warn only fires on a fresh (cache-miss) fetch —
+				// fetchPubSubRates returns the cached JSON blob early above
+				// on a cache hit, so a divergence detected here is not
+				// re-logged again until the cache entry expires and this
+				// function actually re-scans the SKU catalog. This is an
+				// accepted tradeoff, not an oversight: divergence between
+				// these four storage SKUs would mean GCP started charging
+				// different rates for topic vs. subscription vs. snapshot
+				// backlog, a should-never-happen pricing-model change, and
+				// pubsubRatesCacheKey's entry expires after
+				// p.cfg.MetadataTTL() (DefaultMetadataTTL = 7 days), so the
+				// warning re-fires (loudly, in every subsequent fetch cycle)
+				// well within a week of the divergence actually appearing —
+				// no persisted "divergence detected" flag is threaded
+				// through the cached rates struct, since nothing would read
+				// it between cache refreshes anyway (dead state is worse
+				// than a documented gap).
 				slog.Warn("gcp pubsub: storage SKU rate diverges from first match", "first_description", storageMatchedDesc, "first_rate", rates.Storage, "description", desc, "rate", r)
 			}
 		}
@@ -293,37 +370,18 @@ func (p *Provider) fetchPubSubRates(ctx context.Context) pubsubRates {
 // so pricePubSub's per-line-item construction only needs to supply what
 // actually differs.
 func newPubSubPrice(skuID, description string, pricePerUnit float64, unit models.PriceUnit, attrs map[string]string) *models.NormalizedPrice {
-	price := &models.NormalizedPrice{
-		Provider:      models.CloudProviderGCP,
-		Service:       "pubsub",
-		SKUID:         skuID,
-		ProductFamily: "Cloud Pub/Sub",
-		Description:   description,
-		PricingTerm:   models.PricingTermOnDemand,
-		PricePerUnit:  pricePerUnit,
-		Unit:          unit,
-		Currency:      "USD",
-		Attributes:    attrs,
-	}
-	stampGlobalScope(price)
-	return price
+	return newGlobalScopedPrice("pubsub", "Cloud Pub/Sub", skuID, description, pricePerUnit, unit, attrs)
 }
 
 // pubsubDestinationDescriptions maps each valid Destination to its
-// human-readable line-item description.
-var pubsubDestinationDescriptions = map[string]string{
-	"basic":                   "Message Delivery Basic (paid rate; first 10 GiB/month free)",
-	"bigquery":                "Message Delivery to BigQuery (direct-write ingestion)",
-	"cloud_storage_export":    "Message Delivery to Cloud Storage (direct-write export)",
-	"bigtable":                "Message Delivery to Bigtable (direct-write ingestion)",
-	"kinesis_import":          "Message Import from Amazon Kinesis",
-	"cloud_storage_import":    "Message Import from Cloud Storage",
-	"azure_event_hubs_import": "Message Import from Azure Event Hubs",
-	"aws_msk_import":          "Message Import from AWS MSK",
-	"confluent_cloud_import":  "Message Import from Confluent Cloud",
-	"smt_udf":                 "Single Message Transform (UDF) throughput",
-	"smt_ai_inference":        "Single Message Transform (AI inference) throughput",
-}
+// human-readable line-item description, derived from pubsubDestinations.
+var pubsubDestinationDescriptions = func() map[string]string {
+	m := make(map[string]string, len(pubsubDestinations))
+	for _, d := range pubsubDestinations {
+		m[d.key] = d.description
+	}
+	return m
+}()
 
 // pricePubSub returns Cloud Pub/Sub pricing for the given PubSubPricingSpec:
 // one NormalizedPrice for the message-throughput rate (selected by
@@ -351,10 +409,8 @@ func (p *Provider) pricePubSub(
 	// informationally only, below, and never errors.
 	if !pubsubValidDestinations[destination] {
 		return nil, nil, fmt.Errorf(
-			"gcp pubsub: invalid destination %q: must be one of 'basic', 'bigquery', 'cloud_storage_export', "+
-				"'bigtable', 'kinesis_import', 'cloud_storage_import', 'azure_event_hubs_import', "+
-				"'aws_msk_import', 'confluent_cloud_import', 'smt_udf', 'smt_ai_inference'",
-			spec.Destination,
+			"gcp pubsub: invalid destination %q: must be one of %s",
+			spec.Destination, pubsubValidDestinationsErrorList,
 		)
 	}
 	storageTypeRecognized := pubsubKnownStorageTypes[storageType]
@@ -388,6 +444,7 @@ func (p *Provider) pricePubSub(
 		throughputRate, throughputFallback = pickRate(rates.SMTAIInference, pubsubFallbackRates.SMTAIInference)
 	}
 	storageRate, storageFallback := pickRate(rates.Storage, pubsubFallbackRates.Storage)
+	freeTierGB, freeTierFallback := pickRate(rates.BasicFreeTierGB, pubsubFallbackRates.BasicFreeTierGB)
 
 	throughputAttrs := map[string]string{"destination": destination}
 	storageAttrs := map[string]string{"storage_type": storageType}
@@ -415,8 +472,8 @@ func (p *Provider) pricePubSub(
 		"storage_type_note": "storage_type does not affect price: topic backlog, subscription backlog, retained acknowledged messages, and snapshot backlog all share the same storage rate (verified live).",
 	}
 	if destination == "basic" {
-		breakdown["free_tier_gb_per_month"] = pubsubBasicFreeTierGB
-		breakdown["basic_note"] = "Headline throughput rate is the PAID rate that applies after the 10 GiB/month free allowance is exceeded; usage within the free allowance is $0.00."
+		breakdown["free_tier_gb_per_month"] = freeTierGB
+		breakdown["basic_note"] = "Headline throughput rate is the PAID rate that applies after the free monthly allowance is exceeded; usage within the free allowance is $0.00."
 	}
 	if !storageTypeRecognized {
 		breakdown["storage_type_unrecognized"] = true
@@ -425,7 +482,13 @@ func (p *Provider) pricePubSub(
 			spec.StorageType,
 		)
 	}
-	if throughputFallback || storageFallback {
+	// freeTierFallback only affects the actually-computed price/breakdown
+	// when destination=="basic" (it is the only destination that uses
+	// freeTierGB); folding it in unconditionally for every other
+	// destination would misreport fallback=true based on an unrelated
+	// bucket's live-match state.
+	usedFreeTierFallback := destination == "basic" && freeTierFallback
+	if throughputFallback || storageFallback || usedFreeTierFallback {
 		breakdown["fallback"] = true
 		breakdown["fallback_note"] = "Using hardcoded fallback rate(s); live SKU catalog unavailable or returned no match. Verify current rates at " + pubsubSourceURL + "."
 	}
@@ -446,7 +509,7 @@ func (p *Provider) pricePubSub(
 		if destination == "basic" {
 			throughputTiers = []egressTier{
 				{thresholdGB: 0, rate: 0, label: "free"},
-				{thresholdGB: pubsubBasicFreeTierGB, rate: throughputRate, label: "paid"},
+				{thresholdGB: freeTierGB, rate: throughputRate, label: "paid"},
 			}
 		} else {
 			throughputTiers = []egressTier{{thresholdGB: 0, rate: throughputRate, label: "flat"}}

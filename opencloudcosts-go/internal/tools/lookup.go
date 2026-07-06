@@ -236,9 +236,27 @@ func fillDomain(spec map[string]any) map[string]any {
 			}
 		}
 		// 2. storage_type → storage
+		//
+		// storage_type is not unique to StoragePricingSpec: PubSubPricingSpec
+		// also carries a "storage_type" field (e.g. "subscription_backlog"),
+		// so a bare storage_type key is ambiguous between the two domains.
+		// Disambiguate by checking for Pub/Sub-specific keys first — none of
+		// "destination", "throughput_gb_per_month", or "storage_gb" (the
+		// pubsub spec's own size field, distinct from StoragePricingSpec's
+		// "size_gb") ever appear on a genuine StoragePricingSpec — so their
+		// presence alongside storage_type means this is a Pub/Sub spec, not
+		// a storage spec.
 		if inferred == "" {
 			if _, ok := spec["storage_type"]; ok {
-				inferred = "storage"
+				if _, hasDest := spec["destination"]; hasDest {
+					inferred = "messaging"
+				} else if _, hasThroughput := spec["throughput_gb_per_month"]; hasThroughput {
+					inferred = "messaging"
+				} else if _, hasStorageGB := spec["storage_gb"]; hasStorageGB {
+					inferred = "messaging"
+				} else {
+					inferred = "storage"
+				}
 			}
 		}
 		// 3. resource_type prefix patterns
@@ -457,17 +475,22 @@ func applyBaselineDeltas(entries []map[string]any, baselineRegion string, groupK
 // same architectural gap storageSpec's monthly_estimate has always had.
 // Prefer the breakdown fields over monthly_estimate for exact figures near a
 // tier boundary.
-// pubsubSpec, when non-nil, is the caller's PubSubPricingSpec — used the same
-// way to scale a per_gb (throughput) or per_gb_month (storage) price_per_unit
-// into a monthly_estimate (#79 follow-up). For destination="basic" this flat
-// rate*quantity product uses the *paid* per-GB rate at every volume, so it
-// overstates cost below the 10 GiB/month free allowance and near that
-// boundary — same caveat as DNS's tier boundaries above, plus this
-// unconditional free-tier gap. Prefer
-// breakdown["throughput_monthly_cost"]/breakdown["storage_monthly_cost"]
-// (computed via the tiered-cost machinery, which does account for the free
-// tier) over monthly_estimate for exact figures.
-func normalizedPriceSummary(p models.NormalizedPrice, storageSpec *models.StoragePricingSpec, dnsSpec *models.DNSPricingSpec, pubsubSpec *models.PubSubPricingSpec) map[string]any {
+// pubsubSpec, when non-nil, is the caller's PubSubPricingSpec — used to scale
+// a per_gb (throughput) or per_gb_month (storage) price_per_unit into a
+// monthly_estimate (#79 follow-up). Unlike storageSpec/dnsSpec above,
+// monthly_estimate here is NOT simply price_per_unit*quantity: for
+// destination="basic", a flat rate*quantity product would use the *paid*
+// per-GB rate at every volume and overstate cost below the free monthly
+// allowance. Instead, breakdown (the result's Breakdown map, threaded down
+// from pricingResultSummary/priceSummaries) already carries
+// throughput_monthly_cost/storage_monthly_cost computed via the gcp
+// package's tiered-cost machinery (which does account for the free tier —
+// see gcp_pubsub.go's pricePubSub), and monthly_estimate reuses that value
+// directly whenever present, falling back to the flat product only if the
+// breakdown key is absent (e.g. a non-GCP pubsub-shaped provider in the
+// future). breakdownMoney and moneyDict produce byte-identical map shapes,
+// so this substitution is safe.
+func normalizedPriceSummary(p models.NormalizedPrice, storageSpec *models.StoragePricingSpec, dnsSpec *models.DNSPricingSpec, pubsubSpec *models.PubSubPricingSpec, breakdown map[string]any) map[string]any {
 	result := map[string]any{
 		"provider":    string(p.Provider),
 		"description": p.Description,
@@ -514,11 +537,19 @@ func normalizedPriceSummary(p models.NormalizedPrice, storageSpec *models.Storag
 		switch p.Unit {
 		case models.PriceUnitPerGB:
 			if pubsubSpec.ThroughputGBPerMonth != nil && *pubsubSpec.ThroughputGBPerMonth > 0 {
-				result["monthly_estimate"] = moneyDict(p.PricePerUnit*(*pubsubSpec.ThroughputGBPerMonth), "/mo")
+				if v, ok := breakdown["throughput_monthly_cost"]; ok {
+					result["monthly_estimate"] = v
+				} else {
+					result["monthly_estimate"] = moneyDict(p.PricePerUnit*(*pubsubSpec.ThroughputGBPerMonth), "/mo")
+				}
 			}
 		case models.PriceUnitPerGBMonth:
 			if pubsubSpec.StorageGB != nil && *pubsubSpec.StorageGB > 0 {
-				result["monthly_estimate"] = moneyDict(p.PricePerUnit*(*pubsubSpec.StorageGB), "/mo")
+				if v, ok := breakdown["storage_monthly_cost"]; ok {
+					result["monthly_estimate"] = v
+				} else {
+					result["monthly_estimate"] = moneyDict(p.PricePerUnit*(*pubsubSpec.StorageGB), "/mo")
+				}
 			}
 		}
 	}
@@ -601,12 +632,12 @@ func isEmptyPricingResult(r *models.PricingResult) bool {
 
 func pricingResultSummary(r *models.PricingResult, storageSpec *models.StoragePricingSpec, dnsSpec *models.DNSPricingSpec, pubsubSpec *models.PubSubPricingSpec) map[string]any {
 	out := map[string]any{
-		"public_prices":  priceSummaries(r.PublicPrices, storageSpec, dnsSpec, pubsubSpec),
+		"public_prices":  priceSummaries(r.PublicPrices, storageSpec, dnsSpec, pubsubSpec, r.Breakdown),
 		"auth_available": r.AuthAvailable,
 		"source":         r.Source,
 	}
 	if len(r.ContractedPrices) > 0 {
-		out["contracted_prices"] = priceSummaries(r.ContractedPrices, storageSpec, dnsSpec, pubsubSpec)
+		out["contracted_prices"] = priceSummaries(r.ContractedPrices, storageSpec, dnsSpec, pubsubSpec, r.Breakdown)
 	}
 	if r.EffectivePrice != nil {
 		ep := r.EffectivePrice
@@ -633,10 +664,13 @@ func pricingResultSummary(r *models.PricingResult, storageSpec *models.StoragePr
 }
 
 // priceSummaries converts a slice of NormalizedPrices to their summary dicts.
-func priceSummaries(prices []models.NormalizedPrice, storageSpec *models.StoragePricingSpec, dnsSpec *models.DNSPricingSpec, pubsubSpec *models.PubSubPricingSpec) []map[string]any {
+// breakdown is the owning PricingResult's Breakdown map (may be nil), passed
+// through to normalizedPriceSummary so pubsub's monthly_estimate can reuse
+// its tiered-cost figures — see normalizedPriceSummary's pubsubSpec doc.
+func priceSummaries(prices []models.NormalizedPrice, storageSpec *models.StoragePricingSpec, dnsSpec *models.DNSPricingSpec, pubsubSpec *models.PubSubPricingSpec, breakdown map[string]any) []map[string]any {
 	out := make([]map[string]any, len(prices))
 	for i, p := range prices {
-		out[i] = normalizedPriceSummary(p, storageSpec, dnsSpec, pubsubSpec)
+		out[i] = normalizedPriceSummary(p, storageSpec, dnsSpec, pubsubSpec, breakdown)
 	}
 	return out
 }

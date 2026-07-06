@@ -56,8 +56,14 @@ func pubsubSKUFlat(desc, units string, nanos int) map[string]any {
 }
 
 // pubsubSKUTwoTier builds a two-tier global SKU: tier1 (free) at
-// startUsageAmount=0, tier2 (paid) at startUsageAmount=threshold. Models the
-// Message Delivery Basic SKU: $0.00 (0-10 GiB/mo), then the paid rate.
+// startUsageAmount=0, tier2 (paid) at startUsageAmount=threshold/1024 (GCP's
+// real Message Delivery Basic SKU publishes startUsageAmount in TiB, the
+// same unit as its rate — see file header/gcp_pubsub.go — so threshold is
+// accepted here in GiB, the caller-friendly unit, and converted to TiB
+// on the way in; $40.00/TiB with a 10 GiB free allowance is real captured
+// data, not merely self-consistent fixture math: 10 GiB == 10/1024 TiB).
+// Models the Message Delivery Basic SKU: $0.00 (0-threshold GiB/mo), then
+// the paid rate.
 func pubsubSKUTwoTier(desc string, threshold float64, tier2Units string, tier2Nanos int) map[string]any {
 	return map[string]any{
 		"description":    desc,
@@ -81,7 +87,7 @@ func pubsubSKUTwoTier(desc string, threshold float64, tier2Units string, tier2Na
 							},
 						},
 						map[string]any{
-							"startUsageAmount": threshold,
+							"startUsageAmount": threshold / pubsubGiBPerTiB,
 							"unitPrice": map[string]any{
 								"units": tier2Units,
 								"nanos": float64(tier2Nanos),
@@ -164,11 +170,65 @@ func TestFetchPubSubRates_ParsesAllBuckets(t *testing.T) {
 		{"SMTUDF", rates.SMTUDF, 40.0 / pubsubGiBPerTiB},
 		{"SMTAIInference", rates.SMTAIInference, 60.0 / pubsubGiBPerTiB},
 		{"Storage", rates.Storage, 0.27},
+		{"BasicFreeTierGB", rates.BasicFreeTierGB, 10.0},
 	}
 	for _, c := range cases {
 		if abs(c.got-c.want) > 1e-9 {
 			t.Errorf("%s = %.9f, want %.9f", c.name, c.got, c.want)
 		}
+	}
+}
+
+// TestFetchPubSubRates_FreeTierBoundaryReadFromLiveSKU verifies that
+// BasicFreeTierGB is derived from the live Basic SKU's second-tier
+// startUsageAmount rather than hardcoded: a fixture whose free-tier boundary
+// is 20 GiB (not the pubsubBasicFreeTierGB constant's 10 GiB) must yield
+// BasicFreeTierGB==20, proving the value is actually read off the SKU and
+// the derivation isn't merely echoing the constant back.
+func TestFetchPubSubRates_FreeTierBoundaryReadFromLiveSKU(t *testing.T) {
+	skus := []map[string]any{
+		pubsubSKUTwoTier("Message Delivery Basic", 20, "40", 0), // 20 GiB free tier, not the 10 GiB constant
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(pubsubSKUResponse(skus))
+	}))
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	ctx := context.Background()
+
+	rates := p.fetchPubSubRates(ctx)
+	if abs(rates.BasicFreeTierGB-20.0) > 1e-9 {
+		t.Errorf("BasicFreeTierGB = %.6f, want 20.000000 (live SKU boundary, not the hardcoded 10 GiB constant)", rates.BasicFreeTierGB)
+	}
+	if rates.BasicFreeTierGB == pubsubBasicFreeTierGB {
+		t.Errorf("BasicFreeTierGB = %.6f coincidentally equals the hardcoded constant %.6f; fixture must use a differing boundary to prove live derivation", rates.BasicFreeTierGB, pubsubBasicFreeTierGB)
+	}
+}
+
+// TestFetchPubSubRates_FreeTierBoundaryFallsBackWithoutSecondTier verifies
+// that a Basic SKU with fewer than two tiers leaves BasicFreeTierGB at its
+// zero value (so pricePubSub's pickRate falls back to
+// pubsubFallbackRates.BasicFreeTierGB) instead of panicking or guessing.
+func TestFetchPubSubRates_FreeTierBoundaryFallsBackWithoutSecondTier(t *testing.T) {
+	skus := []map[string]any{
+		pubsubSKUFlat("Message Delivery Basic", "40", 0), // single-tier: no free-tier boundary to derive
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(pubsubSKUResponse(skus))
+	}))
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	ctx := context.Background()
+
+	rates := p.fetchPubSubRates(ctx)
+	if rates.BasicFreeTierGB != 0 {
+		t.Errorf("BasicFreeTierGB = %.6f, want 0 (no second tier to derive a boundary from)", rates.BasicFreeTierGB)
 	}
 }
 
@@ -618,6 +678,40 @@ func TestPricePubSub_BasicCostMath_CrossesFreeTier(t *testing.T) {
 	want := 5.0 * (40.0 / pubsubGiBPerTiB)
 	if abs(got-want) > 1e-6 {
 		t.Errorf("throughput_monthly_cost = %.6f, want %.6f (tiered split, not flat paidRate*qty)", got, want)
+	}
+}
+
+// TestPricePubSub_BasicCostMath_UsesLiveFreeTierBoundary verifies that
+// pricePubSub's tiered throughput math actually uses the live-derived free
+// allowance (20 GiB here, not the pubsubBasicFreeTierGB==10 hardcoded
+// constant): 15 GiB of usage must be entirely within the (live) 20 GiB free
+// allowance, producing $0.00 throughput cost, not a >0 cost split against
+// the constant's 10 GiB boundary.
+func TestPricePubSub_BasicCostMath_UsesLiveFreeTierBoundary(t *testing.T) {
+	skus := []map[string]any{
+		pubsubSKUTwoTier("Message Delivery Basic", 20, "40", 0), // live free tier: 20 GiB
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(pubsubSKUResponse(skus))
+	}))
+	defer ts.Close()
+
+	p := newTestProvider(t, ts)
+	ctx := context.Background()
+
+	qty := 15.0
+	spec := &models.PubSubPricingSpec{Destination: "basic", ThroughputGBPerMonth: &qty}
+	_, breakdown, err := p.pricePubSub(ctx, spec)
+	if err != nil {
+		t.Fatalf("pricePubSub: %v", err)
+	}
+	got := mustFloat64(t, breakdown["throughput_monthly_cost"], "throughput_monthly_cost")
+	if abs(got-0) > 1e-9 {
+		t.Errorf("throughput_monthly_cost = %.6f, want 0 (15 GiB is within the live-derived 20 GiB free allowance, not the hardcoded 10 GiB constant)", got)
+	}
+	if freeTier := breakdown["free_tier_gb_per_month"]; freeTier != 20.0 {
+		t.Errorf("free_tier_gb_per_month = %v, want 20 (live-derived)", freeTier)
 	}
 }
 
