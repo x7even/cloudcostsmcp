@@ -64,6 +64,38 @@ func loadSnapshot(t *testing.T) map[string]snapshotTool {
 	return result
 }
 
+// outputSnapshotTool is the parsed representation of one tool entry in
+// schemas/tools-output-snapshot.json.
+type outputSnapshotTool struct {
+	Name         string `json:"name"`
+	OutputSchema any    `json:"outputSchema"`
+}
+
+// loadOutputSnapshot reads schemas/tools-output-snapshot.json from the repo
+// root and returns a map of tool name → outputSnapshotTool.
+func loadOutputSnapshot(t *testing.T) map[string]outputSnapshotTool {
+	t.Helper()
+	// Navigate from internal/server to the repo root.
+	snapshotPath := filepath.Join("..", "..", "schemas", "tools-output-snapshot.json")
+	data, err := os.ReadFile(snapshotPath)
+	if err != nil {
+		t.Fatalf("cannot read tools-output-snapshot.json: %v", err)
+	}
+
+	var snap struct {
+		Tools []outputSnapshotTool `json:"tools"`
+	}
+	if err := json.Unmarshal(data, &snap); err != nil {
+		t.Fatalf("cannot unmarshal tools-output-snapshot.json: %v", err)
+	}
+
+	result := make(map[string]outputSnapshotTool, len(snap.Tools))
+	for _, tl := range snap.Tools { // tl avoids shadowing *testing.T
+		result[tl.Name] = tl
+	}
+	return result
+}
+
 // connectInMemory creates an in-memory MCP client session connected to the
 // given mcp.Server. The returned session is already initialised.
 func connectInMemory(t *testing.T, mcpSrv *mcp.Server) *mcp.ClientSession {
@@ -142,6 +174,44 @@ func TestSchemaParityWithSnapshot(t *testing.T) {
 		if !reflect.DeepEqual(got, snap.InputSchema) {
 			t.Errorf("tool %q: InputSchema drift\ngot:  %s\nwant: %s",
 				name, mustMarshalIndent(got), mustMarshalIndent(snap.InputSchema))
+		}
+	}
+}
+
+// TestOutputSchemaParityWithSnapshot verifies that the OutputSchema for each
+// of the registered tools is structurally identical to the checked-in
+// schemas/tools-output-snapshot.json. Comparison is deep-equal on the parsed
+// JSON object, not byte comparison.
+func TestOutputSchemaParityWithSnapshot(t *testing.T) {
+	srv := newTestServer(t)
+	sess := connectToServer(t, srv)
+	ctx := context.Background()
+
+	tools := collectTools(t, ctx, sess)
+	snapshot := loadOutputSnapshot(t)
+
+	for name, snap := range snapshot {
+		tool, ok := tools[name]
+		if !ok {
+			t.Errorf("tool %q: in output snapshot but not registered", name)
+			continue
+		}
+
+		// Normalise both sides via JSON round-trip to comparable map[string]any.
+		gotJSON, err := json.Marshal(tool.OutputSchema)
+		if err != nil {
+			t.Errorf("tool %q: cannot marshal registered OutputSchema: %v", name, err)
+			continue
+		}
+		var got any
+		if err := json.Unmarshal(gotJSON, &got); err != nil {
+			t.Errorf("tool %q: cannot unmarshal registered OutputSchema: %v", name, err)
+			continue
+		}
+
+		if !reflect.DeepEqual(got, snap.OutputSchema) {
+			t.Errorf("tool %q: OutputSchema drift\ngot:  %s\nwant: %s",
+				name, mustMarshalIndent(got), mustMarshalIndent(snap.OutputSchema))
 		}
 	}
 }

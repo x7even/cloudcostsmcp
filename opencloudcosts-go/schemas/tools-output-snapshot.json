@@ -1,0 +1,2353 @@
+{
+  "tools": [
+    {
+      "name": "get_price",
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "public_prices": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "provider": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "region": {
+                  "type": "string"
+                },
+                "region_name": {
+                  "type": "string"
+                },
+                "term": {
+                  "type": "string"
+                },
+                "price_per_unit": {
+                  "type": "object",
+                  "properties": {
+                    "amount": {
+                      "type": "number"
+                    },
+                    "unit": {
+                      "type": "string"
+                    },
+                    "currency": {
+                      "type": "string"
+                    },
+                    "display": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "monthly_estimate": {
+                  "type": "object",
+                  "properties": {
+                    "amount": {
+                      "type": "number"
+                    },
+                    "currency": {
+                      "type": "string"
+                    },
+                    "display": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "instanceType": {
+                  "type": "string"
+                },
+                "vcpu": {
+                  "type": "string"
+                },
+                "memory": {
+                  "type": "string"
+                },
+                "operatingSystem": {
+                  "type": "string"
+                },
+                "storage": {
+                  "type": "string"
+                },
+                "storage_type": {
+                  "type": "string"
+                },
+                "volumeType": {
+                  "type": "string"
+                },
+                "fallback": {
+                  "type": "string"
+                },
+                "fallback_note": {
+                  "type": "string"
+                },
+                "note": {
+                  "type": "string"
+                },
+                "fromRegionCode": {
+                  "type": "string"
+                },
+                "toRegionCode": {
+                  "type": "string"
+                },
+                "as_of": {
+                  "type": "string"
+                },
+                "cache_age_seconds": {
+                  "type": "number"
+                },
+                "price_effective_date": {
+                  "type": "string"
+                },
+                "source_url": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "auth_available": {
+            "type": "boolean"
+          },
+          "source": {
+            "type": "string"
+          },
+          "contracted_prices": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "provider": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "region": {
+                  "type": "string"
+                },
+                "region_name": {
+                  "type": "string"
+                },
+                "term": {
+                  "type": "string"
+                },
+                "price_per_unit": {
+                  "type": "object",
+                  "properties": {
+                    "amount": {
+                      "type": "number"
+                    },
+                    "unit": {
+                      "type": "string"
+                    },
+                    "currency": {
+                      "type": "string"
+                    },
+                    "display": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "monthly_estimate": {
+                  "type": "object",
+                  "properties": {
+                    "amount": {
+                      "type": "number"
+                    },
+                    "currency": {
+                      "type": "string"
+                    },
+                    "display": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "instanceType": {
+                  "type": "string"
+                },
+                "vcpu": {
+                  "type": "string"
+                },
+                "memory": {
+                  "type": "string"
+                },
+                "operatingSystem": {
+                  "type": "string"
+                },
+                "storage": {
+                  "type": "string"
+                },
+                "storage_type": {
+                  "type": "string"
+                },
+                "volumeType": {
+                  "type": "string"
+                },
+                "fallback": {
+                  "type": "string"
+                },
+                "fallback_note": {
+                  "type": "string"
+                },
+                "note": {
+                  "type": "string"
+                },
+                "fromRegionCode": {
+                  "type": "string"
+                },
+                "toRegionCode": {
+                  "type": "string"
+                },
+                "as_of": {
+                  "type": "string"
+                },
+                "cache_age_seconds": {
+                  "type": "number"
+                },
+                "price_effective_date": {
+                  "type": "string"
+                },
+                "source_url": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "effective_price": {
+            "type": "object",
+            "properties": {
+              "price_per_unit": {
+                "type": "object",
+                "properties": {
+                  "amount": {
+                    "type": "number"
+                  },
+                  "unit": {
+                    "type": "string"
+                  },
+                  "currency": {
+                    "type": "string"
+                  },
+                  "display": {
+                    "type": "string"
+                  }
+                }
+              },
+              "discount_type": {
+                "type": "string"
+              },
+              "discount_pct": {
+                "type": "number"
+              },
+              "savings_vs_on_demand": {
+                "type": "object",
+                "properties": {
+                  "amount": {
+                    "type": "number"
+                  },
+                  "unit": {
+                    "type": "string"
+                  },
+                  "currency": {
+                    "type": "string"
+                  },
+                  "display": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "breakdown": {
+            "type": "object"
+          },
+          "note": {
+            "type": "string"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "error": {
+            "type": "string"
+          },
+          "region": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "hint": {
+            "type": "string"
+          },
+          "fix": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "domain": {
+            "type": "string"
+          },
+          "service": {
+            "type": "string"
+          },
+          "alternatives": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "message": {
+            "type": "string"
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "result": {
+            "type": "string"
+          },
+          "filters_applied": {
+            "type": "object"
+          },
+          "tip": {
+            "type": "string"
+          },
+          "not_available_in": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "get_prices_batch",
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "region": {
+            "type": "string"
+          },
+          "os": {
+            "type": "string"
+          },
+          "term": {
+            "type": "string"
+          },
+          "count": {
+            "type": "number"
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "instance_type": {
+                  "type": "string"
+                },
+                "price_per_unit": {
+                  "type": "object",
+                  "properties": {
+                    "amount": {
+                      "type": "number"
+                    },
+                    "unit": {
+                      "type": "string"
+                    },
+                    "currency": {
+                      "type": "string"
+                    },
+                    "display": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "monthly_estimate": {
+                  "type": "object",
+                  "properties": {
+                    "amount": {
+                      "type": "number"
+                    },
+                    "currency": {
+                      "type": "string"
+                    },
+                    "display": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "vcpu": {
+                  "type": "string"
+                },
+                "memory": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "fallback": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "errors": {
+            "type": "object"
+          },
+          "not_available_in": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "error": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "compare_prices",
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "domain": {
+            "type": "string"
+          },
+          "service": {
+            "type": "string"
+          },
+          "cheapest_region": {
+            "type": "string"
+          },
+          "cheapest_price": {
+            "type": "object",
+            "properties": {
+              "amount": {
+                "type": "number"
+              },
+              "unit": {
+                "type": "string"
+              },
+              "currency": {
+                "type": "string"
+              },
+              "display": {
+                "type": "string"
+              }
+            }
+          },
+          "most_expensive_region": {
+            "type": "string"
+          },
+          "most_expensive_price": {
+            "type": "object",
+            "properties": {
+              "amount": {
+                "type": "number"
+              },
+              "unit": {
+                "type": "string"
+              },
+              "currency": {
+                "type": "string"
+              },
+              "display": {
+                "type": "string"
+              }
+            }
+          },
+          "price_delta_pct": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "all_regions_sorted": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "region": {
+                  "type": "string"
+                },
+                "region_name": {
+                  "type": "string"
+                },
+                "price_per_unit": {
+                  "type": "object",
+                  "properties": {
+                    "amount": {
+                      "type": "number"
+                    },
+                    "unit": {
+                      "type": "string"
+                    },
+                    "currency": {
+                      "type": "string"
+                    },
+                    "display": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "monthly_estimate": {
+                  "type": "object",
+                  "properties": {
+                    "amount": {
+                      "type": "number"
+                    },
+                    "currency": {
+                      "type": "string"
+                    },
+                    "display": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "fallback": {
+                  "type": "string"
+                },
+                "sku_description": {
+                  "type": "string"
+                },
+                "delta_per_hour": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "delta_monthly": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "delta_pct": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "ranking_low_confidence": {
+            "type": "boolean"
+          },
+          "multi_sku": {
+            "type": "boolean"
+          },
+          "sku_count": {
+            "type": "number"
+          },
+          "multi_sku_message": {
+            "type": "string"
+          },
+          "not_available_in": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "transient_errors": {
+            "type": "object"
+          },
+          "baseline_region": {
+            "type": "string"
+          },
+          "baseline_missing": {
+            "type": "boolean"
+          },
+          "baseline_missing_message": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          },
+          "regions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "message": {
+            "type": "string"
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "result": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "get_price_by_sku",
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "sku": {
+            "type": "string"
+          },
+          "usage_type_prefix": {
+            "type": "string"
+          },
+          "usage_type_suffix": {
+            "type": "string"
+          },
+          "service_source": {
+            "type": "string"
+          },
+          "all_regions_sorted": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "region": {
+                  "type": "string"
+                },
+                "region_name": {
+                  "type": "string"
+                },
+                "price_per_unit": {
+                  "type": "object",
+                  "properties": {
+                    "amount": {
+                      "type": "number"
+                    },
+                    "unit": {
+                      "type": "string"
+                    },
+                    "currency": {
+                      "type": "string"
+                    },
+                    "display": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "service_used": {
+                  "type": "string"
+                },
+                "hint_status": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "product_family": {
+                  "type": "string"
+                },
+                "attributes": {
+                  "type": "object"
+                },
+                "sku_id": {
+                  "type": "string"
+                },
+                "monthly_estimate": {
+                  "type": "object",
+                  "properties": {
+                    "amount": {
+                      "type": "number"
+                    },
+                    "currency": {
+                      "type": "string"
+                    },
+                    "display": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "service_mismatch": {
+                  "type": "boolean"
+                },
+                "delta_per_hour": {
+                  "type": "string"
+                },
+                "delta_monthly": {
+                  "type": "string"
+                },
+                "delta_pct": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "service_hint": {
+            "type": "string"
+          },
+          "inferred_service": {
+            "type": "string"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "cheapest_region": {
+            "type": "string"
+          },
+          "cheapest_price": {
+            "type": "object",
+            "properties": {
+              "amount": {
+                "type": "number"
+              },
+              "unit": {
+                "type": "string"
+              },
+              "currency": {
+                "type": "string"
+              },
+              "display": {
+                "type": "string"
+              }
+            }
+          },
+          "most_expensive_region": {
+            "type": "string"
+          },
+          "most_expensive_price": {
+            "type": "object",
+            "properties": {
+              "amount": {
+                "type": "number"
+              },
+              "unit": {
+                "type": "string"
+              },
+              "currency": {
+                "type": "string"
+              },
+              "display": {
+                "type": "string"
+              }
+            }
+          },
+          "price_delta_pct": {
+            "type": "number"
+          },
+          "ambiguous_in": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "region": {
+                  "type": "string"
+                },
+                "service_used": {
+                  "type": "string"
+                },
+                "hint_status": {
+                  "type": "string"
+                },
+                "alternate_match_count": {
+                  "type": "number"
+                },
+                "alternate_matches": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "price_per_unit": {
+                        "type": "object",
+                        "properties": {
+                          "amount": {
+                            "type": "number"
+                          },
+                          "unit": {
+                            "type": "string"
+                          },
+                          "currency": {
+                            "type": "string"
+                          },
+                          "display": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "description": {
+                        "type": "string"
+                      },
+                      "product_family": {
+                        "type": "string"
+                      },
+                      "attributes": {
+                        "type": "object"
+                      },
+                      "sku_id": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                "service_mismatch": {
+                  "type": "boolean"
+                }
+              }
+            }
+          },
+          "no_mapping_in": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "region": {
+                  "type": "string"
+                },
+                "attempted_services": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "errors_in": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "region": {
+                  "type": "string"
+                },
+                "error": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "baseline_region": {
+            "type": "string"
+          },
+          "result": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "regions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "get_prices_by_sku",
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "skus": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "regions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "count": {
+            "type": "number"
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "sku": {
+                  "type": "string"
+                },
+                "usage_type_prefix": {
+                  "type": "string"
+                },
+                "usage_type_suffix": {
+                  "type": "string"
+                },
+                "service_source": {
+                  "type": "string"
+                },
+                "all_regions_sorted": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "region": {
+                        "type": "string"
+                      },
+                      "region_name": {
+                        "type": "string"
+                      },
+                      "price_per_unit": {
+                        "type": "object",
+                        "properties": {
+                          "amount": {
+                            "type": "number"
+                          },
+                          "unit": {
+                            "type": "string"
+                          },
+                          "currency": {
+                            "type": "string"
+                          },
+                          "display": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "service_used": {
+                        "type": "string"
+                      },
+                      "hint_status": {
+                        "type": "string"
+                      },
+                      "description": {
+                        "type": "string"
+                      },
+                      "product_family": {
+                        "type": "string"
+                      },
+                      "attributes": {
+                        "type": "object"
+                      },
+                      "sku_id": {
+                        "type": "string"
+                      },
+                      "monthly_estimate": {
+                        "type": "object",
+                        "properties": {
+                          "amount": {
+                            "type": "number"
+                          },
+                          "currency": {
+                            "type": "string"
+                          },
+                          "display": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "service_mismatch": {
+                        "type": "boolean"
+                      },
+                      "delta_per_hour": {
+                        "type": "string"
+                      },
+                      "delta_monthly": {
+                        "type": "string"
+                      },
+                      "delta_pct": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                "service_hint": {
+                  "type": "string"
+                },
+                "inferred_service": {
+                  "type": "string"
+                },
+                "warnings": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "cheapest_region": {
+                  "type": "string"
+                },
+                "cheapest_price": {
+                  "type": "object",
+                  "properties": {
+                    "amount": {
+                      "type": "number"
+                    },
+                    "unit": {
+                      "type": "string"
+                    },
+                    "currency": {
+                      "type": "string"
+                    },
+                    "display": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "most_expensive_region": {
+                  "type": "string"
+                },
+                "most_expensive_price": {
+                  "type": "object",
+                  "properties": {
+                    "amount": {
+                      "type": "number"
+                    },
+                    "unit": {
+                      "type": "string"
+                    },
+                    "currency": {
+                      "type": "string"
+                    },
+                    "display": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "price_delta_pct": {
+                  "type": "number"
+                },
+                "ambiguous_in": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "region": {
+                        "type": "string"
+                      },
+                      "service_used": {
+                        "type": "string"
+                      },
+                      "hint_status": {
+                        "type": "string"
+                      },
+                      "alternate_match_count": {
+                        "type": "number"
+                      },
+                      "alternate_matches": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "price_per_unit": {
+                              "type": "object",
+                              "properties": {
+                                "amount": {
+                                  "type": "number"
+                                },
+                                "unit": {
+                                  "type": "string"
+                                },
+                                "currency": {
+                                  "type": "string"
+                                },
+                                "display": {
+                                  "type": "string"
+                                }
+                              }
+                            },
+                            "description": {
+                              "type": "string"
+                            },
+                            "product_family": {
+                              "type": "string"
+                            },
+                            "attributes": {
+                              "type": "object"
+                            },
+                            "sku_id": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      },
+                      "service_mismatch": {
+                        "type": "boolean"
+                      }
+                    }
+                  }
+                },
+                "no_mapping_in": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "region": {
+                        "type": "string"
+                      },
+                      "attempted_services": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                },
+                "errors_in": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "region": {
+                        "type": "string"
+                      },
+                      "error": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                "baseline_region": {
+                  "type": "string"
+                },
+                "result": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "error": {
+                  "type": "string"
+                },
+                "retryable": {
+                  "type": "boolean"
+                },
+                "regions": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "baseline_region": {
+            "type": "string"
+          },
+          "errors": {
+            "type": "object"
+          },
+          "error": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "search_pricing",
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "alternatives": {
+            "type": "object",
+            "properties": {
+              "browse_catalog": {
+                "type": "string"
+              },
+              "price_known_service": {
+                "type": "string"
+              },
+              "estimate_workload": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "describe_catalog",
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "support_matrix": {
+            "type": "object"
+          },
+          "tip": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "domain": {
+            "type": "string"
+          },
+          "service": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "redirect_notice": {
+            "type": "string"
+          },
+          "supported_terms": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "filter_hints": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "example_invocation": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "usage": {
+            "type": "string"
+          },
+          "available_services": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "auto_resolved": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "get_coverage",
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "as_of": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "domains": {
+            "type": "object"
+          },
+          "coverage": {
+            "type": "object"
+          },
+          "error": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "get_spot_history",
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "alternatives": {
+            "type": "object",
+            "properties": {
+              "spot_price": {
+                "type": "string"
+              },
+              "browse_instances": {
+                "type": "string"
+              },
+              "compare_spot": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "get_discount_summary",
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "savings_plans": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string"
+                },
+                "payment_option": {
+                  "type": "string"
+                },
+                "commitment_usd_per_hour": {
+                  "type": "string"
+                },
+                "term_years": {
+                  "type": "string"
+                },
+                "start": {
+                  "type": "string"
+                },
+                "end": {
+                  "type": "string"
+                },
+                "state": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "reserved_instances": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "instance_type": {
+                  "type": "string"
+                },
+                "region": {
+                  "type": "string"
+                },
+                "count": {
+                  "type": "number"
+                },
+                "offering_type": {
+                  "type": "string"
+                },
+                "duration_years": {
+                  "type": "string"
+                },
+                "days_remaining": {
+                  "type": "number"
+                },
+                "fixed_price": {
+                  "type": "number"
+                },
+                "usage_price": {
+                  "type": "number"
+                },
+                "product_description": {
+                  "type": "string"
+                },
+                "state": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "utilisation": {
+            "type": "object",
+            "properties": {
+              "savings_plans": {
+                "type": "object",
+                "properties": {
+                  "total_commitment": {
+                    "type": "string"
+                  },
+                  "unused_commitment": {
+                    "type": "string"
+                  },
+                  "utilization_pct": {
+                    "type": "string"
+                  },
+                  "net_savings": {
+                    "type": "string"
+                  }
+                }
+              },
+              "savings_plans_error": {
+                "type": "string"
+              },
+              "reserved_instances": {
+                "type": "object",
+                "properties": {
+                  "utilization_pct": {
+                    "type": "string"
+                  },
+                  "on_demand_cost_of_ri_hours": {
+                    "type": "string"
+                  },
+                  "net_ri_savings": {
+                    "type": "string"
+                  },
+                  "purchased_hours": {
+                    "type": "string"
+                  }
+                }
+              },
+              "reserved_instances_error": {
+                "type": "string"
+              }
+            }
+          },
+          "sp_count": {
+            "type": "number"
+          },
+          "ri_count": {
+            "type": "number"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "domain": {
+            "type": "string"
+          },
+          "service": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "alternatives": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "message": {
+            "type": "string"
+          },
+          "retryable": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "name": "estimate_bom",
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "line_items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "description": {
+                  "type": "string"
+                },
+                "provider": {
+                  "type": "string"
+                },
+                "service": {
+                  "type": "string"
+                },
+                "region": {
+                  "type": "string"
+                },
+                "quantity": {
+                  "type": "number"
+                },
+                "price_per_unit": {
+                  "type": "object",
+                  "properties": {
+                    "amount": {
+                      "type": "number"
+                    },
+                    "unit": {
+                      "type": "string"
+                    },
+                    "currency": {
+                      "type": "string"
+                    },
+                    "display": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "monthly_cost": {
+                  "type": "object",
+                  "properties": {
+                    "amount": {
+                      "type": "number"
+                    },
+                    "currency": {
+                      "type": "string"
+                    },
+                    "display": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "fallback": {
+                  "type": "string"
+                },
+                "fallback_note": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "totals": {
+            "type": "object",
+            "properties": {
+              "monthly": {
+                "type": "object",
+                "properties": {
+                  "amount": {
+                    "type": "number"
+                  },
+                  "currency": {
+                    "type": "string"
+                  },
+                  "display": {
+                    "type": "string"
+                  }
+                }
+              },
+              "annual": {
+                "type": "object",
+                "properties": {
+                  "amount": {
+                    "type": "number"
+                  },
+                  "currency": {
+                    "type": "string"
+                  },
+                  "display": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "not_included": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "object"
+            }
+          },
+          "not_included_action": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "errors": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "error": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "estimate_unit_economics",
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "pricing_region": {
+            "type": "string"
+          },
+          "infrastructure_monthly": {
+            "type": "object",
+            "properties": {
+              "amount": {
+                "type": "number"
+              },
+              "currency": {
+                "type": "string"
+              },
+              "display": {
+                "type": "string"
+              }
+            }
+          },
+          "infrastructure_annual": {
+            "type": "object",
+            "properties": {
+              "amount": {
+                "type": "number"
+              },
+              "currency": {
+                "type": "string"
+              },
+              "display": {
+                "type": "string"
+              }
+            }
+          },
+          "volume": {
+            "type": "string"
+          },
+          "cost_per_unit": {
+            "type": "object",
+            "properties": {
+              "amount": {
+                "type": "number"
+              },
+              "currency": {
+                "type": "string"
+              },
+              "display": {
+                "type": "string"
+              }
+            }
+          },
+          "cost_per_unit_annual": {
+            "type": "object",
+            "properties": {
+              "amount": {
+                "type": "number"
+              },
+              "currency": {
+                "type": "string"
+              },
+              "display": {
+                "type": "string"
+              }
+            }
+          },
+          "errors": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "important": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "compare_bom",
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "comparison": {
+            "type": "object"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "compare_bom_regions",
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "regions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "region": {
+                  "type": "string"
+                },
+                "region_name": {
+                  "type": "string"
+                },
+                "total_monthly": {
+                  "type": "object",
+                  "properties": {
+                    "amount": {
+                      "type": "number"
+                    },
+                    "currency": {
+                      "type": "string"
+                    },
+                    "display": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "line_items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "description": {
+                        "type": "string"
+                      },
+                      "provider": {
+                        "type": "string"
+                      },
+                      "service": {
+                        "type": "string"
+                      },
+                      "region": {
+                        "type": "string"
+                      },
+                      "quantity": {
+                        "type": "number"
+                      },
+                      "price_per_unit": {
+                        "type": "object",
+                        "properties": {
+                          "amount": {
+                            "type": "number"
+                          },
+                          "unit": {
+                            "type": "string"
+                          },
+                          "currency": {
+                            "type": "string"
+                          },
+                          "display": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "monthly_cost": {
+                        "type": "object",
+                        "properties": {
+                          "amount": {
+                            "type": "number"
+                          },
+                          "currency": {
+                            "type": "string"
+                          },
+                          "display": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "fallback": {
+                        "type": "string"
+                      },
+                      "fallback_note": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                "errors": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "status": {
+                  "type": "string"
+                },
+                "delta_monthly": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "delta_pct": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          },
+          "baseline_region": {
+            "type": "string"
+          },
+          "baseline_region_error": {
+            "type": "string"
+          },
+          "not_supported": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "item": {
+                  "type": "string"
+                },
+                "provider": {
+                  "type": "string"
+                },
+                "source": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "error": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "refresh_cache",
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "prices_deleted": {
+            "type": "number"
+          },
+          "metadata_deleted": {
+            "type": "number"
+          },
+          "cache_stats": {
+            "type": "object",
+            "properties": {
+              "price_entries": {
+                "type": "number"
+              },
+              "metadata_entries": {
+                "type": "number"
+              },
+              "db_size_mb": {
+                "type": "number"
+              },
+              "db_path": {
+                "type": "string"
+              }
+            }
+          },
+          "error": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "cache_stats",
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "price_entries": {
+            "type": "number"
+          },
+          "metadata_entries": {
+            "type": "number"
+          },
+          "db_size_mb": {
+            "type": "number"
+          },
+          "db_path": {
+            "type": "string"
+          },
+          "by_provider": {
+            "type": "object"
+          },
+          "as_of": {
+            "type": "string"
+          },
+          "as_of_age_seconds": {
+            "type": "number"
+          },
+          "error": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "warm_cache",
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "regions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "targets_warmed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "combinations_attempted": {
+            "type": "number"
+          },
+          "warmed": {
+            "type": "number"
+          },
+          "cache_entries_after": {
+            "type": "number"
+          },
+          "skipped_services": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "errors": {
+            "type": "object"
+          },
+          "error": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "list_regions",
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "domain": {
+            "type": "string"
+          },
+          "regions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "count": {
+            "type": "number"
+          },
+          "error": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "list_instance_types",
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "region": {
+            "type": "string"
+          },
+          "count": {
+            "type": "number"
+          },
+          "instance_types": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "instance_type": {
+                  "type": "string"
+                },
+                "vcpu": {
+                  "type": "number"
+                },
+                "memory_gb": {
+                  "type": "number"
+                },
+                "gpu_count": {
+                  "type": "number"
+                },
+                "gpu_type": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "note": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "find_cheapest_region",
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "domain": {
+            "type": "string"
+          },
+          "service": {
+            "type": "string"
+          },
+          "cheapest_region": {
+            "type": "string"
+          },
+          "cheapest_region_name": {
+            "type": "string"
+          },
+          "cheapest_price": {
+            "type": "object",
+            "properties": {
+              "amount": {
+                "type": "number"
+              },
+              "unit": {
+                "type": "string"
+              },
+              "currency": {
+                "type": "string"
+              },
+              "display": {
+                "type": "string"
+              }
+            }
+          },
+          "most_expensive_region": {
+            "type": "string"
+          },
+          "most_expensive_price": {
+            "type": "object",
+            "properties": {
+              "amount": {
+                "type": "number"
+              },
+              "unit": {
+                "type": "string"
+              },
+              "currency": {
+                "type": "string"
+              },
+              "display": {
+                "type": "string"
+              }
+            }
+          },
+          "price_delta_pct": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "all_regions_sorted": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "region": {
+                  "type": "string"
+                },
+                "region_name": {
+                  "type": "string"
+                },
+                "price_per_unit": {
+                  "type": "object",
+                  "properties": {
+                    "amount": {
+                      "type": "number"
+                    },
+                    "unit": {
+                      "type": "string"
+                    },
+                    "currency": {
+                      "type": "string"
+                    },
+                    "display": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "monthly_estimate": {
+                  "type": "object",
+                  "properties": {
+                    "amount": {
+                      "type": "number"
+                    },
+                    "currency": {
+                      "type": "string"
+                    },
+                    "display": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "delta_per_hour": {
+                  "type": "string"
+                },
+                "delta_monthly": {
+                  "type": "string"
+                },
+                "delta_pct": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "not_available_in": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "baseline_region": {
+            "type": "string"
+          },
+          "baseline_region_name": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "hint": {
+            "type": "string"
+          },
+          "fix": {
+            "type": "string"
+          },
+          "regions": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "message": {
+            "type": "string"
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "result": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "find_available_regions",
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "domain": {
+            "type": "string"
+          },
+          "available_in": {
+            "type": "number"
+          },
+          "not_available_in": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "regions_sorted_cheapest_first": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "region": {
+                  "type": "string"
+                },
+                "region_name": {
+                  "type": "string"
+                },
+                "price_per_unit": {
+                  "type": "object",
+                  "properties": {
+                    "amount": {
+                      "type": "number"
+                    },
+                    "unit": {
+                      "type": "string"
+                    },
+                    "currency": {
+                      "type": "string"
+                    },
+                    "display": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "monthly_estimate": {
+                  "type": "object",
+                  "properties": {
+                    "amount": {
+                      "type": "number"
+                    },
+                    "currency": {
+                      "type": "string"
+                    },
+                    "display": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "delta_per_hour": {
+                  "type": "string"
+                },
+                "delta_monthly": {
+                  "type": "string"
+                },
+                "delta_pct": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "baseline_region": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "hint": {
+            "type": "string"
+          },
+          "fix": {
+            "type": "string"
+          },
+          "regions": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "message": {
+            "type": "string"
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "result": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  ]
+}
