@@ -116,6 +116,12 @@ func (p *Provider) Supports(domain models.PricingDomain, service string) bool {
 		}
 	case models.PricingDomainInterRegionEgress:
 		return true
+	// Part 3 domain — implemented in gcp_kms.go.
+	case models.PricingDomainSecurity:
+		switch service {
+		case "", "kms":
+			return true
+		}
 	default:
 		return false
 	}
@@ -442,7 +448,7 @@ func (p *Provider) GetComputePrice(
 //   - 25-50% of month (182.5-365 hrs): 20% off   (factor 0.80)
 //   - 50-75% of month (365-547.5 hrs): 40% off   (factor 0.60)
 //   - 75-100% of month (547.5-730 hrs): 60% off  (factor 0.40)
-//   Blended for 100% usage = on_demand × 0.700 (30% off)
+//     Blended for 100% usage = on_demand × 0.700 (30% off)
 //
 // Returns an empty slice (not an error) when the family is SUD-ineligible
 // (e.g. a2, a3, g2 GPU families).
@@ -529,19 +535,19 @@ func (p *Provider) gcpSUDPrice(
 		Description:   fmt.Sprintf("%s — SUD blended rate (100%% monthly, 30%% off on-demand)", instanceType),
 		Region:        region,
 		Attributes: map[string]string{
-			"instanceType":              instanceType,
-			"vcpu":                      fmt.Sprintf("%d", vcpus),
-			"memory":                    fmt.Sprintf("%.4g GB", memGB),
-			"operatingSystem":           os,
-			"sud_rate_source":           "gcp_catalog_ondemand+published_sud_schedule",
-			"sud_tier_0":                fmt.Sprintf("0-182.5 hrs (0-25%% of month): $%.6f/hr (0%% off)", tier0rate),
-			"sud_tier_1":                fmt.Sprintf("182.5-365 hrs (25-50%% of month): $%.6f/hr (20%% off)", tier1rate),
-			"sud_tier_2":                fmt.Sprintf("365-547.5 hrs (50-75%% of month): $%.6f/hr (40%% off)", tier2rate),
-			"sud_tier_3":                fmt.Sprintf("547.5-730 hrs (75-100%% of month): $%.6f/hr (60%% off)", tier3rate),
-			"sud_blended_factor":        "0.700",
-			"sud_discount_pct":          "30.0",
-			"usage_assumption":          "730 hours/month (100% continuous)",
-			"note":                      "SUD is applied automatically by GCP for qualifying VMs. No commitment required. Effective rate varies with actual monthly usage — this rate assumes continuous 24/7 operation.",
+			"instanceType":       instanceType,
+			"vcpu":               fmt.Sprintf("%d", vcpus),
+			"memory":             fmt.Sprintf("%.4g GB", memGB),
+			"operatingSystem":    os,
+			"sud_rate_source":    "gcp_catalog_ondemand+published_sud_schedule",
+			"sud_tier_0":         fmt.Sprintf("0-182.5 hrs (0-25%% of month): $%.6f/hr (0%% off)", tier0rate),
+			"sud_tier_1":         fmt.Sprintf("182.5-365 hrs (25-50%% of month): $%.6f/hr (20%% off)", tier1rate),
+			"sud_tier_2":         fmt.Sprintf("365-547.5 hrs (50-75%% of month): $%.6f/hr (40%% off)", tier2rate),
+			"sud_tier_3":         fmt.Sprintf("547.5-730 hrs (75-100%% of month): $%.6f/hr (60%% off)", tier3rate),
+			"sud_blended_factor": "0.700",
+			"sud_discount_pct":   "30.0",
+			"usage_assumption":   "730 hours/month (100% continuous)",
+			"note":               "SUD is applied automatically by GCP for qualifying VMs. No commitment required. Effective rate varies with actual monthly usage — this rate assumes continuous 24/7 operation.",
 		},
 		PricingTerm:  models.PricingTermSUD,
 		PricePerUnit: blendedRate,

@@ -191,6 +191,8 @@ var serviceToDomain = map[string]models.PricingDomain{
 	"gke": models.PricingDomainContainer,
 	"eks": models.PricingDomainContainer,
 	"aks": models.PricingDomainContainer,
+	// security
+	"kms": models.PricingDomainSecurity,
 	// egress
 	// "egress" is intentionally absent: it is a valid service in BOTH domain=network
 	// (internet egress with tiered pricing via NetworkPricingSpec + destination_type=internet)
@@ -280,7 +282,7 @@ func specErrorResponse(err error, spec map[string]any) map[string]any {
 		(!hasDomain && strings.Contains(msgLower, "discriminator")):
 		resp["fix"] = "The 'domain' field is required and must be one of: " +
 			"compute, storage, database, ai, container, serverless, " +
-			"analytics, network, observability, inter_region_egress"
+			"analytics, network, observability, inter_region_egress, security"
 	case strings.Contains(msg, ".term") && strings.Contains(msgLower, "input should be"):
 		resp["fix"] = fmt.Sprintf("Valid term values: %s", validTerms)
 	case !hasProvider:

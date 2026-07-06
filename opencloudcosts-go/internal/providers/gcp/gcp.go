@@ -345,6 +345,20 @@ func buildResult(prices []models.NormalizedPrice, breakdown map[string]any) *mod
 	}
 }
 
+// stampGlobalScope marks price as region-invariant: it sets Region="global"
+// and Attributes["scope"]="global" (allocating Attributes if it is nil).
+// This gives every pricing function for a region-invariant service (e.g.
+// Cloud KMS in gcp_kms.go, External IP Charge in gcp_networking.go) a single
+// canonical way to tag a price as global-scoped instead of each hand-rolling
+// both fields independently.
+func stampGlobalScope(price *models.NormalizedPrice) {
+	price.Region = "global"
+	if price.Attributes == nil {
+		price.Attributes = map[string]string{}
+	}
+	price.Attributes["scope"] = "global"
+}
+
 // --------------------------------------------------------------------------
 // Shared SKU helpers used by gcp_ai.go and gcp_networking.go
 // --------------------------------------------------------------------------
