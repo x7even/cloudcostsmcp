@@ -200,6 +200,9 @@ var serviceToDomain = map[string]models.PricingDomain{
 	// messaging
 	"pubsub":  models.PricingDomainMessaging,
 	"pub_sub": models.PricingDomainMessaging,
+	// nosql
+	"firestore": models.PricingDomainNoSQL,
+	"datastore": models.PricingDomainNoSQL,
 	// egress
 	// "egress" is intentionally absent: it is a valid service in BOTH domain=network
 	// (internet egress with tiered pricing via NetworkPricingSpec + destination_type=internet)
@@ -490,7 +493,7 @@ func applyBaselineDeltas(entries []map[string]any, baselineRegion string, groupK
 // breakdown key is absent (e.g. a non-GCP pubsub-shaped provider in the
 // future). breakdownMoney and moneyDict produce byte-identical map shapes,
 // so this substitution is safe.
-func normalizedPriceSummary(p models.NormalizedPrice, storageSpec *models.StoragePricingSpec, dnsSpec *models.DNSPricingSpec, pubsubSpec *models.PubSubPricingSpec, breakdown map[string]any) map[string]any {
+func normalizedPriceSummary(p models.NormalizedPrice, storageSpec *models.StoragePricingSpec, dnsSpec *models.DNSPricingSpec, pubsubSpec *models.PubSubPricingSpec, firestoreSpec *models.FirestorePricingSpec, breakdown map[string]any) map[string]any {
 	result := map[string]any{
 		"provider":    string(p.Provider),
 		"description": p.Description,
@@ -550,6 +553,49 @@ func normalizedPriceSummary(p models.NormalizedPrice, storageSpec *models.Storag
 				} else {
 					result["monthly_estimate"] = moneyDict(p.PricePerUnit*(*pubsubSpec.StorageGB), "/mo")
 				}
+			}
+		}
+	case firestoreSpec != nil:
+		// Several Firestore dimensions share the same PriceUnit (storage/
+		// pitr_storage/zonal_backup are all PriceUnitPerGBMonth; read/write/
+		// delete/ttl_delete/small_ops are all PriceUnitPerOperation), so
+		// dispatch on Attributes["dimension"] (stamped by newFirestorePrice
+		// in gcp_firestore.go) rather than PriceUnit alone. Every dimension's
+		// monthly_estimate prefers the breakdown's "<dimension>_monthly_cost"
+		// (which correctly nets out free-tier allowances for storage/read/
+		// write/delete) over a flat PricePerUnit*quantity product, mirroring
+		// the pubsubSpec pattern above.
+		//
+		// The dimension strings below are independently enumerated in
+		// gcp_firestore.go's priceFirestore (see its doc comment for why
+		// this duplication is deliberately left unconsolidated).
+		dimension := p.Attributes["dimension"]
+		var quantity *float64
+		switch dimension {
+		case "storage":
+			quantity = firestoreSpec.StorageGB
+		case "read":
+			quantity = firestoreSpec.ReadsPerMonth
+		case "write":
+			quantity = firestoreSpec.WritesPerMonth
+		case "delete":
+			quantity = firestoreSpec.DeletesPerMonth
+		case "ttl_delete":
+			quantity = firestoreSpec.TTLDeletesPerMonth
+		case "pitr_storage":
+			quantity = firestoreSpec.PITRStorageGB
+		case "zonal_backup":
+			quantity = firestoreSpec.ZonalBackupStorageGB
+		case "restore":
+			quantity = firestoreSpec.RestoreGB
+		case "clone":
+			quantity = firestoreSpec.CloneGB
+		}
+		if quantity != nil && *quantity > 0 {
+			if v, ok := breakdown[dimension+"_monthly_cost"]; ok {
+				result["monthly_estimate"] = v
+			} else {
+				result["monthly_estimate"] = moneyDict(p.PricePerUnit*(*quantity), "/mo")
 			}
 		}
 	}
@@ -630,14 +676,14 @@ func isEmptyPricingResult(r *models.PricingResult) bool {
 		r.Note == ""
 }
 
-func pricingResultSummary(r *models.PricingResult, storageSpec *models.StoragePricingSpec, dnsSpec *models.DNSPricingSpec, pubsubSpec *models.PubSubPricingSpec) map[string]any {
+func pricingResultSummary(r *models.PricingResult, storageSpec *models.StoragePricingSpec, dnsSpec *models.DNSPricingSpec, pubsubSpec *models.PubSubPricingSpec, firestoreSpec *models.FirestorePricingSpec) map[string]any {
 	out := map[string]any{
-		"public_prices":  priceSummaries(r.PublicPrices, storageSpec, dnsSpec, pubsubSpec, r.Breakdown),
+		"public_prices":  priceSummaries(r.PublicPrices, storageSpec, dnsSpec, pubsubSpec, firestoreSpec, r.Breakdown),
 		"auth_available": r.AuthAvailable,
 		"source":         r.Source,
 	}
 	if len(r.ContractedPrices) > 0 {
-		out["contracted_prices"] = priceSummaries(r.ContractedPrices, storageSpec, dnsSpec, pubsubSpec, r.Breakdown)
+		out["contracted_prices"] = priceSummaries(r.ContractedPrices, storageSpec, dnsSpec, pubsubSpec, firestoreSpec, r.Breakdown)
 	}
 	if r.EffectivePrice != nil {
 		ep := r.EffectivePrice
@@ -667,10 +713,10 @@ func pricingResultSummary(r *models.PricingResult, storageSpec *models.StoragePr
 // breakdown is the owning PricingResult's Breakdown map (may be nil), passed
 // through to normalizedPriceSummary so pubsub's monthly_estimate can reuse
 // its tiered-cost figures — see normalizedPriceSummary's pubsubSpec doc.
-func priceSummaries(prices []models.NormalizedPrice, storageSpec *models.StoragePricingSpec, dnsSpec *models.DNSPricingSpec, pubsubSpec *models.PubSubPricingSpec, breakdown map[string]any) []map[string]any {
+func priceSummaries(prices []models.NormalizedPrice, storageSpec *models.StoragePricingSpec, dnsSpec *models.DNSPricingSpec, pubsubSpec *models.PubSubPricingSpec, firestoreSpec *models.FirestorePricingSpec, breakdown map[string]any) []map[string]any {
 	out := make([]map[string]any, len(prices))
 	for i, p := range prices {
-		out[i] = normalizedPriceSummary(p, storageSpec, dnsSpec, pubsubSpec, breakdown)
+		out[i] = normalizedPriceSummary(p, storageSpec, dnsSpec, pubsubSpec, firestoreSpec, breakdown)
 	}
 	return out
 }
@@ -832,7 +878,16 @@ func (h *Handler) HandleGetPrice(
 	if pp, ok := spec.(*models.PubSubPricingSpec); ok {
 		pubsubSpec = pp
 	}
-	return jsonText(pricingResultSummary(result, storageSpec, dnsSpec, pubsubSpec)), nil, nil
+	// #80 follow-up: Firestore specs may carry storage_gb/reads_per_month/
+	// writes_per_month/deletes_per_month/ttl_deletes_per_month/
+	// pitr_storage_gb/zonal_backup_storage_gb/restore_gb/clone_gb — same
+	// pattern as storageSpec/dnsSpec/pubsubSpec above, so each dimension's
+	// price gets a scaled monthly_estimate too.
+	var firestoreSpec *models.FirestorePricingSpec
+	if fp, ok := spec.(*models.FirestorePricingSpec); ok {
+		firestoreSpec = fp
+	}
+	return jsonText(pricingResultSummary(result, storageSpec, dnsSpec, pubsubSpec, firestoreSpec)), nil, nil
 }
 
 // --------------------------------------------------------------------------

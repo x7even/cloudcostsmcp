@@ -134,6 +134,12 @@ func (p *Provider) Supports(domain models.PricingDomain, service string) bool {
 		case "", "pubsub", "pub_sub":
 			return true
 		}
+	// Part 3 domain — implemented in gcp_firestore.go.
+	case models.PricingDomainNoSQL:
+		switch service {
+		case "", "firestore", "datastore":
+			return true
+		}
 	default:
 		return false
 	}

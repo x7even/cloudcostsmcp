@@ -1079,6 +1079,323 @@ func TestGetPrice_PubSubStorage_MonthlyEstimateMatchesBreakdown(t *testing.T) {
 	}
 }
 
+// --------------------------------------------------------------------------
+// Tests: Cloud Firestore monthly_estimate (issue #80) — verifies
+// monthly_estimate disambiguates dimensions sharing a single PriceUnit
+// (storage/pitr_storage/zonal_backup all PriceUnitPerGBMonth; read/write/
+// delete/ttl_delete/small_ops all PriceUnitPerOperation) via
+// Attributes["dimension"], and reuses breakdown["<dimension>_monthly_cost"]
+// (the free-tier-aware figure computed by gcp_firestore.go's priceFirestore)
+// rather than a flat price_per_unit*quantity product. Mirrors the Pub/Sub
+// tests above; the tiered-cost *math* itself is proven in
+// gcp_firestore_test.go (package gcp) — these tests prove monthly_estimate
+// mirrors whatever breakdown already contains, end-to-end through
+// HandleGetPrice.
+// --------------------------------------------------------------------------
+
+// firestorePrice is a small helper building a Firestore NormalizedPrice
+// fixture for the given dimension, mirroring newFirestorePrice's shape
+// (gcp_firestore.go) without importing the unexported gcp package.
+func firestorePrice(dimension string, unit models.PriceUnit, rate float64) models.NormalizedPrice {
+	return models.NormalizedPrice{
+		Provider:      models.CloudProviderGCP,
+		Service:       "firestore",
+		SKUID:         "gcp:firestore:" + dimension + ":us-central1",
+		ProductFamily: "Cloud Firestore",
+		Description:   "Cloud Firestore " + dimension,
+		Region:        "us-central1",
+		PricingTerm:   models.PricingTermOnDemand,
+		PricePerUnit:  rate,
+		Unit:          unit,
+		Currency:      "USD",
+		Attributes:    map[string]string{"region_priced": "true", "dimension": dimension},
+	}
+}
+
+// TestGetPrice_FirestoreStorageBelowFreeTier_MonthlyEstimateMatchesBreakdown
+// covers usage entirely within storage's free allowance: price_per_unit is
+// the nonzero paid rate, but breakdown["storage_monthly_cost"] is $0.
+// monthly_estimate must equal the breakdown figure ($0), not
+// price_per_unit*quantity.
+func TestGetPrice_FirestoreStorageBelowFreeTier_MonthlyEstimateMatchesBreakdown(t *testing.T) {
+	paidRate := 0.15
+	pvdr := &mockProvider{
+		name:          "gcp",
+		defaultRegion: "us-central1",
+		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
+			return &models.PricingResult{
+				PublicPrices: []models.NormalizedPrice{
+					firestorePrice("storage", models.PriceUnitPerGBMonth, paidRate),
+				},
+				Breakdown: map[string]any{
+					"storage_monthly_cost": testMoneyDict(0, "/mo"),
+				},
+				AuthAvailable: false,
+				Source:        "catalog",
+				SchemaVersion: "1",
+			}, nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"gcp": pvdr})
+	storageGB := 0.01
+	resp := callGetPrice(t, h, map[string]any{
+		"provider":   "gcp",
+		"domain":     "nosql",
+		"service":    "firestore",
+		"region":     "us-central1",
+		"storage_gb": storageGB,
+	})
+
+	prices, ok := resp["public_prices"].([]any)
+	if !ok || len(prices) != 1 {
+		t.Fatalf("public_prices: got %v, want a single-element slice", resp["public_prices"])
+	}
+	p0 := prices[0].(map[string]any)
+	monthly, ok := p0["monthly_estimate"].(map[string]any)
+	if !ok {
+		t.Fatalf("monthly_estimate is not a map: %v", p0["monthly_estimate"])
+	}
+	if amt, ok := monthly["amount"].(float64); !ok || amt != 0 {
+		t.Errorf("monthly_estimate.amount: got %v, want 0 (within free tier; flat rate*qty would wrongly give %v)", monthly["amount"], paidRate*storageGB)
+	}
+}
+
+// TestGetPrice_FirestoreTTLDelete_NoFreeTier_MonthlyEstimateIsFlat covers a
+// no-genuine-free-tier dimension: monthly_estimate must equal
+// breakdown["ttl_delete_monthly_cost"], which for this dimension is always a
+// flat rate*quantity product (no tiering) — unlike storage/read/write/delete.
+func TestGetPrice_FirestoreTTLDelete_NoFreeTier_MonthlyEstimateIsFlat(t *testing.T) {
+	rate := 0.01 / 100000
+	qty := 100.0 // tiny quantity — a genuine free tier would zero this out
+	flatCost := rate * qty
+	pvdr := &mockProvider{
+		name:          "gcp",
+		defaultRegion: "us-central1",
+		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
+			return &models.PricingResult{
+				PublicPrices: []models.NormalizedPrice{
+					firestorePrice("ttl_delete", models.PriceUnitPerOperation, rate),
+				},
+				Breakdown: map[string]any{
+					"ttl_delete_monthly_cost": testMoneyDict(flatCost, "/mo"),
+				},
+				AuthAvailable: false,
+				Source:        "catalog",
+				SchemaVersion: "1",
+			}, nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"gcp": pvdr})
+	resp := callGetPrice(t, h, map[string]any{
+		"provider":              "gcp",
+		"domain":                "nosql",
+		"service":               "firestore",
+		"region":                "us-central1",
+		"ttl_deletes_per_month": qty,
+	})
+
+	prices, ok := resp["public_prices"].([]any)
+	if !ok || len(prices) != 1 {
+		t.Fatalf("public_prices: got %v, want a single-element slice", resp["public_prices"])
+	}
+	p0 := prices[0].(map[string]any)
+	monthly, ok := p0["monthly_estimate"].(map[string]any)
+	if !ok {
+		t.Fatalf("monthly_estimate is not a map: %v", p0["monthly_estimate"])
+	}
+	if amt, ok := monthly["amount"].(float64); !ok || math.Abs(amt-flatCost) > 1e-9 {
+		t.Errorf("monthly_estimate.amount: got %v, want %v (no genuine free tier: flat rate*qty)", monthly["amount"], flatCost)
+	}
+	if amt, _ := monthly["amount"].(float64); amt == 0 {
+		t.Error("monthly_estimate.amount = 0, want > 0 (a genuine free tier would incorrectly zero this out)")
+	}
+}
+
+// TestGetPrice_FirestoreSharedPriceUnit_DisambiguatesByDimension is the core
+// regression test for issue #80's lookup.go wiring: storage and
+// pitr_storage both use PriceUnitPerGBMonth, so PriceUnit alone (DNS/Pub/Sub's
+// dispatch key) cannot tell them apart. Each must pick up its OWN
+// breakdown["<dimension>_monthly_cost"] figure via Attributes["dimension"],
+// not the other's.
+func TestGetPrice_FirestoreSharedPriceUnit_DisambiguatesByDimension(t *testing.T) {
+	storageRate := 0.15
+	pitrRate := 0.15   // same rate as storage in us-central1, but a DIFFERENT cost below
+	storageCost := 1.5 // hand-picked, deliberately != pitrCost
+	pitrCost := 3.0
+	pvdr := &mockProvider{
+		name:          "gcp",
+		defaultRegion: "us-central1",
+		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
+			return &models.PricingResult{
+				PublicPrices: []models.NormalizedPrice{
+					firestorePrice("storage", models.PriceUnitPerGBMonth, storageRate),
+					firestorePrice("pitr_storage", models.PriceUnitPerGBMonth, pitrRate),
+				},
+				Breakdown: map[string]any{
+					"storage_monthly_cost":      testMoneyDict(storageCost, "/mo"),
+					"pitr_storage_monthly_cost": testMoneyDict(pitrCost, "/mo"),
+				},
+				AuthAvailable: false,
+				Source:        "catalog",
+				SchemaVersion: "1",
+			}, nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"gcp": pvdr})
+	storageGB := 10.0
+	pitrGB := 20.0
+	resp := callGetPrice(t, h, map[string]any{
+		"provider":        "gcp",
+		"domain":          "nosql",
+		"service":         "firestore",
+		"region":          "us-central1",
+		"storage_gb":      storageGB,
+		"pitr_storage_gb": pitrGB,
+	})
+
+	prices, ok := resp["public_prices"].([]any)
+	if !ok || len(prices) != 2 {
+		t.Fatalf("public_prices: got %v, want a two-element slice", resp["public_prices"])
+	}
+	for _, raw := range prices {
+		p := raw.(map[string]any)
+		monthly, ok := p["monthly_estimate"].(map[string]any)
+		if !ok {
+			t.Fatalf("monthly_estimate is not a map: %v", p["monthly_estimate"])
+		}
+		amt, _ := monthly["amount"].(float64)
+		desc, _ := p["description"].(string)
+		switch {
+		case strings.Contains(desc, "pitr_storage"):
+			if math.Abs(amt-pitrCost) > 1e-9 {
+				t.Errorf("pitr_storage monthly_estimate.amount: got %v, want %v (must not pick up storage's cost)", amt, pitrCost)
+			}
+		case strings.Contains(desc, "storage"):
+			if math.Abs(amt-storageCost) > 1e-9 {
+				t.Errorf("storage monthly_estimate.amount: got %v, want %v (must not pick up pitr_storage's cost)", amt, storageCost)
+			}
+		default:
+			t.Errorf("unexpected price description: %q", desc)
+		}
+	}
+}
+
+// TestFillDomain_ServiceInference_Firestore verifies "service":"firestore"
+// alone (no explicit "domain") infers domain=nosql.
+func TestFillDomain_ServiceInference_Firestore(t *testing.T) {
+	var capturedDomain models.PricingDomain
+	pvdr := &mockProvider{
+		name:          "gcp",
+		defaultRegion: "us-central1",
+		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
+			capturedDomain = spec.GetDomain()
+			return makePriceResult(firestorePrice("storage", models.PriceUnitPerGBMonth, 0.15)), nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"gcp": pvdr})
+	callGetPrice(t, h, map[string]any{
+		"provider":   "gcp",
+		"service":    "firestore",
+		"region":     "us-central1",
+		"storage_gb": 10.0,
+		// no domain — should infer nosql
+	})
+	if capturedDomain != models.PricingDomainNoSQL {
+		t.Errorf("domain: got %q, want nosql", capturedDomain)
+	}
+}
+
+// TestFillDomain_ServiceInference_Datastore verifies "service":"datastore"
+// also infers domain=nosql (Datastore mode shares Firestore's billing model
+// and service ID — there is no separate Datastore serviceId, see gcp_firestore.go).
+func TestFillDomain_ServiceInference_Datastore(t *testing.T) {
+	var capturedDomain models.PricingDomain
+	pvdr := &mockProvider{
+		name:          "gcp",
+		defaultRegion: "us-central1",
+		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
+			capturedDomain = spec.GetDomain()
+			return makePriceResult(firestorePrice("storage", models.PriceUnitPerGBMonth, 0.15)), nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"gcp": pvdr})
+	callGetPrice(t, h, map[string]any{
+		"provider":   "gcp",
+		"service":    "datastore",
+		"region":     "us-central1",
+		"storage_gb": 10.0,
+	})
+	if capturedDomain != models.PricingDomainNoSQL {
+		t.Errorf("domain: got %q, want nosql", capturedDomain)
+	}
+}
+
+// TestGCPProvider_SupportsDatastoreAlias exercises the REAL gcp.Provider's
+// Supports() (not mockProvider, which unconditionally returns true for every
+// service) to prove "datastore" actually clears the Part-3 dispatch gate in
+// gcp_compute.go — the same gate that TestFillDomain_ServiceInference_Datastore
+// above cannot exercise, since it only proves lookup.go's service→domain
+// inference map, not the provider-side Supports() check that the real
+// request pipeline (get_price/bom/compare_bom) additionally enforces.
+func TestGCPProvider_SupportsDatastoreAlias(t *testing.T) {
+	p := realGCPProvider(t)
+	if !p.Supports(models.PricingDomainNoSQL, "datastore") {
+		t.Error("Supports(nosql, \"datastore\") = false, want true (datastore is a documented Firestore-domain alias, see gcp_catalog.go)")
+	}
+	if !p.Supports(models.PricingDomainNoSQL, "firestore") {
+		t.Error("Supports(nosql, \"firestore\") = false, want true")
+	}
+	if !p.Supports(models.PricingDomainNoSQL, "") {
+		t.Error("Supports(nosql, \"\") = false, want true (empty service defaults to firestore)")
+	}
+}
+
+// TestFillDomain_FirestoreFieldsDoNotCollideWithOtherDomains verifies that a
+// spec carrying ONLY Firestore-specific quantity fields (no service, no
+// domain, no storage_type) does NOT get misrouted to any other domain by
+// fillDomain's heuristics — none of Firestore's field names
+// (reads_per_month, writes_per_month, deletes_per_month,
+// ttl_deletes_per_month, pitr_storage_gb, zonal_backup_storage_gb,
+// restore_gb, clone_gb) exist on any other PricingSpec, so no heuristic
+// should fire and domain should end up empty (an invalid-spec error), never
+// silently misassigned to storage/database/compute/messaging.
+func TestFillDomain_FirestoreFieldsDoNotCollideWithOtherDomains(t *testing.T) {
+	pvdr := &mockProvider{
+		name:          "gcp",
+		defaultRegion: "us-central1",
+		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
+			t.Fatalf("GetPrice should not be reached: domain should fail to resolve without an explicit service/domain, got domain=%q", spec.GetDomain())
+			return nil, nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"gcp": pvdr})
+
+	// Built from gcpprovider.FirestoreValidQuantityFields (rather than a
+	// second hand-maintained literal list) so this audit stays honest as
+	// Firestore quantity fields are added/removed.
+	req := map[string]any{
+		"provider": "gcp",
+		"region":   "us-central1",
+		// no "service", no "domain" — that's what forces fillDomain to rely
+		// purely on field-name heuristics.
+	}
+	for _, field := range gcpprovider.FirestoreValidQuantityFields {
+		if field == "storage_gb" {
+			// Deliberately excluded: storage_gb alone, with storage_type
+			// present, would trigger the storage/messaging heuristic — not
+			// applicable here since storage_type is absent too, but kept out
+			// to preserve this test's original, narrower intent.
+			continue
+		}
+		req[field] = 1.0
+	}
+
+	resp := callGetPrice(t, h, req)
+	if _, ok := resp["error"]; !ok {
+		t.Errorf("expected an invalid_spec error (domain could not be inferred), got: %v", resp)
+	}
+}
+
 func TestGetPrice_NotSupportedError(t *testing.T) {
 	pvdr := &mockProvider{
 		name:          "aws",
