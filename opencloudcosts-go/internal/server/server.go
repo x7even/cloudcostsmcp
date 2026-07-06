@@ -662,6 +662,2303 @@ const (
 	}`
 )
 
+// ---- Tool output schema constants (generated; mirrors tools-output-snapshot.json) ----
+//
+// These are the outputSchema values for each tool. Every field from the tool's
+// success shape AND its structured-error shape must appear here (permissive types,
+// no "required", no "additionalProperties":false) because the go-sdk validates
+// actual tool output against this schema at call time, and a tool may legitimately
+// return either shape depending on runtime state.
+
+const (
+	schemaGetPriceOutput = `{
+	"type": "object",
+	"properties": {
+		"public_prices": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"properties": {
+					"provider": {
+						"type": "string"
+					},
+					"description": {
+						"type": "string"
+					},
+					"region": {
+						"type": "string"
+					},
+					"region_name": {
+						"type": "string"
+					},
+					"term": {
+						"type": "string"
+					},
+					"price_per_unit": {
+						"type": "object",
+						"properties": {
+							"amount": {
+								"type": "number"
+							},
+							"unit": {
+								"type": "string"
+							},
+							"currency": {
+								"type": "string"
+							},
+							"display": {
+								"type": "string"
+							}
+						}
+					},
+					"monthly_estimate": {
+						"type": "object",
+						"properties": {
+							"amount": {
+								"type": "number"
+							},
+							"currency": {
+								"type": "string"
+							},
+							"display": {
+								"type": "string"
+							}
+						}
+					},
+					"instanceType": {
+						"type": "string"
+					},
+					"vcpu": {
+						"type": "string"
+					},
+					"memory": {
+						"type": "string"
+					},
+					"operatingSystem": {
+						"type": "string"
+					},
+					"storage": {
+						"type": "string"
+					},
+					"storage_type": {
+						"type": "string"
+					},
+					"volumeType": {
+						"type": "string"
+					},
+					"fallback": {
+						"type": "string"
+					},
+					"fallback_note": {
+						"type": "string"
+					},
+					"note": {
+						"type": "string"
+					},
+					"fromRegionCode": {
+						"type": "string"
+					},
+					"toRegionCode": {
+						"type": "string"
+					},
+					"as_of": {
+						"type": "string"
+					},
+					"cache_age_seconds": {
+						"type": "number"
+					},
+					"price_effective_date": {
+						"type": "string"
+					},
+					"source_url": {
+						"type": "string"
+					}
+				}
+			}
+		},
+		"auth_available": {
+			"type": "boolean"
+		},
+		"source": {
+			"type": "string"
+		},
+		"contracted_prices": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"properties": {
+					"provider": {
+						"type": "string"
+					},
+					"description": {
+						"type": "string"
+					},
+					"region": {
+						"type": "string"
+					},
+					"region_name": {
+						"type": "string"
+					},
+					"term": {
+						"type": "string"
+					},
+					"price_per_unit": {
+						"type": "object",
+						"properties": {
+							"amount": {
+								"type": "number"
+							},
+							"unit": {
+								"type": "string"
+							},
+							"currency": {
+								"type": "string"
+							},
+							"display": {
+								"type": "string"
+							}
+						}
+					},
+					"monthly_estimate": {
+						"type": "object",
+						"properties": {
+							"amount": {
+								"type": "number"
+							},
+							"currency": {
+								"type": "string"
+							},
+							"display": {
+								"type": "string"
+							}
+						}
+					},
+					"instanceType": {
+						"type": "string"
+					},
+					"vcpu": {
+						"type": "string"
+					},
+					"memory": {
+						"type": "string"
+					},
+					"operatingSystem": {
+						"type": "string"
+					},
+					"storage": {
+						"type": "string"
+					},
+					"storage_type": {
+						"type": "string"
+					},
+					"volumeType": {
+						"type": "string"
+					},
+					"fallback": {
+						"type": "string"
+					},
+					"fallback_note": {
+						"type": "string"
+					},
+					"note": {
+						"type": "string"
+					},
+					"fromRegionCode": {
+						"type": "string"
+					},
+					"toRegionCode": {
+						"type": "string"
+					},
+					"as_of": {
+						"type": "string"
+					},
+					"cache_age_seconds": {
+						"type": "number"
+					},
+					"price_effective_date": {
+						"type": "string"
+					},
+					"source_url": {
+						"type": "string"
+					}
+				}
+			}
+		},
+		"effective_price": {
+			"type": "object",
+			"properties": {
+				"price_per_unit": {
+					"type": "object",
+					"properties": {
+						"amount": {
+							"type": "number"
+						},
+						"unit": {
+							"type": "string"
+						},
+						"currency": {
+							"type": "string"
+						},
+						"display": {
+							"type": "string"
+						}
+					}
+				},
+				"discount_type": {
+					"type": "string"
+				},
+				"discount_pct": {
+					"type": "number"
+				},
+				"savings_vs_on_demand": {
+					"type": "object",
+					"properties": {
+						"amount": {
+							"type": "number"
+						},
+						"unit": {
+							"type": "string"
+						},
+						"currency": {
+							"type": "string"
+						},
+						"display": {
+							"type": "string"
+						}
+					}
+				}
+			}
+		},
+		"breakdown": {
+			"type": "object"
+		},
+		"note": {
+			"type": "string"
+		},
+		"warnings": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"error": {
+			"type": "string"
+		},
+		"region": {
+			"type": "string"
+		},
+		"reason": {
+			"type": "string"
+		},
+		"hint": {
+			"type": "string"
+		},
+		"fix": {
+			"type": "string"
+		},
+		"provider": {
+			"type": "string"
+		},
+		"domain": {
+			"type": "string"
+		},
+		"service": {
+			"type": "string"
+		},
+		"alternatives": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"message": {
+			"type": "string"
+		},
+		"retryable": {
+			"type": "boolean"
+		},
+		"result": {
+			"type": "string"
+		},
+		"filters_applied": {
+			"type": "object"
+		},
+		"tip": {
+			"type": "string"
+		},
+		"not_available_in": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		}
+	}
+}`
+	schemaGetPricesBatchOutput = `{
+	"type": "object",
+	"properties": {
+		"provider": {
+			"type": "string"
+		},
+		"region": {
+			"type": "string"
+		},
+		"os": {
+			"type": "string"
+		},
+		"term": {
+			"type": "string"
+		},
+		"count": {
+			"type": "number"
+		},
+		"results": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"properties": {
+					"instance_type": {
+						"type": "string"
+					},
+					"price_per_unit": {
+						"type": "object",
+						"properties": {
+							"amount": {
+								"type": "number"
+							},
+							"unit": {
+								"type": "string"
+							},
+							"currency": {
+								"type": "string"
+							},
+							"display": {
+								"type": "string"
+							}
+						}
+					},
+					"monthly_estimate": {
+						"type": "object",
+						"properties": {
+							"amount": {
+								"type": "number"
+							},
+							"currency": {
+								"type": "string"
+							},
+							"display": {
+								"type": "string"
+							}
+						}
+					},
+					"vcpu": {
+						"type": "string"
+					},
+					"memory": {
+						"type": "string"
+					},
+					"description": {
+						"type": "string"
+					},
+					"fallback": {
+						"type": "string"
+					}
+				}
+			}
+		},
+		"errors": {
+			"type": "object"
+		},
+		"not_available_in": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"error": {
+			"type": "string"
+		}
+	}
+}`
+	schemaComparePricesOutput = `{
+	"type": "object",
+	"properties": {
+		"provider": {
+			"type": "string"
+		},
+		"domain": {
+			"type": "string"
+		},
+		"service": {
+			"type": "string"
+		},
+		"cheapest_region": {
+			"type": "string"
+		},
+		"cheapest_price": {
+			"type": "object",
+			"properties": {
+				"amount": {
+					"type": "number"
+				},
+				"unit": {
+					"type": "string"
+				},
+				"currency": {
+					"type": "string"
+				},
+				"display": {
+					"type": "string"
+				}
+			}
+		},
+		"most_expensive_region": {
+			"type": "string"
+		},
+		"most_expensive_price": {
+			"type": "object",
+			"properties": {
+				"amount": {
+					"type": "number"
+				},
+				"unit": {
+					"type": "string"
+				},
+				"currency": {
+					"type": "string"
+				},
+				"display": {
+					"type": "string"
+				}
+			}
+		},
+		"price_delta_pct": {
+			"type": [
+				"number",
+				"null"
+			]
+		},
+		"all_regions_sorted": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"properties": {
+					"region": {
+						"type": "string"
+					},
+					"region_name": {
+						"type": "string"
+					},
+					"price_per_unit": {
+						"type": "object",
+						"properties": {
+							"amount": {
+								"type": "number"
+							},
+							"unit": {
+								"type": "string"
+							},
+							"currency": {
+								"type": "string"
+							},
+							"display": {
+								"type": "string"
+							}
+						}
+					},
+					"monthly_estimate": {
+						"type": "object",
+						"properties": {
+							"amount": {
+								"type": "number"
+							},
+							"currency": {
+								"type": "string"
+							},
+							"display": {
+								"type": "string"
+							}
+						}
+					},
+					"fallback": {
+						"type": "string"
+					},
+					"sku_description": {
+						"type": "string"
+					},
+					"delta_per_hour": {
+						"type": [
+							"string",
+							"null"
+						]
+					},
+					"delta_monthly": {
+						"type": [
+							"string",
+							"null"
+						]
+					},
+					"delta_pct": {
+						"type": [
+							"string",
+							"null"
+						]
+					}
+				}
+			}
+		},
+		"warnings": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"ranking_low_confidence": {
+			"type": "boolean"
+		},
+		"multi_sku": {
+			"type": "boolean"
+		},
+		"sku_count": {
+			"type": "number"
+		},
+		"multi_sku_message": {
+			"type": "string"
+		},
+		"not_available_in": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"transient_errors": {
+			"type": "object"
+		},
+		"baseline_region": {
+			"type": "string"
+		},
+		"baseline_missing": {
+			"type": "boolean"
+		},
+		"baseline_missing_message": {
+			"type": "string"
+		},
+		"error": {
+			"type": "string"
+		},
+		"regions": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"message": {
+			"type": "string"
+		},
+		"retryable": {
+			"type": "boolean"
+		},
+		"result": {
+			"type": "string"
+		}
+	}
+}`
+	schemaGetPriceBySKUOutput = `{
+	"type": "object",
+	"properties": {
+		"sku": {
+			"type": "string"
+		},
+		"usage_type_prefix": {
+			"type": "string"
+		},
+		"usage_type_suffix": {
+			"type": "string"
+		},
+		"service_source": {
+			"type": "string"
+		},
+		"all_regions_sorted": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"properties": {
+					"region": {
+						"type": "string"
+					},
+					"region_name": {
+						"type": "string"
+					},
+					"price_per_unit": {
+						"type": "object",
+						"properties": {
+							"amount": {
+								"type": "number"
+							},
+							"unit": {
+								"type": "string"
+							},
+							"currency": {
+								"type": "string"
+							},
+							"display": {
+								"type": "string"
+							}
+						}
+					},
+					"service_used": {
+						"type": "string"
+					},
+					"hint_status": {
+						"type": "string"
+					},
+					"description": {
+						"type": "string"
+					},
+					"product_family": {
+						"type": "string"
+					},
+					"attributes": {
+						"type": "object"
+					},
+					"sku_id": {
+						"type": "string"
+					},
+					"monthly_estimate": {
+						"type": "object",
+						"properties": {
+							"amount": {
+								"type": "number"
+							},
+							"currency": {
+								"type": "string"
+							},
+							"display": {
+								"type": "string"
+							}
+						}
+					},
+					"service_mismatch": {
+						"type": "boolean"
+					},
+					"delta_per_hour": {
+						"type": "string"
+					},
+					"delta_monthly": {
+						"type": "string"
+					},
+					"delta_pct": {
+						"type": "string"
+					}
+				}
+			}
+		},
+		"service_hint": {
+			"type": "string"
+		},
+		"inferred_service": {
+			"type": "string"
+		},
+		"warnings": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"cheapest_region": {
+			"type": "string"
+		},
+		"cheapest_price": {
+			"type": "object",
+			"properties": {
+				"amount": {
+					"type": "number"
+				},
+				"unit": {
+					"type": "string"
+				},
+				"currency": {
+					"type": "string"
+				},
+				"display": {
+					"type": "string"
+				}
+			}
+		},
+		"most_expensive_region": {
+			"type": "string"
+		},
+		"most_expensive_price": {
+			"type": "object",
+			"properties": {
+				"amount": {
+					"type": "number"
+				},
+				"unit": {
+					"type": "string"
+				},
+				"currency": {
+					"type": "string"
+				},
+				"display": {
+					"type": "string"
+				}
+			}
+		},
+		"price_delta_pct": {
+			"type": "number"
+		},
+		"ambiguous_in": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"properties": {
+					"region": {
+						"type": "string"
+					},
+					"service_used": {
+						"type": "string"
+					},
+					"hint_status": {
+						"type": "string"
+					},
+					"alternate_match_count": {
+						"type": "number"
+					},
+					"alternate_matches": {
+						"type": "array",
+						"items": {
+							"type": "object",
+							"properties": {
+								"price_per_unit": {
+									"type": "object",
+									"properties": {
+										"amount": {
+											"type": "number"
+										},
+										"unit": {
+											"type": "string"
+										},
+										"currency": {
+											"type": "string"
+										},
+										"display": {
+											"type": "string"
+										}
+									}
+								},
+								"description": {
+									"type": "string"
+								},
+								"product_family": {
+									"type": "string"
+								},
+								"attributes": {
+									"type": "object"
+								},
+								"sku_id": {
+									"type": "string"
+								}
+							}
+						}
+					},
+					"service_mismatch": {
+						"type": "boolean"
+					}
+				}
+			}
+		},
+		"no_mapping_in": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"properties": {
+					"region": {
+						"type": "string"
+					},
+					"attempted_services": {
+						"type": "array",
+						"items": {
+							"type": "string"
+						}
+					}
+				}
+			}
+		},
+		"errors_in": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"properties": {
+					"region": {
+						"type": "string"
+					},
+					"error": {
+						"type": "string"
+					}
+				}
+			}
+		},
+		"baseline_region": {
+			"type": "string"
+		},
+		"result": {
+			"type": "string"
+		},
+		"message": {
+			"type": "string"
+		},
+		"error": {
+			"type": "string"
+		},
+		"retryable": {
+			"type": "boolean"
+		},
+		"regions": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		}
+	}
+}`
+	schemaGetPricesBySKUOutput = `{
+	"type": "object",
+	"properties": {
+		"provider": {
+			"type": "string"
+		},
+		"skus": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"regions": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"count": {
+			"type": "number"
+		},
+		"results": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"properties": {
+					"sku": {
+						"type": "string"
+					},
+					"usage_type_prefix": {
+						"type": "string"
+					},
+					"usage_type_suffix": {
+						"type": "string"
+					},
+					"service_source": {
+						"type": "string"
+					},
+					"all_regions_sorted": {
+						"type": "array",
+						"items": {
+							"type": "object",
+							"properties": {
+								"region": {
+									"type": "string"
+								},
+								"region_name": {
+									"type": "string"
+								},
+								"price_per_unit": {
+									"type": "object",
+									"properties": {
+										"amount": {
+											"type": "number"
+										},
+										"unit": {
+											"type": "string"
+										},
+										"currency": {
+											"type": "string"
+										},
+										"display": {
+											"type": "string"
+										}
+									}
+								},
+								"service_used": {
+									"type": "string"
+								},
+								"hint_status": {
+									"type": "string"
+								},
+								"description": {
+									"type": "string"
+								},
+								"product_family": {
+									"type": "string"
+								},
+								"attributes": {
+									"type": "object"
+								},
+								"sku_id": {
+									"type": "string"
+								},
+								"monthly_estimate": {
+									"type": "object",
+									"properties": {
+										"amount": {
+											"type": "number"
+										},
+										"currency": {
+											"type": "string"
+										},
+										"display": {
+											"type": "string"
+										}
+									}
+								},
+								"service_mismatch": {
+									"type": "boolean"
+								},
+								"delta_per_hour": {
+									"type": "string"
+								},
+								"delta_monthly": {
+									"type": "string"
+								},
+								"delta_pct": {
+									"type": "string"
+								}
+							}
+						}
+					},
+					"service_hint": {
+						"type": "string"
+					},
+					"inferred_service": {
+						"type": "string"
+					},
+					"warnings": {
+						"type": "array",
+						"items": {
+							"type": "string"
+						}
+					},
+					"cheapest_region": {
+						"type": "string"
+					},
+					"cheapest_price": {
+						"type": "object",
+						"properties": {
+							"amount": {
+								"type": "number"
+							},
+							"unit": {
+								"type": "string"
+							},
+							"currency": {
+								"type": "string"
+							},
+							"display": {
+								"type": "string"
+							}
+						}
+					},
+					"most_expensive_region": {
+						"type": "string"
+					},
+					"most_expensive_price": {
+						"type": "object",
+						"properties": {
+							"amount": {
+								"type": "number"
+							},
+							"unit": {
+								"type": "string"
+							},
+							"currency": {
+								"type": "string"
+							},
+							"display": {
+								"type": "string"
+							}
+						}
+					},
+					"price_delta_pct": {
+						"type": "number"
+					},
+					"ambiguous_in": {
+						"type": "array",
+						"items": {
+							"type": "object",
+							"properties": {
+								"region": {
+									"type": "string"
+								},
+								"service_used": {
+									"type": "string"
+								},
+								"hint_status": {
+									"type": "string"
+								},
+								"alternate_match_count": {
+									"type": "number"
+								},
+								"alternate_matches": {
+									"type": "array",
+									"items": {
+										"type": "object",
+										"properties": {
+											"price_per_unit": {
+												"type": "object",
+												"properties": {
+													"amount": {
+														"type": "number"
+													},
+													"unit": {
+														"type": "string"
+													},
+													"currency": {
+														"type": "string"
+													},
+													"display": {
+														"type": "string"
+													}
+												}
+											},
+											"description": {
+												"type": "string"
+											},
+											"product_family": {
+												"type": "string"
+											},
+											"attributes": {
+												"type": "object"
+											},
+											"sku_id": {
+												"type": "string"
+											}
+										}
+									}
+								},
+								"service_mismatch": {
+									"type": "boolean"
+								}
+							}
+						}
+					},
+					"no_mapping_in": {
+						"type": "array",
+						"items": {
+							"type": "object",
+							"properties": {
+								"region": {
+									"type": "string"
+								},
+								"attempted_services": {
+									"type": "array",
+									"items": {
+										"type": "string"
+									}
+								}
+							}
+						}
+					},
+					"errors_in": {
+						"type": "array",
+						"items": {
+							"type": "object",
+							"properties": {
+								"region": {
+									"type": "string"
+								},
+								"error": {
+									"type": "string"
+								}
+							}
+						}
+					},
+					"baseline_region": {
+						"type": "string"
+					},
+					"result": {
+						"type": "string"
+					},
+					"message": {
+						"type": "string"
+					},
+					"error": {
+						"type": "string"
+					},
+					"retryable": {
+						"type": "boolean"
+					},
+					"regions": {
+						"type": "array",
+						"items": {
+							"type": "string"
+						}
+					}
+				}
+			}
+		},
+		"baseline_region": {
+			"type": "string"
+		},
+		"errors": {
+			"type": "object"
+		},
+		"error": {
+			"type": "string"
+		},
+		"message": {
+			"type": "string"
+		}
+	}
+}`
+	schemaSearchPricingOutput = `{
+	"type": "object",
+	"properties": {
+		"error": {
+			"type": "string"
+		},
+		"message": {
+			"type": "string"
+		},
+		"alternatives": {
+			"type": "object",
+			"properties": {
+				"browse_catalog": {
+					"type": "string"
+				},
+				"price_known_service": {
+					"type": "string"
+				},
+				"estimate_workload": {
+					"type": "string"
+				}
+			}
+		}
+	}
+}`
+	schemaDescribeCatalogOutput = `{
+	"type": "object",
+	"properties": {
+		"support_matrix": {
+			"type": "object"
+		},
+		"tip": {
+			"type": "string"
+		},
+		"provider": {
+			"type": "string"
+		},
+		"domain": {
+			"type": "string"
+		},
+		"service": {
+			"type": [
+				"string",
+				"null"
+			]
+		},
+		"redirect_notice": {
+			"type": "string"
+		},
+		"supported_terms": {
+			"type": [
+				"array",
+				"null"
+			],
+			"items": {
+				"type": "string"
+			}
+		},
+		"filter_hints": {
+			"type": [
+				"object",
+				"null"
+			]
+		},
+		"example_invocation": {
+			"type": [
+				"object",
+				"null"
+			]
+		},
+		"usage": {
+			"type": "string"
+		},
+		"available_services": {
+			"type": [
+				"array",
+				"null"
+			],
+			"items": {
+				"type": "string"
+			}
+		},
+		"auto_resolved": {
+			"type": "string"
+		},
+		"error": {
+			"type": "string"
+		},
+		"message": {
+			"type": "string"
+		}
+	}
+}`
+	schemaGetCoverageOutput = `{
+	"type": "object",
+	"properties": {
+		"as_of": {
+			"type": "string"
+		},
+		"note": {
+			"type": "string"
+		},
+		"provider": {
+			"type": "string"
+		},
+		"domains": {
+			"type": "object"
+		},
+		"coverage": {
+			"type": "object"
+		},
+		"error": {
+			"type": "string"
+		},
+		"message": {
+			"type": "string"
+		}
+	}
+}`
+	schemaGetSpotHistoryOutput = `{
+	"type": "object",
+	"properties": {
+		"error": {
+			"type": "string"
+		},
+		"retryable": {
+			"type": "boolean"
+		},
+		"message": {
+			"type": "string"
+		},
+		"alternatives": {
+			"type": "object",
+			"properties": {
+				"spot_price": {
+					"type": "string"
+				},
+				"browse_instances": {
+					"type": "string"
+				},
+				"compare_spot": {
+					"type": "string"
+				}
+			}
+		}
+	}
+}`
+	schemaGetDiscountSummaryOutput = `{
+	"type": "object",
+	"properties": {
+		"error": {
+			"type": "string"
+		},
+		"savings_plans": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"properties": {
+					"id": {
+						"type": "string"
+					},
+					"type": {
+						"type": "string"
+					},
+					"payment_option": {
+						"type": "string"
+					},
+					"commitment_usd_per_hour": {
+						"type": "string"
+					},
+					"term_years": {
+						"type": "string"
+					},
+					"start": {
+						"type": "string"
+					},
+					"end": {
+						"type": "string"
+					},
+					"state": {
+						"type": "string"
+					}
+				}
+			}
+		},
+		"reserved_instances": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"properties": {
+					"instance_type": {
+						"type": "string"
+					},
+					"region": {
+						"type": "string"
+					},
+					"count": {
+						"type": "number"
+					},
+					"offering_type": {
+						"type": "string"
+					},
+					"duration_years": {
+						"type": "string"
+					},
+					"days_remaining": {
+						"type": "number"
+					},
+					"fixed_price": {
+						"type": "number"
+					},
+					"usage_price": {
+						"type": "number"
+					},
+					"product_description": {
+						"type": "string"
+					},
+					"state": {
+						"type": "string"
+					}
+				}
+			}
+		},
+		"utilisation": {
+			"type": "object",
+			"properties": {
+				"savings_plans": {
+					"type": "object",
+					"properties": {
+						"total_commitment": {
+							"type": "string"
+						},
+						"unused_commitment": {
+							"type": "string"
+						},
+						"utilization_pct": {
+							"type": "string"
+						},
+						"net_savings": {
+							"type": "string"
+						}
+					}
+				},
+				"savings_plans_error": {
+					"type": "string"
+				},
+				"reserved_instances": {
+					"type": "object",
+					"properties": {
+						"utilization_pct": {
+							"type": "string"
+						},
+						"on_demand_cost_of_ri_hours": {
+							"type": "string"
+						},
+						"net_ri_savings": {
+							"type": "string"
+						},
+						"purchased_hours": {
+							"type": "string"
+						}
+					}
+				},
+				"reserved_instances_error": {
+					"type": "string"
+				}
+			}
+		},
+		"sp_count": {
+			"type": "number"
+		},
+		"ri_count": {
+			"type": "number"
+		},
+		"provider": {
+			"type": "string"
+		},
+		"domain": {
+			"type": "string"
+		},
+		"service": {
+			"type": [
+				"string",
+				"null"
+			]
+		},
+		"reason": {
+			"type": "string"
+		},
+		"alternatives": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"message": {
+			"type": "string"
+		},
+		"retryable": {
+			"type": "boolean"
+		}
+	}
+}`
+	schemaEstimateBOMOutput = `{
+	"type": "object",
+	"properties": {
+		"line_items": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"properties": {
+					"description": {
+						"type": "string"
+					},
+					"provider": {
+						"type": "string"
+					},
+					"service": {
+						"type": "string"
+					},
+					"region": {
+						"type": "string"
+					},
+					"quantity": {
+						"type": "number"
+					},
+					"price_per_unit": {
+						"type": "object",
+						"properties": {
+							"amount": {
+								"type": "number"
+							},
+							"unit": {
+								"type": "string"
+							},
+							"currency": {
+								"type": "string"
+							},
+							"display": {
+								"type": "string"
+							}
+						}
+					},
+					"monthly_cost": {
+						"type": "object",
+						"properties": {
+							"amount": {
+								"type": "number"
+							},
+							"currency": {
+								"type": "string"
+							},
+							"display": {
+								"type": "string"
+							}
+						}
+					},
+					"fallback": {
+						"type": "string"
+					},
+					"fallback_note": {
+						"type": "string"
+					}
+				}
+			}
+		},
+		"totals": {
+			"type": "object",
+			"properties": {
+				"monthly": {
+					"type": "object",
+					"properties": {
+						"amount": {
+							"type": "number"
+						},
+						"currency": {
+							"type": "string"
+						},
+						"display": {
+							"type": "string"
+						}
+					}
+				},
+				"annual": {
+					"type": "object",
+					"properties": {
+						"amount": {
+							"type": "number"
+						},
+						"currency": {
+							"type": "string"
+						},
+						"display": {
+							"type": "string"
+						}
+					}
+				}
+			}
+		},
+		"not_included": {
+			"type": [
+				"array",
+				"null"
+			],
+			"items": {
+				"type": "object"
+			}
+		},
+		"not_included_action": {
+			"type": [
+				"string",
+				"null"
+			]
+		},
+		"errors": {
+			"type": [
+				"array",
+				"null"
+			],
+			"items": {
+				"type": "string"
+			}
+		},
+		"error": {
+			"type": "string"
+		}
+	}
+}`
+	schemaEstimateUnitEconomicsOutput = `{
+	"type": "object",
+	"properties": {
+		"pricing_region": {
+			"type": "string"
+		},
+		"infrastructure_monthly": {
+			"type": "object",
+			"properties": {
+				"amount": {
+					"type": "number"
+				},
+				"currency": {
+					"type": "string"
+				},
+				"display": {
+					"type": "string"
+				}
+			}
+		},
+		"infrastructure_annual": {
+			"type": "object",
+			"properties": {
+				"amount": {
+					"type": "number"
+				},
+				"currency": {
+					"type": "string"
+				},
+				"display": {
+					"type": "string"
+				}
+			}
+		},
+		"volume": {
+			"type": "string"
+		},
+		"cost_per_unit": {
+			"type": "object",
+			"properties": {
+				"amount": {
+					"type": "number"
+				},
+				"currency": {
+					"type": "string"
+				},
+				"display": {
+					"type": "string"
+				}
+			}
+		},
+		"cost_per_unit_annual": {
+			"type": "object",
+			"properties": {
+				"amount": {
+					"type": "number"
+				},
+				"currency": {
+					"type": "string"
+				},
+				"display": {
+					"type": "string"
+				}
+			}
+		},
+		"errors": {
+			"type": [
+				"array",
+				"null"
+			],
+			"items": {
+				"type": "string"
+			}
+		},
+		"important": {
+			"type": "string"
+		},
+		"error": {
+			"type": "string"
+		}
+	}
+}`
+	schemaCompareBOMOutput = `{
+	"type": "object",
+	"properties": {
+		"comparison": {
+			"type": "object"
+		},
+		"summary": {
+			"type": "string"
+		},
+		"note": {
+			"type": "string"
+		},
+		"error": {
+			"type": "string"
+		},
+		"message": {
+			"type": "string"
+		}
+	}
+}`
+	schemaCompareBOMRegionsOutput = `{
+	"type": "object",
+	"properties": {
+		"regions": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"properties": {
+					"region": {
+						"type": "string"
+					},
+					"region_name": {
+						"type": "string"
+					},
+					"total_monthly": {
+						"type": "object",
+						"properties": {
+							"amount": {
+								"type": "number"
+							},
+							"currency": {
+								"type": "string"
+							},
+							"display": {
+								"type": "string"
+							}
+						}
+					},
+					"line_items": {
+						"type": "array",
+						"items": {
+							"type": "object",
+							"properties": {
+								"description": {
+									"type": "string"
+								},
+								"provider": {
+									"type": "string"
+								},
+								"service": {
+									"type": "string"
+								},
+								"region": {
+									"type": "string"
+								},
+								"quantity": {
+									"type": "number"
+								},
+								"price_per_unit": {
+									"type": "object",
+									"properties": {
+										"amount": {
+											"type": "number"
+										},
+										"unit": {
+											"type": "string"
+										},
+										"currency": {
+											"type": "string"
+										},
+										"display": {
+											"type": "string"
+										}
+									}
+								},
+								"monthly_cost": {
+									"type": "object",
+									"properties": {
+										"amount": {
+											"type": "number"
+										},
+										"currency": {
+											"type": "string"
+										},
+										"display": {
+											"type": "string"
+										}
+									}
+								},
+								"fallback": {
+									"type": "string"
+								},
+								"fallback_note": {
+									"type": "string"
+								}
+							}
+						}
+					},
+					"errors": {
+						"type": "array",
+						"items": {
+							"type": "string"
+						}
+					},
+					"status": {
+						"type": "string"
+					},
+					"delta_monthly": {
+						"type": [
+							"string",
+							"null"
+						]
+					},
+					"delta_pct": {
+						"type": [
+							"string",
+							"null"
+						]
+					}
+				}
+			}
+		},
+		"baseline_region": {
+			"type": "string"
+		},
+		"baseline_region_error": {
+			"type": "string"
+		},
+		"not_supported": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"properties": {
+					"item": {
+						"type": "string"
+					},
+					"provider": {
+						"type": "string"
+					},
+					"source": {
+						"type": "string"
+					},
+					"reason": {
+						"type": "string"
+					}
+				}
+			}
+		},
+		"error": {
+			"type": "string"
+		},
+		"message": {
+			"type": "string"
+		}
+	}
+}`
+	schemaRefreshCacheOutput = `{
+	"type": "object",
+	"properties": {
+		"message": {
+			"type": "string"
+		},
+		"prices_deleted": {
+			"type": "number"
+		},
+		"metadata_deleted": {
+			"type": "number"
+		},
+		"cache_stats": {
+			"type": "object",
+			"properties": {
+				"price_entries": {
+					"type": "number"
+				},
+				"metadata_entries": {
+					"type": "number"
+				},
+				"db_size_mb": {
+					"type": "number"
+				},
+				"db_path": {
+					"type": "string"
+				}
+			}
+		},
+		"error": {
+			"type": "string"
+		}
+	}
+}`
+	schemaCacheStatsOutput = `{
+	"type": "object",
+	"properties": {
+		"price_entries": {
+			"type": "number"
+		},
+		"metadata_entries": {
+			"type": "number"
+		},
+		"db_size_mb": {
+			"type": "number"
+		},
+		"db_path": {
+			"type": "string"
+		},
+		"by_provider": {
+			"type": "object"
+		},
+		"as_of": {
+			"type": "string"
+		},
+		"as_of_age_seconds": {
+			"type": "number"
+		},
+		"error": {
+			"type": "string"
+		}
+	}
+}`
+	schemaWarmCacheOutput = `{
+	"type": "object",
+	"properties": {
+		"provider": {
+			"type": "string"
+		},
+		"regions": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"targets_warmed": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"combinations_attempted": {
+			"type": "number"
+		},
+		"warmed": {
+			"type": "number"
+		},
+		"cache_entries_after": {
+			"type": "number"
+		},
+		"skipped_services": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"errors": {
+			"type": "object"
+		},
+		"error": {
+			"type": "string"
+		},
+		"message": {
+			"type": "string"
+		}
+	}
+}`
+	schemaListRegionsOutput = `{
+	"type": "object",
+	"properties": {
+		"provider": {
+			"type": "string"
+		},
+		"domain": {
+			"type": "string"
+		},
+		"regions": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"properties": {
+					"code": {
+						"type": "string"
+					},
+					"name": {
+						"type": "string"
+					}
+				}
+			}
+		},
+		"count": {
+			"type": "number"
+		},
+		"error": {
+			"type": "string"
+		}
+	}
+}`
+	schemaListInstanceTypesOutput = `{
+	"type": "object",
+	"properties": {
+		"provider": {
+			"type": "string"
+		},
+		"region": {
+			"type": "string"
+		},
+		"count": {
+			"type": "number"
+		},
+		"instance_types": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"properties": {
+					"instance_type": {
+						"type": "string"
+					},
+					"vcpu": {
+						"type": "number"
+					},
+					"memory_gb": {
+						"type": "number"
+					},
+					"gpu_count": {
+						"type": "number"
+					},
+					"gpu_type": {
+						"type": "string"
+					}
+				}
+			}
+		},
+		"note": {
+			"type": "string"
+		},
+		"error": {
+			"type": "string"
+		},
+		"message": {
+			"type": "string"
+		}
+	}
+}`
+	schemaFindCheapestRegionOutput = `{
+	"type": "object",
+	"properties": {
+		"provider": {
+			"type": "string"
+		},
+		"domain": {
+			"type": "string"
+		},
+		"service": {
+			"type": "string"
+		},
+		"cheapest_region": {
+			"type": "string"
+		},
+		"cheapest_region_name": {
+			"type": "string"
+		},
+		"cheapest_price": {
+			"type": "object",
+			"properties": {
+				"amount": {
+					"type": "number"
+				},
+				"unit": {
+					"type": "string"
+				},
+				"currency": {
+					"type": "string"
+				},
+				"display": {
+					"type": "string"
+				}
+			}
+		},
+		"most_expensive_region": {
+			"type": "string"
+		},
+		"most_expensive_price": {
+			"type": "object",
+			"properties": {
+				"amount": {
+					"type": "number"
+				},
+				"unit": {
+					"type": "string"
+				},
+				"currency": {
+					"type": "string"
+				},
+				"display": {
+					"type": "string"
+				}
+			}
+		},
+		"price_delta_pct": {
+			"type": [
+				"number",
+				"null"
+			]
+		},
+		"all_regions_sorted": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"properties": {
+					"region": {
+						"type": "string"
+					},
+					"region_name": {
+						"type": "string"
+					},
+					"price_per_unit": {
+						"type": "object",
+						"properties": {
+							"amount": {
+								"type": "number"
+							},
+							"unit": {
+								"type": "string"
+							},
+							"currency": {
+								"type": "string"
+							},
+							"display": {
+								"type": "string"
+							}
+						}
+					},
+					"monthly_estimate": {
+						"type": "object",
+						"properties": {
+							"amount": {
+								"type": "number"
+							},
+							"currency": {
+								"type": "string"
+							},
+							"display": {
+								"type": "string"
+							}
+						}
+					},
+					"delta_per_hour": {
+						"type": "string"
+					},
+					"delta_monthly": {
+						"type": "string"
+					},
+					"delta_pct": {
+						"type": "string"
+					}
+				}
+			}
+		},
+		"not_available_in": {
+			"type": [
+				"array",
+				"null"
+			],
+			"items": {
+				"type": "string"
+			}
+		},
+		"baseline_region": {
+			"type": "string"
+		},
+		"baseline_region_name": {
+			"type": "string"
+		},
+		"note": {
+			"type": "string"
+		},
+		"error": {
+			"type": "string"
+		},
+		"reason": {
+			"type": "string"
+		},
+		"hint": {
+			"type": "string"
+		},
+		"fix": {
+			"type": "string"
+		},
+		"regions": {
+			"type": [
+				"array",
+				"null"
+			],
+			"items": {
+				"type": "string"
+			}
+		},
+		"message": {
+			"type": "string"
+		},
+		"retryable": {
+			"type": "boolean"
+		},
+		"result": {
+			"type": "string"
+		}
+	}
+}`
+	schemaFindAvailableRegionsOutput = `{
+	"type": "object",
+	"properties": {
+		"provider": {
+			"type": "string"
+		},
+		"domain": {
+			"type": "string"
+		},
+		"available_in": {
+			"type": "number"
+		},
+		"not_available_in": {
+			"type": [
+				"array",
+				"null"
+			],
+			"items": {
+				"type": "string"
+			}
+		},
+		"regions_sorted_cheapest_first": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"properties": {
+					"region": {
+						"type": "string"
+					},
+					"region_name": {
+						"type": "string"
+					},
+					"price_per_unit": {
+						"type": "object",
+						"properties": {
+							"amount": {
+								"type": "number"
+							},
+							"unit": {
+								"type": "string"
+							},
+							"currency": {
+								"type": "string"
+							},
+							"display": {
+								"type": "string"
+							}
+						}
+					},
+					"monthly_estimate": {
+						"type": "object",
+						"properties": {
+							"amount": {
+								"type": "number"
+							},
+							"currency": {
+								"type": "string"
+							},
+							"display": {
+								"type": "string"
+							}
+						}
+					},
+					"delta_per_hour": {
+						"type": "string"
+					},
+					"delta_monthly": {
+						"type": "string"
+					},
+					"delta_pct": {
+						"type": "string"
+					}
+				}
+			}
+		},
+		"baseline_region": {
+			"type": "string"
+		},
+		"note": {
+			"type": "string"
+		},
+		"error": {
+			"type": "string"
+		},
+		"reason": {
+			"type": "string"
+		},
+		"hint": {
+			"type": "string"
+		},
+		"fix": {
+			"type": "string"
+		},
+		"regions": {
+			"type": [
+				"array",
+				"null"
+			],
+			"items": {
+				"type": "string"
+			}
+		},
+		"message": {
+			"type": "string"
+		},
+		"retryable": {
+			"type": "boolean"
+		},
+		"result": {
+			"type": "string"
+		}
+	}
+}`
+)
+
 // BuildMCPServerForTest exposes the internal MCP server construction for
 // package-external tests. It is intended for use only in test files.
 func (s *AppServer) BuildMCPServerForTest() *mcp.Server {
@@ -765,9 +3062,10 @@ func (s *AppServer) registerTools(srv *mcp.Server) {
 	// ---- Lookup tools ----
 
 	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "get_price",
-		Description: descGetPrice,
-		InputSchema: rawSchema(schemaGetPrice),
+		Name:         "get_price",
+		Description:  descGetPrice,
+		InputSchema:  rawSchema(schemaGetPrice),
+		OutputSchema: rawSchema(schemaGetPriceOutput),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in tools.GetPriceInput) (*mcp.CallToolResult, any, error) {
 		return s.callTool(ctx, "get_price", func(ctx context.Context) (*mcp.CallToolResult, any, error) {
 			return h.HandleGetPrice(ctx, req, in)
@@ -775,9 +3073,10 @@ func (s *AppServer) registerTools(srv *mcp.Server) {
 	})
 
 	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "get_prices_batch",
-		Description: descGetPricesBatch,
-		InputSchema: rawSchema(schemaGetPricesBatch),
+		Name:         "get_prices_batch",
+		Description:  descGetPricesBatch,
+		InputSchema:  rawSchema(schemaGetPricesBatch),
+		OutputSchema: rawSchema(schemaGetPricesBatchOutput),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in tools.GetPricesBatchInput) (*mcp.CallToolResult, any, error) {
 		return s.callTool(ctx, "get_prices_batch", func(ctx context.Context) (*mcp.CallToolResult, any, error) {
 			return h.HandleGetPricesBatch(ctx, req, in)
@@ -785,9 +3084,10 @@ func (s *AppServer) registerTools(srv *mcp.Server) {
 	})
 
 	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "compare_prices",
-		Description: descComparePrices,
-		InputSchema: rawSchema(schemaComparePrices),
+		Name:         "compare_prices",
+		Description:  descComparePrices,
+		InputSchema:  rawSchema(schemaComparePrices),
+		OutputSchema: rawSchema(schemaComparePricesOutput),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in tools.ComparePricesInput) (*mcp.CallToolResult, any, error) {
 		return s.callTool(ctx, "compare_prices", func(ctx context.Context) (*mcp.CallToolResult, any, error) {
 			return h.HandleComparePrices(ctx, req, in)
@@ -795,9 +3095,10 @@ func (s *AppServer) registerTools(srv *mcp.Server) {
 	})
 
 	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "get_price_by_sku",
-		Description: descGetPriceBySKU,
-		InputSchema: rawSchema(schemaGetPriceBySKU),
+		Name:         "get_price_by_sku",
+		Description:  descGetPriceBySKU,
+		InputSchema:  rawSchema(schemaGetPriceBySKU),
+		OutputSchema: rawSchema(schemaGetPriceBySKUOutput),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in tools.GetPriceBySKUInput) (*mcp.CallToolResult, any, error) {
 		return s.callTool(ctx, "get_price_by_sku", func(ctx context.Context) (*mcp.CallToolResult, any, error) {
 			return h.HandleGetPriceBySKU(ctx, req, in)
@@ -805,9 +3106,10 @@ func (s *AppServer) registerTools(srv *mcp.Server) {
 	})
 
 	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "get_prices_by_sku",
-		Description: descGetPricesBySKU,
-		InputSchema: rawSchema(schemaGetPricesBySKU),
+		Name:         "get_prices_by_sku",
+		Description:  descGetPricesBySKU,
+		InputSchema:  rawSchema(schemaGetPricesBySKU),
+		OutputSchema: rawSchema(schemaGetPricesBySKUOutput),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in tools.GetPricesBySKUInput) (*mcp.CallToolResult, any, error) {
 		return s.callTool(ctx, "get_prices_by_sku", func(ctx context.Context) (*mcp.CallToolResult, any, error) {
 			return h.HandleGetPricesBySKU(ctx, req, in)
@@ -815,9 +3117,10 @@ func (s *AppServer) registerTools(srv *mcp.Server) {
 	})
 
 	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "search_pricing",
-		Description: descSearchPricing,
-		InputSchema: rawSchema(schemaSearchPricing),
+		Name:         "search_pricing",
+		Description:  descSearchPricing,
+		InputSchema:  rawSchema(schemaSearchPricing),
+		OutputSchema: rawSchema(schemaSearchPricingOutput),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in tools.SearchPricingInput) (*mcp.CallToolResult, any, error) {
 		return s.callTool(ctx, "search_pricing", func(ctx context.Context) (*mcp.CallToolResult, any, error) {
 			return h.HandleSearchPricing(ctx, req, in)
@@ -825,9 +3128,10 @@ func (s *AppServer) registerTools(srv *mcp.Server) {
 	})
 
 	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "describe_catalog",
-		Description: descDescribeCatalog,
-		InputSchema: rawSchema(schemaDescribeCatalog),
+		Name:         "describe_catalog",
+		Description:  descDescribeCatalog,
+		InputSchema:  rawSchema(schemaDescribeCatalog),
+		OutputSchema: rawSchema(schemaDescribeCatalogOutput),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in tools.DescribeCatalogInput) (*mcp.CallToolResult, any, error) {
 		return s.callTool(ctx, "describe_catalog", func(ctx context.Context) (*mcp.CallToolResult, any, error) {
 			return h.HandleDescribeCatalog(ctx, req, in)
@@ -835,9 +3139,10 @@ func (s *AppServer) registerTools(srv *mcp.Server) {
 	})
 
 	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "get_coverage",
-		Description: descGetCoverage,
-		InputSchema: rawSchema(schemaGetCoverage),
+		Name:         "get_coverage",
+		Description:  descGetCoverage,
+		InputSchema:  rawSchema(schemaGetCoverage),
+		OutputSchema: rawSchema(schemaGetCoverageOutput),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in tools.GetCoverageInput) (*mcp.CallToolResult, any, error) {
 		return s.callTool(ctx, "get_coverage", func(ctx context.Context) (*mcp.CallToolResult, any, error) {
 			return h.HandleGetCoverage(ctx, req, in)
@@ -845,9 +3150,10 @@ func (s *AppServer) registerTools(srv *mcp.Server) {
 	})
 
 	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "get_spot_history",
-		Description: descGetSpotHistory,
-		InputSchema: rawSchema(schemaGetSpotHistory),
+		Name:         "get_spot_history",
+		Description:  descGetSpotHistory,
+		InputSchema:  rawSchema(schemaGetSpotHistory),
+		OutputSchema: rawSchema(schemaGetSpotHistoryOutput),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in tools.SpotHistoryStubInput) (*mcp.CallToolResult, any, error) {
 		return s.callTool(ctx, "get_spot_history", func(ctx context.Context) (*mcp.CallToolResult, any, error) {
 			return h.HandleSpotHistoryStub(ctx, req, in)
@@ -857,9 +3163,10 @@ func (s *AppServer) registerTools(srv *mcp.Server) {
 	// ---- FinOps tools ----
 
 	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "get_discount_summary",
-		Description: descGetDiscountSummary,
-		InputSchema: rawSchema(schemaGetDiscountSummary),
+		Name:         "get_discount_summary",
+		Description:  descGetDiscountSummary,
+		InputSchema:  rawSchema(schemaGetDiscountSummary),
+		OutputSchema: rawSchema(schemaGetDiscountSummaryOutput),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in tools.GetDiscountSummaryInput) (*mcp.CallToolResult, any, error) {
 		return s.callTool(ctx, "get_discount_summary", func(ctx context.Context) (*mcp.CallToolResult, any, error) {
 			return h.HandleGetDiscountSummary(ctx, req, in)
@@ -867,9 +3174,10 @@ func (s *AppServer) registerTools(srv *mcp.Server) {
 	})
 
 	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "estimate_bom",
-		Description: descEstimateBOM,
-		InputSchema: rawSchema(schemaEstimateBOM),
+		Name:         "estimate_bom",
+		Description:  descEstimateBOM,
+		InputSchema:  rawSchema(schemaEstimateBOM),
+		OutputSchema: rawSchema(schemaEstimateBOMOutput),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in tools.EstimateBOMInput) (*mcp.CallToolResult, any, error) {
 		return s.callTool(ctx, "estimate_bom", func(ctx context.Context) (*mcp.CallToolResult, any, error) {
 			return h.HandleEstimateBOM(ctx, req, in)
@@ -877,9 +3185,10 @@ func (s *AppServer) registerTools(srv *mcp.Server) {
 	})
 
 	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "estimate_unit_economics",
-		Description: descEstimateUnitEconomics,
-		InputSchema: rawSchema(schemaEstimateUnitEconomics),
+		Name:         "estimate_unit_economics",
+		Description:  descEstimateUnitEconomics,
+		InputSchema:  rawSchema(schemaEstimateUnitEconomics),
+		OutputSchema: rawSchema(schemaEstimateUnitEconomicsOutput),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in tools.EstimateUnitEconomicsInput) (*mcp.CallToolResult, any, error) {
 		return s.callTool(ctx, "estimate_unit_economics", func(ctx context.Context) (*mcp.CallToolResult, any, error) {
 			return h.HandleEstimateUnitEconomics(ctx, req, in)
@@ -887,9 +3196,10 @@ func (s *AppServer) registerTools(srv *mcp.Server) {
 	})
 
 	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "compare_bom",
-		Description: descCompareBOM,
-		InputSchema: rawSchema(schemaCompareBOM),
+		Name:         "compare_bom",
+		Description:  descCompareBOM,
+		InputSchema:  rawSchema(schemaCompareBOM),
+		OutputSchema: rawSchema(schemaCompareBOMOutput),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in tools.CompareBOMInput) (*mcp.CallToolResult, any, error) {
 		return s.callTool(ctx, "compare_bom", func(ctx context.Context) (*mcp.CallToolResult, any, error) {
 			return h.HandleCompareBOM(ctx, req, in)
@@ -897,9 +3207,10 @@ func (s *AppServer) registerTools(srv *mcp.Server) {
 	})
 
 	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "compare_bom_regions",
-		Description: descCompareBOMRegions,
-		InputSchema: rawSchema(schemaCompareBOMRegions),
+		Name:         "compare_bom_regions",
+		Description:  descCompareBOMRegions,
+		InputSchema:  rawSchema(schemaCompareBOMRegions),
+		OutputSchema: rawSchema(schemaCompareBOMRegionsOutput),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in tools.CompareBOMRegionsInput) (*mcp.CallToolResult, any, error) {
 		return s.callTool(ctx, "compare_bom_regions", func(ctx context.Context) (*mcp.CallToolResult, any, error) {
 			return h.HandleCompareBOMRegions(ctx, req, in)
@@ -909,9 +3220,10 @@ func (s *AppServer) registerTools(srv *mcp.Server) {
 	// ---- Cache tools ----
 
 	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "refresh_cache",
-		Description: descRefreshCache,
-		InputSchema: rawSchema(schemaRefreshCache),
+		Name:         "refresh_cache",
+		Description:  descRefreshCache,
+		InputSchema:  rawSchema(schemaRefreshCache),
+		OutputSchema: rawSchema(schemaRefreshCacheOutput),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in tools.RefreshCacheInput) (*mcp.CallToolResult, any, error) {
 		return s.callTool(ctx, "refresh_cache", func(ctx context.Context) (*mcp.CallToolResult, any, error) {
 			return h.HandleRefreshCache(ctx, req, in)
@@ -919,9 +3231,10 @@ func (s *AppServer) registerTools(srv *mcp.Server) {
 	})
 
 	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "cache_stats",
-		Description: descCacheStats,
-		InputSchema: rawSchema(schemaCacheStats),
+		Name:         "cache_stats",
+		Description:  descCacheStats,
+		InputSchema:  rawSchema(schemaCacheStats),
+		OutputSchema: rawSchema(schemaCacheStatsOutput),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in tools.CacheStatsInput) (*mcp.CallToolResult, any, error) {
 		return s.callTool(ctx, "cache_stats", func(ctx context.Context) (*mcp.CallToolResult, any, error) {
 			return h.HandleCacheStats(ctx, req, in)
@@ -929,9 +3242,10 @@ func (s *AppServer) registerTools(srv *mcp.Server) {
 	})
 
 	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "warm_cache",
-		Description: descWarmCache,
-		InputSchema: rawSchema(schemaWarmCache),
+		Name:         "warm_cache",
+		Description:  descWarmCache,
+		InputSchema:  rawSchema(schemaWarmCache),
+		OutputSchema: rawSchema(schemaWarmCacheOutput),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in tools.WarmCacheInput) (*mcp.CallToolResult, any, error) {
 		return s.callTool(ctx, "warm_cache", func(ctx context.Context) (*mcp.CallToolResult, any, error) {
 			return h.HandleWarmCache(ctx, req, in)
@@ -941,9 +3255,10 @@ func (s *AppServer) registerTools(srv *mcp.Server) {
 	// ---- Availability / discovery tools ----
 
 	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "list_regions",
-		Description: descListRegions,
-		InputSchema: rawSchema(schemaListRegions),
+		Name:         "list_regions",
+		Description:  descListRegions,
+		InputSchema:  rawSchema(schemaListRegions),
+		OutputSchema: rawSchema(schemaListRegionsOutput),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in tools.ListRegionsInput) (*mcp.CallToolResult, any, error) {
 		return s.callTool(ctx, "list_regions", func(ctx context.Context) (*mcp.CallToolResult, any, error) {
 			return h.HandleListRegions(ctx, req, in)
@@ -951,9 +3266,10 @@ func (s *AppServer) registerTools(srv *mcp.Server) {
 	})
 
 	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "list_instance_types",
-		Description: descListInstanceTypes,
-		InputSchema: rawSchema(schemaListInstanceTypes),
+		Name:         "list_instance_types",
+		Description:  descListInstanceTypes,
+		InputSchema:  rawSchema(schemaListInstanceTypes),
+		OutputSchema: rawSchema(schemaListInstanceTypesOutput),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in tools.ListInstanceTypesInput) (*mcp.CallToolResult, any, error) {
 		return s.callTool(ctx, "list_instance_types", func(ctx context.Context) (*mcp.CallToolResult, any, error) {
 			return h.HandleListInstanceTypes(ctx, req, in)
@@ -961,9 +3277,10 @@ func (s *AppServer) registerTools(srv *mcp.Server) {
 	})
 
 	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "find_cheapest_region",
-		Description: descFindCheapestRegion,
-		InputSchema: rawSchema(schemaFindCheapestRegion),
+		Name:         "find_cheapest_region",
+		Description:  descFindCheapestRegion,
+		InputSchema:  rawSchema(schemaFindCheapestRegion),
+		OutputSchema: rawSchema(schemaFindCheapestRegionOutput),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in tools.FindCheapestRegionInput) (*mcp.CallToolResult, any, error) {
 		return s.callTool(ctx, "find_cheapest_region", func(ctx context.Context) (*mcp.CallToolResult, any, error) {
 			return h.HandleFindCheapestRegion(ctx, req, in)
@@ -971,9 +3288,10 @@ func (s *AppServer) registerTools(srv *mcp.Server) {
 	})
 
 	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "find_available_regions",
-		Description: descFindAvailableRegions,
-		InputSchema: rawSchema(schemaFindAvailableRegions),
+		Name:         "find_available_regions",
+		Description:  descFindAvailableRegions,
+		InputSchema:  rawSchema(schemaFindAvailableRegions),
+		OutputSchema: rawSchema(schemaFindAvailableRegionsOutput),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in tools.FindAvailableRegionsInput) (*mcp.CallToolResult, any, error) {
 		return s.callTool(ctx, "find_available_regions", func(ctx context.Context) (*mcp.CallToolResult, any, error) {
 			return h.HandleFindAvailableRegions(ctx, req, in)
