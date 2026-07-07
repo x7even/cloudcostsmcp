@@ -38,9 +38,9 @@ func (h *Handler) HandleSpotHistoryStub(
 		"retryable": false,
 		"message":   "get_spot_history does not exist. Use get_price with term=spot for spot pricing.",
 		"alternatives": map[string]any{
-			"spot_price":      "Call get_price with your compute spec and term=\"spot\" to get current spot rates",
+			"spot_price":       "Call get_price with your compute spec and term=\"spot\" to get current spot rates",
 			"browse_instances": "Call list_instance_types to browse instance families including spot price ranges",
-			"compare_spot":    "Call compare_bom with workload items to compare spot pricing across clouds",
+			"compare_spot":     "Call compare_bom with workload items to compare spot pricing across clouds",
 		},
 	}), nil, nil
 }

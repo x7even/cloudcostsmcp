@@ -1569,3 +1569,136 @@ func TestEstimateBOM_RawSKUItemAdvisoriesIncluded(t *testing.T) {
 		t.Errorf("expected a 'Data transfer (egress)' advisory row, got: %v", notIncluded)
 	}
 }
+
+// --------------------------------------------------------------------------
+// GCP raw-SKU BoM items (RC3-015)
+// --------------------------------------------------------------------------
+
+// TestEstimateBOM_GCPRawSKUItem verifies a GCP raw-SKU BoM item resolves
+// against a real *gcpprovider.Provider and contributes to the BoM total —
+// the GCP counterpart to TestEstimateBOM_RawSKUItem above.
+func TestEstimateBOM_GCPRawSKUItem(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(gcpSKUCatalogFixtureJSON(
+			"0055-9F63-3A4D", "N1 Predefined Instance Core running in Americas", "us-central1", "0", 40_000_000)))
+	}))
+	defer server.Close()
+	realGCP := newGCPSKUTestProvider(t, server)
+	h := tools.New(map[string]tools.Provider{"gcp": realGCP})
+
+	items := []map[string]any{
+		{
+			"sku":      "0055-9F63-3A4D",
+			"provider": "gcp",
+			"service":  "compute",
+			"region":   "us-central1",
+			"quantity": float64(1),
+		},
+	}
+	resp := callEstimateBOM(t, h, items)
+
+	if _, ok := resp["error"]; ok {
+		t.Fatalf("expected success, got error: %v", resp["error"])
+	}
+	lineItems, ok := resp["line_items"].([]any)
+	if !ok || len(lineItems) != 1 {
+		t.Fatalf("expected 1 line item, got %v", resp["line_items"])
+	}
+	li := lineItems[0].(map[string]any)
+	if li["sku"] != "0055-9F63-3A4D" {
+		t.Errorf("expected sku field populated, got %v", li["sku"])
+	}
+	if li["provider"] != "gcp" {
+		t.Errorf("expected provider gcp, got %v", li["provider"])
+	}
+
+	totals, ok := resp["totals"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected totals in response, got %v", resp["totals"])
+	}
+	monthly := totals["monthly"].(map[string]any)
+	// 0.04/hr * 730 hrs/mo (default) * quantity 1 = $29.20/mo.
+	if monthly["display"] != "$29.20/mo" {
+		t.Errorf("expected total monthly $29.20/mo, got %v", monthly["display"])
+	}
+}
+
+// TestEstimateBOM_GCPRawSKUItem_TieredQuantitySelectsCorrectTier verifies
+// resolveBOMSKUItem's graduated tiered-billing rule (bom.go): each tier's
+// rate applies only to the slice of usage that falls within that tier's own
+// bracket, not to the whole quantity at one flat rate. Two BoM items share
+// the same tiered GCP SKU but differ only in quantity, to exercise both a
+// quantity that stays within the first bracket and one that spans both.
+func TestEstimateBOM_GCPRawSKUItem_TieredQuantitySelectsCorrectTier(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(gcpSKUCatalogFixtureJSONTiered(
+			"SKU-TIER-BOM", "Tiered storage rate", "us-central1", "count",
+			[]gcpTierFixture{
+				{start: 0, units: "0", nanos: 100_000_000},  // $0.10/unit below 100 units
+				{start: 100, units: "0", nanos: 50_000_000}, // $0.05/unit at/above 100 units
+			})))
+	}))
+	defer server.Close()
+	realGCP := newGCPSKUTestProvider(t, server)
+	h := tools.New(map[string]tools.Provider{"gcp": realGCP})
+
+	items := []map[string]any{
+		{
+			"sku":         "SKU-TIER-BOM",
+			"provider":    "gcp",
+			"service":     "gcs",
+			"region":      "us-central1",
+			"quantity":    float64(50), // below the second tier's start (100) → first/cheapest tier
+			"description": "low-quantity item",
+		},
+		{
+			"sku":         "SKU-TIER-BOM",
+			"provider":    "gcp",
+			"service":     "gcs",
+			"region":      "us-central1",
+			"quantity":    float64(200), // above the second tier's start (100) → that later tier
+			"description": "high-quantity item",
+		},
+	}
+	resp := callEstimateBOM(t, h, items)
+
+	if _, ok := resp["error"]; ok {
+		t.Fatalf("expected success, got error: %v", resp["error"])
+	}
+	lineItems, ok := resp["line_items"].([]any)
+	if !ok || len(lineItems) != 2 {
+		t.Fatalf("expected 2 line items, got %v", resp["line_items"])
+	}
+
+	byDesc := map[string]map[string]any{}
+	for _, raw := range lineItems {
+		li := raw.(map[string]any)
+		byDesc[li["description"].(string)] = li
+	}
+
+	low := byDesc["low-quantity item"]
+	if low == nil {
+		t.Fatalf("expected a low-quantity item line, got: %v", lineItems)
+	}
+	lowMonthly := low["monthly_cost"].(map[string]any)
+	// quantity 50 is below tier 2's start (100) → first/cheapest tier ($0.10/unit): 50 * 0.10 = $5.00/mo.
+	if lowMonthly["display"] != "$5.00/mo" {
+		t.Errorf("expected low-quantity item to use the first tier ($5.00/mo), got %v", lowMonthly["display"])
+	}
+
+	high := byDesc["high-quantity item"]
+	if high == nil {
+		t.Fatalf("expected a high-quantity item line, got: %v", lineItems)
+	}
+	highMonthly := high["monthly_cost"].(map[string]any)
+	// quantity 200 spans both brackets under graduated billing: the first
+	// 100 units at tier 1's $0.10/unit, plus the remaining 100 units at tier
+	// 2's $0.05/unit: 100*0.10 + 100*0.05 = $15.00/mo.
+	if highMonthly["display"] != "$15.00/mo" {
+		t.Errorf("expected high-quantity item to be billed graduated across both tiers ($15.00/mo), got %v", highMonthly["display"])
+	}
+}

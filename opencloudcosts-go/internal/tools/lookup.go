@@ -31,6 +31,13 @@ const (
 	regionStatusOK        = "ok"
 	regionStatusTransient = "transient_error"
 	regionStatusNoData    = "no_data"
+	// regionStatusPartial marks a fan-out outcome where some but not all
+	// items/regions resolved successfully — e.g. compare_bom_regions
+	// (compare_bom_regions.go) resolving some BoM line items for a region
+	// while others in the same region errored. Distinct from regionStatusOK
+	// (everything resolved) so a partial, possibly-understated total isn't
+	// reported with the same "ok" status as a complete one.
+	regionStatusPartial = "partial"
 )
 
 // Provider is an alias so callers of this package do not need to import providers directly.

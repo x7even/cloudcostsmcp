@@ -1,15 +1,25 @@
 // compare_bom_regions.go implements the compare_bom_regions MCP tool.
 //
-// v1 scope (issue #31, RC3-004): AWS-only, synchronous per-line region
-// fan-out over PricingSpec-dict and raw-SKU items — no weighting or a
-// providers filter yet. It is composed entirely from existing cross-provider
-// machinery —
+// v1 scope (issue #31, RC3-004): AWS-only for PricingSpec-dict items,
+// synchronous per-line region fan-out — no weighting or a providers filter
+// yet. It is composed entirely from existing cross-provider machinery —
 // estimate_bom's processBOMItems (bom.go) for per-item price resolution, and
 // compare_prices' region-fan-out + baseline-delta pattern (this file) for the
 // region loop — rather than new AWS-specific plumbing, so the input/output
-// contract does not lock in an AWS-specific shape. Non-AWS items are reported
-// once at the top level, tagged "not_supported", rather than guessed or
-// dropped silently.
+// contract does not lock in an AWS-specific shape. Non-AWS PricingSpec-dict
+// items are reported once at the top level, tagged "not_supported", rather
+// than guessed or dropped silently.
+//
+// Raw-SKU items (RC3-015, GCP parity) additionally accept provider=="gcp" —
+// resolveBOMSKUItem (bom.go) already resolves either provider generically via
+// resolveSKULookupProviderFromMap, so no per-region plumbing here needs to
+// change, only the partitioning check below. Because a single
+// compare_bom_regions call's resolvable items can therefore now span more
+// than one provider (e.g. an AWS EC2 SKU and a GCP Compute Engine SKU in the
+// same BoM), and a region's regionResult aggregates cost across every
+// resolvable item for that region, there is no longer one single "the"
+// provider to pass to regionDisplayNameFn — see the resolvableProviders
+// computation and its use below.
 package tools
 
 import (
@@ -52,22 +62,25 @@ func (h *Handler) HandleCompareBOMRegions(
 		}), nil, nil
 	}
 
-	// Partition items up front: v1 only resolves AWS items. Non-AWS items are
-	// reported once (provider does not vary per region), not re-derived on
-	// every region iteration.
+	// Partition items up front: v1 resolves AWS PricingSpec-dict items and
+	// AWS/GCP raw-SKU items. Unsupported items are reported once (provider
+	// does not vary per region), not re-derived on every region iteration.
 	var resolvable []map[string]any
 	var notSupported []map[string]any
 	for idx, item := range in.Items {
 		label := fmt.Sprintf("Item %d", idx+1)
 
 		// Raw-SKU items are implicitly AWS (same default get_price_by_sku
-		// applies to a missing provider) — but an item that explicitly names
-		// a non-AWS provider is routed to notSupported here, exactly like any
-		// other non-AWS item, rather than being rejected once per region
-		// inside processBOMItems below.
+		// applies to a missing provider) and, as of RC3-015, also accept an
+		// explicit provider=="gcp" — resolveBOMSKUItem resolves either
+		// provider generically. An item naming any other provider is routed
+		// to notSupported here, exactly like any other unsupported item,
+		// rather than being rejected once per region inside processBOMItems
+		// below.
 		if _, ok := rawBOMSKU(item); ok {
 			pvdrName, hasPvdr := item["provider"].(string)
-			if !hasPvdr || pvdrName == "" || strings.EqualFold(pvdrName, compareBOMRegionsV1Provider) {
+			if !hasPvdr || pvdrName == "" || strings.EqualFold(pvdrName, compareBOMRegionsV1Provider) ||
+				strings.EqualFold(pvdrName, "gcp") {
 				resolvable = append(resolvable, item)
 				continue
 			}
@@ -75,7 +88,7 @@ func (h *Handler) HandleCompareBOMRegions(
 				"item":     label,
 				"provider": pvdrName,
 				"source":   "not_supported",
-				"reason":   "compare_bom_regions v1 is AWS-only (RC3-004) — this provider is not yet supported.",
+				"reason":   "compare_bom_regions raw-SKU items support aws and gcp providers only — this provider is not yet supported.",
 			})
 			continue
 		}
@@ -93,12 +106,41 @@ func (h *Handler) HandleCompareBOMRegions(
 		resolvable = append(resolvable, item)
 	}
 
+	// regionNameProvider decides what provider to pass to regionDisplayNameFn
+	// for the per-region "region_name" field below. A region's regionResult
+	// aggregates cost across every resolvable item for that region, so if
+	// resolvable items span more than one provider (an AWS item and a GCP
+	// item both requesting, say, region "us-central1"/"us-east-1"), there is
+	// no single correct provider whose display-name map applies — falling
+	// back to the bare region code (regionDisplayNameFn's own behavior for an
+	// unrecognized provider, see internal/utils/regions.go) is the smallest
+	// correct fix, rather than guessing one provider or resolving a display
+	// name per line item (region_name is a per-region, not per-line-item,
+	// field in this tool's response shape).
+	resolvableProviders := map[string]struct{}{}
+	for _, item := range resolvable {
+		pvdrName, _ := item["provider"].(string)
+		pvdrName = strings.ToLower(pvdrName)
+		if pvdrName == "" {
+			pvdrName = compareBOMRegionsV1Provider // raw-SKU/PricingSpec-dict default
+		}
+		resolvableProviders[pvdrName] = struct{}{}
+	}
+	regionNameProvider := compareBOMRegionsV1Provider
+	if len(resolvableProviders) == 1 {
+		for p := range resolvableProviders {
+			regionNameProvider = p
+		}
+	} else if len(resolvableProviders) > 1 {
+		regionNameProvider = "" // mixed providers: force the bare-region-code fallback
+	}
+
 	type regionResult struct {
 		region       string
 		totalMonthly float64
 		lineItems    []map[string]any
 		errs         []string
-		status       string // ok | no_data
+		status       string // ok | no_data | partial
 	}
 
 	sem := make(chan struct{}, 10)
@@ -131,9 +173,17 @@ func (h *Handler) HandleCompareBOMRegions(
 				total += li.monthlyCost
 				liMaps = append(liMaps, li.toMap())
 			}
+			// A region with zero resolved line items is no_data. A region
+			// with some resolved and some errored is "partial" — its total
+			// is real but understated (some resolvable items failed), so it
+			// must not be reported as unqualified "ok" alongside regions
+			// where every item resolved cleanly.
 			status := regionStatusOK
-			if len(lineItems) == 0 {
+			switch {
+			case len(lineItems) == 0:
 				status = regionStatusNoData
+			case len(errs) > 0:
+				status = regionStatusPartial
 			}
 			results[idx] = regionResult{
 				region:       rgn,
@@ -171,15 +221,18 @@ func (h *Handler) HandleCompareBOMRegions(
 	for _, r := range results {
 		e := map[string]any{
 			"region":        r.region,
-			"region_name":   regionDisplayNameFn(compareBOMRegionsV1Provider, r.region),
+			"region_name":   regionDisplayNameFn(regionNameProvider, r.region),
 			"total_monthly": moneyDict(r.totalMonthly, "/mo"),
 			"line_items":    r.lineItems,
 		}
 		if len(r.errs) > 0 {
 			e["errors"] = r.errs
 		}
-		if r.status == regionStatusNoData {
+		switch r.status {
+		case regionStatusNoData:
 			e["status"] = "no_data"
+		case regionStatusPartial:
+			e["status"] = "partial"
 		}
 		if in.BaselineRegion != "" {
 			// Degrade gracefully (RC3-002): a missing baseline region nulls

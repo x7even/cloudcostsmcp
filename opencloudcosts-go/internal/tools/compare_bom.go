@@ -776,7 +776,7 @@ func (h *Handler) HandleCompareBOM(
 			// Savings vs on-demand for committed terms.
 			if canonTerm != "on_demand" && odMonthly > 0 && termRes.totalMonthly > 0 {
 				savings := roundToTwoDecimal(odMonthly - termRes.totalMonthly)
-				pct := roundToTwoDecimal((odMonthly-termRes.totalMonthly)/odMonthly*100)
+				pct := roundToTwoDecimal((odMonthly - termRes.totalMonthly) / odMonthly * 100)
 				termOut["savings_vs_on_demand"] = map[string]any{
 					"amount":  savings,
 					"percent": pct,
@@ -850,9 +850,9 @@ func buildCompareSummary(
 	}
 
 	type providerCost struct {
-		name     string
-		monthly  float64
-		savings  float64
+		name      string
+		monthly   float64
+		savings   float64
 		savingPct float64
 	}
 
@@ -885,9 +885,9 @@ func buildCompareSummary(
 		}
 
 		costs = append(costs, providerCost{
-			name:     prov,
-			monthly:  monthly,
-			savings:  savings,
+			name:      prov,
+			monthly:   monthly,
+			savings:   savings,
 			savingPct: savingPct,
 		})
 	}

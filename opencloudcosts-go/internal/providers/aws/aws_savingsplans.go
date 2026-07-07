@@ -82,20 +82,20 @@ type spLeaseLength struct {
 
 // spTerm represents one entry from the terms.savingsPlan[] array.
 type spTerm struct {
-	SKU                  string        `json:"sku"`
-	Description          string        `json:"description"`
-	EffectiveDate        string        `json:"effectiveDate"`
-	LeaseContractLength  spLeaseLength `json:"leaseContractLength"`
-	Rates                []spRate      `json:"rates"`
+	SKU                 string        `json:"sku"`
+	Description         string        `json:"description"`
+	EffectiveDate       string        `json:"effectiveDate"`
+	LeaseContractLength spLeaseLength `json:"leaseContractLength"`
+	Rates               []spRate      `json:"rates"`
 }
 
 // spProductMeta holds the classification data extracted from a product entry.
 type spProductMeta struct {
-	spType        string // "csp" or "isp"
+	spType         string // "csp" or "isp"
 	purchaseOption string
-	purchaseTerm  string // "1yr" or "3yr"
+	purchaseTerm   string // "1yr" or "3yr"
 	instanceFamily string // ISP only (e.g. "m7gd" from attribute instanceType)
-	productFamily string
+	productFamily  string
 }
 
 // spRateKey is the lookup key for the in-memory SP rate index.
@@ -120,12 +120,12 @@ type spIndex = map[string]spIndexEntry
 
 // spIndexEntry holds the data stored per rate in the in-memory index.
 type spIndexEntry struct {
-	Price          float64   `json:"price"`
-	DiscountedSku  string    `json:"discounted_sku"`
-	Currency       string    `json:"currency"`
-	EffectiveDate  time.Time `json:"effective_date"`
-	SourceURL      string    `json:"source_url"`
-	ProductFamily  string    `json:"product_family"`
+	Price         float64   `json:"price"`
+	DiscountedSku string    `json:"discounted_sku"`
+	Currency      string    `json:"currency"`
+	EffectiveDate time.Time `json:"effective_date"`
+	SourceURL     string    `json:"source_url"`
+	ProductFamily string    `json:"product_family"`
 }
 
 // --------------------------------------------------------------------------
@@ -580,12 +580,12 @@ func (p *Provider) GetSavingsPlanPrice(
 
 	// Build the SP NormalizedPrice.
 	spAttrs := map[string]string{
-		"sp_type":         spType,
+		"sp_type":          spType,
 		"commitment_years": strconv.Itoa(years),
-		"payment_option":  paymentOption,
-		"instance_type":   instanceType,
-		"os":              os,
-		"operation":       operation,
+		"payment_option":   paymentOption,
+		"instance_type":    instanceType,
+		"os":               os,
+		"operation":        operation,
 	}
 	if spType == "isp" && instanceType != "" {
 		// Extract instance family for informational purposes.
@@ -626,10 +626,10 @@ func (p *Provider) GetSavingsPlanPrice(
 
 	// Build breakdown.
 	breakdown := map[string]any{
-		"sp_type":         spType,
+		"sp_type":          spType,
 		"commitment_years": years,
-		"payment_option":  paymentOption,
-		"sp_rate":         spRate,
+		"payment_option":   paymentOption,
+		"sp_rate":          spRate,
 		"edp_note": "EDP is a confidential negotiated rate not available via public API. " +
 			"Supply edp_discount_pct (0.0-1.0) to calculate your effective rate. " +
 			"Market range: ~5% at $1M/yr commitment to ~20% at $50M+/yr. " +

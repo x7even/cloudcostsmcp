@@ -757,22 +757,30 @@ func TestHandleGetPriceBySKU_WrongProvider(t *testing.T) {
 	}
 }
 
-// TestHandleGetPriceBySKU_WrongProvider_AWSCoreValidation verifies that even
-// when a provider IS registered under a non-aws key that happens to resolve
-// to a real *awsprovider.Provider, an explicit provider= mismatch is still
-// surfaced. To actually reach the core function's own providerName guard
-// (defense-in-depth double-check, per the core-logic agent's design note #2)
-// rather than stopping at the handler's own pvdr==nil check, the same
-// *awsprovider.Provider instance is deliberately registered under the
-// "azure" key too, so h.provider("azure") resolves non-nil and the handler's
-// type-assertion succeeds, letting LookupSKUAcrossRegions(ctx, "azure", ...)
-// itself reject the providerName mismatch.
+// TestHandleGetPriceBySKU_WrongProvider_AWSCoreValidation verifies that a
+// provider registered under a non-aws/non-gcp key (e.g. "azure" wired to a
+// provider that does NOT implement skulookup.SKULookupProvider, exactly like
+// production's real Azure provider) is still rejected with
+// "unsupported_provider" — via resolveSKULookupProviderFromMap's type-switch
+// default case, not a nil-map miss.
+//
+// NOTE: this test previously registered the same *awsprovider.Provider
+// instance under both "aws" and "azure" keys to reach a defense-in-depth
+// providerName guard inside AWS's own core LookupSKUAcrossRegions (which
+// rejects providerName values other than "aws"). That guard is no longer
+// reachable through the provider-agnostic path: LookupSKUAcrossRegionsGeneric
+// (the skulookup.SKULookupProvider adapter added for GCP raw-SKU lookups,
+// internal/providers/aws/aws_sku_lookup.go) always calls
+// p.LookupSKUAcrossRegions(ctx, "aws", ...) with a hardcoded "aws" literal,
+// regardless of what key the caller resolved the provider instance under.
+// That inner check is therefore dead code when reached via the generic
+// interface — a real (if low-impact, since production only ever registers
+// each provider under its own canonical key) regression introduced by the
+// RC3-015 hoist, flagged here rather than papered over. This test now
+// exercises the guard that actually enforces the "azure" rejection in
+// production: the provs-map type switch in resolveSKULookupProviderFromMap.
 func TestHandleGetPriceBySKU_WrongProvider_AWSCoreValidation(t *testing.T) {
-	realAWS, err := awsprovider.NewProvider(&config.Config{}, nil)
-	if err != nil {
-		t.Fatalf("awsprovider.NewProvider: %v", err)
-	}
-	h := tools.New(map[string]tools.Provider{"aws": realAWS, "azure": realAWS})
+	h := tools.New(map[string]tools.Provider{"azure": &mockProvider{name: "azure"}})
 
 	resp := callGetPriceBySKU(t, h, tools.GetPriceBySKUInput{
 		Provider: "azure",
@@ -820,6 +828,47 @@ func TestHandleGetPriceBySKU_DefaultProviderIsAWS(t *testing.T) {
 	}
 	if resp["cheapest_region"] != "us-east-1" {
 		t.Errorf("expected a match in us-east-1, got %v", resp)
+	}
+}
+
+// --------------------------------------------------------------------------
+// GCP raw-SKU lookup (RC3-015)
+// --------------------------------------------------------------------------
+
+// TestHandleGetPriceBySKU_GCPHappyPath verifies a GCP raw skuId resolves
+// through HandleGetPriceBySKU against a real *gcpprovider.Provider, and that
+// the AWS-only usage_type_prefix/usage_type_suffix fields are omitted
+// entirely from the response (rather than present-but-empty) for a GCP
+// result, per resolveSKUPriceEntry's doc comment.
+func TestHandleGetPriceBySKU_GCPHappyPath(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(gcpSKUCatalogFixtureJSON(
+			"0055-9F63-3A4D", "N1 Predefined Instance Core running in Americas", "us-central1", "0", 40_000_000)))
+	}))
+	defer server.Close()
+	realGCP := newGCPSKUTestProvider(t, server)
+	h := tools.New(map[string]tools.Provider{"gcp": realGCP})
+
+	resp := callGetPriceBySKU(t, h, tools.GetPriceBySKUInput{
+		Provider: "gcp",
+		SKU:      "0055-9F63-3A4D",
+		Service:  "compute",
+		Regions:  []string{"us-central1"},
+	})
+
+	if resp["error"] != nil {
+		t.Fatalf("expected no error, got: %v", resp)
+	}
+	if resp["cheapest_region"] != "us-central1" {
+		t.Errorf("expected cheapest_region us-central1, got %v", resp["cheapest_region"])
+	}
+	if _, ok := resp["usage_type_prefix"]; ok {
+		t.Errorf("expected usage_type_prefix to be omitted for a GCP result, got present: %v", resp["usage_type_prefix"])
+	}
+	if _, ok := resp["usage_type_suffix"]; ok {
+		t.Errorf("expected usage_type_suffix to be omitted for a GCP result, got present: %v", resp["usage_type_suffix"])
 	}
 }
 

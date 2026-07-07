@@ -34,9 +34,9 @@ func (h *Handler) HandleSearchPricing(
 		"error":   "search_pricing_unavailable",
 		"message": "search_pricing is deprecated and does not perform a search; use one of the alternatives below.",
 		"alternatives": map[string]any{
-			"browse_catalog":    "Use describe_catalog with domain and provider to list available services and their specs",
+			"browse_catalog":      "Use describe_catalog with domain and provider to list available services and their specs",
 			"price_known_service": "Use get_price with a complete spec including domain, provider, and resource_type",
-			"estimate_workload": "Use estimate_bom to price a multi-service workload",
+			"estimate_workload":   "Use estimate_bom to price a multi-service workload",
 		},
 	}), nil, nil
 }

@@ -225,15 +225,26 @@ func TestCompareBOMRegions_RawSKUItem(t *testing.T) {
 }
 
 // TestCompareBOMRegions_RawSKUNonAWSProviderReportedOnce verifies a raw-SKU
-// item with an explicit non-AWS provider is reported once in not_supported
-// (Finding 1 fix), not duplicated once per compared region.
+// item with an explicit unsupported (non-aws, non-gcp) provider is reported
+// once in not_supported (Finding 1 fix), not duplicated once per compared
+// region.
+//
+// NOTE: this test previously used provider="gcp" as its "unsupported"
+// example. As of RC3-015 (GCP raw-SKU parity), "gcp" is legitimately
+// accepted at the partition step above (HandleCompareBOMRegions), so it no
+// longer exercises the not_supported path — see
+// TestCompareBOMRegions_GCPRawSKUItem below for gcp's new (resolvable)
+// behavior. This test now uses "azure" (still genuinely unsupported) so it
+// continues to guard the not_supported path — and doubles as the regression
+// check that widening acceptance to aws/gcp didn't accidentally start
+// accepting azure too.
 func TestCompareBOMRegions_RawSKUNonAWSProviderReportedOnce(t *testing.T) {
 	pvdr := newRegionPricedProvider(map[string]float64{"us-east-1": 0.192, "us-west-2": 0.150})
 	h := tools.New(map[string]tools.Provider{"aws": pvdr})
 
 	resp := callCompareBOMRegions(t, h, tools.CompareBOMRegionsInput{
 		Items: []map[string]any{
-			{"sku": "BoxUsage:m5.xlarge", "provider": "gcp", "service": "AmazonEC2"},
+			{"sku": "BoxUsage:m5.xlarge", "provider": "azure", "service": "AmazonEC2"},
 		},
 		Regions: []string{"us-east-1", "us-west-2"},
 	})
@@ -243,15 +254,66 @@ func TestCompareBOMRegions_RawSKUNonAWSProviderReportedOnce(t *testing.T) {
 		t.Fatalf("expected exactly 1 not_supported entry, got: %v", resp["not_supported"])
 	}
 	entry := notSupported[0].(map[string]any)
-	if entry["provider"] != "gcp" {
-		t.Errorf("expected gcp in not_supported entry, got %v", entry)
+	if entry["provider"] != "azure" {
+		t.Errorf("expected azure in not_supported entry, got %v", entry)
 	}
 
 	regions := resp["regions"].([]any)
 	for _, r := range regions {
 		region := r.(map[string]any)
 		if errs, ok := region["errors"].([]any); ok && len(errs) > 0 {
-			t.Errorf("expected no per-region errors for the gcp raw-SKU item (should be reported once at top level), got: %v in region %v", errs, region["region"])
+			t.Errorf("expected no per-region errors for the azure raw-SKU item (should be reported once at top level), got: %v in region %v", errs, region["region"])
 		}
+	}
+}
+
+// TestCompareBOMRegions_GCPRawSKUItem verifies a GCP raw-SKU BoM item
+// resolves per region against a real *gcpprovider.Provider — the GCP
+// counterpart to TestCompareBOMRegions_RawSKUItem above, added for RC3-015.
+func TestCompareBOMRegions_GCPRawSKUItem(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(gcpSKUCatalogFixtureJSON(
+			"0055-9F63-3A4D", "N1 Predefined Instance Core running in Americas", "us-central1", "0", 40_000_000)))
+	}))
+	defer server.Close()
+	realGCP := newGCPSKUTestProvider(t, server)
+	h := tools.New(map[string]tools.Provider{"gcp": realGCP})
+
+	resp := callCompareBOMRegions(t, h, tools.CompareBOMRegionsInput{
+		Items: []map[string]any{
+			{"sku": "0055-9F63-3A4D", "provider": "gcp", "service": "compute", "quantity": float64(1)},
+		},
+		Regions: []string{"us-central1"},
+	})
+
+	if _, ok := resp["error"]; ok {
+		t.Fatalf("expected success, got error: %v", resp["error"])
+	}
+	if notSupported, ok := resp["not_supported"].([]any); ok && len(notSupported) > 0 {
+		t.Fatalf("expected the gcp raw-SKU item to resolve (not not_supported), got: %v", notSupported)
+	}
+
+	regions, ok := resp["regions"].([]any)
+	if !ok || len(regions) != 1 {
+		t.Fatalf("expected 1 region entry, got: %v", resp["regions"])
+	}
+	region := regions[0].(map[string]any)
+	if region["region"] != "us-central1" {
+		t.Errorf("expected region us-central1, got %v", region["region"])
+	}
+	lineItems, ok := region["line_items"].([]any)
+	if !ok || len(lineItems) != 1 {
+		t.Fatalf("expected 1 line item for us-central1, got: %v", region["line_items"])
+	}
+	li := lineItems[0].(map[string]any)
+	if li["sku"] != "0055-9F63-3A4D" {
+		t.Errorf("expected sku field populated, got %v", li["sku"])
+	}
+	monthly := li["monthly_cost"].(map[string]any)
+	// 0.04/hr * 730 hrs/mo (default) * quantity 1 = $29.20/mo.
+	if monthly["display"] != "$29.20/mo" {
+		t.Errorf("expected monthly_cost $29.20/mo, got %v", monthly["display"])
 	}
 }

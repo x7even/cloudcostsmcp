@@ -19,6 +19,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/sync/singleflight"
+
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/cache"
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/config"
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/models"
@@ -92,10 +94,38 @@ func (p *Provider) MajorRegions() []string {
 // Catalog HTTP helpers
 // --------------------------------------------------------------------------
 
+// gcpSKUFetchGroup coalesces concurrent fetchSKUs calls for the same
+// serviceID into a single in-flight execution (shared cache-hit unmarshal or
+// cache-miss network fetch), the same way AWS's skuCatalogCache uses
+// sync.Once per (service, region) key. Without this, callers that fan out
+// concurrently over the same candidate service IDs — the raw-SKU-lookup
+// region fan-out (compare_bom_regions.go's per-region goroutines) and SKU
+// fan-out (get_prices_by_sku's per-SKU goroutines) — can each independently
+// re-fetch (on a cold cache) or re-unmarshal (on a warm cache) the same
+// multi-thousand-row catalog at the same time instead of sharing one result.
+// It is package-level (not per-Provider) since serviceID alone is already
+// process-globally unique for this purpose, mirroring skuCatalogCache's own
+// process-lifetime scope.
+var gcpSKUFetchGroup singleflight.Group
+
 // fetchSKUs returns all SKUs for the given GCP service ID as raw maps.
 // Each SKU is a map[string]any matching the JSON shape from the Billing Catalog API.
-// Results are cached using the metadata TTL.
+// Results are cached using the metadata TTL. Concurrent calls for the same
+// serviceID are coalesced via gcpSKUFetchGroup — see its doc comment.
 func (p *Provider) fetchSKUs(ctx context.Context, serviceID string) ([]map[string]any, error) {
+	v, err, _ := gcpSKUFetchGroup.Do(serviceID, func() (any, error) {
+		return p.fetchSKUsUncoalesced(ctx, serviceID)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return v.([]map[string]any), nil
+}
+
+// fetchSKUsUncoalesced is fetchSKUs' actual body, called through
+// gcpSKUFetchGroup so concurrent callers for the same serviceID share one
+// execution instead of each independently hitting the cache/network.
+func (p *Provider) fetchSKUsUncoalesced(ctx context.Context, serviceID string) ([]map[string]any, error) {
 	cacheKey := "gcp:skus:" + serviceID
 	if raw, ok := p.cache.GetMetadata(cacheKey); ok {
 		var skus []map[string]any
@@ -383,15 +413,14 @@ type tierRate struct {
 	price float64
 }
 
-// skuTierList parses every tiered unit price out of a raw GCP SKU
-// (map[string]any as returned by the Billing Catalog API), sorted ascending
-// by startUsageAmount (ties keep their original relative order). It is the
-// single shared JSON-unwrap step behind skuPrice (below — first zero-start
-// tier), skuPaidPrice (gcp_ai.go — first tier with startUsageAmount > 0), and
-// skuAllTierRates (gcp_dns.go — every tier, for SKUs with more than two
-// tiers); previously each reimplemented this same
-// pricingInfo->pricingExpression->tieredRates unwrap independently.
-func skuTierList(sku map[string]any) []tierRate {
+// gcpPricingExpression unwraps a raw GCP SKU's
+// pricingInfo[0].pricingExpression object — the single shared JSON-unwrap
+// step behind every reader of that object (skuTierList below, and
+// gcpSKUUnit in gcp_sku_lookup.go), so a future change to the
+// pricingInfo/pricingExpression JSON shape (or a bugfix to the unwrap logic)
+// only needs to happen in one place instead of silently drifting between
+// independently-reimplemented copies.
+func gcpPricingExpression(sku map[string]any) map[string]any {
 	pi, _ := sku["pricingInfo"].([]any)
 	if len(pi) == 0 {
 		return nil
@@ -401,6 +430,19 @@ func skuTierList(sku map[string]any) []tierRate {
 		return nil
 	}
 	expr, _ := pe["pricingExpression"].(map[string]any)
+	return expr
+}
+
+// skuTierList parses every tiered unit price out of a raw GCP SKU
+// (map[string]any as returned by the Billing Catalog API), sorted ascending
+// by startUsageAmount (ties keep their original relative order). It is the
+// single shared JSON-unwrap step behind skuPrice (below — first zero-start
+// tier), skuPaidPrice (gcp_ai.go — first tier with startUsageAmount > 0), and
+// skuAllTierRates (gcp_dns.go — every tier, for SKUs with more than two
+// tiers); previously each reimplemented this same
+// pricingInfo->pricingExpression->tieredRates unwrap independently.
+func skuTierList(sku map[string]any) []tierRate {
+	expr := gcpPricingExpression(sku)
 	if expr == nil {
 		return nil
 	}
@@ -439,15 +481,17 @@ func skuPrice(sku map[string]any) float64 {
 	return 0
 }
 
-// newGlobalScopedPrice builds a global-scoped (Region="global",
-// Attributes["scope"]="global") NormalizedPrice with Provider=GCP,
-// PricingTerm=OnDemand, and Currency=USD already filled in — the fields
-// shared by every region-invariant GCP pricing domain (Cloud DNS, Cloud
-// Pub/Sub, ...). Domain-specific constructors like newDNSPrice/newPubSubPrice
-// wrap this with their fixed Service/ProductFamily so call sites keep their
-// existing, domain-named entry point.
-func newGlobalScopedPrice(service, productFamily, skuID, description string, pricePerUnit float64, unit models.PriceUnit, attrs map[string]string) *models.NormalizedPrice {
-	price := &models.NormalizedPrice{
+// newGCPBasePrice builds the region-less NormalizedPrice base shape shared by
+// every GCP price constructor in this package (Provider=GCP,
+// PricingTerm=OnDemand, Currency=USD, plus the SKU-identifying fields) —
+// previously hand-built independently by newGlobalScopedPrice (below),
+// newFirestorePrice (gcp_firestore.go), and gcpBuildMatchedPrices
+// (gcp_sku_lookup.go), which risked a future change to this common shape
+// (e.g. a new field, or a Currency/PricingTerm default fix) being applied to
+// some of those call sites but missed in others. Callers fill in Region (and
+// any scope stamping) themselves, since that varies per constructor.
+func newGCPBasePrice(service, productFamily, skuID, description string, pricePerUnit float64, unit models.PriceUnit, attrs map[string]string) models.NormalizedPrice {
+	return models.NormalizedPrice{
 		Provider:      models.CloudProviderGCP,
 		Service:       service,
 		SKUID:         skuID,
@@ -459,8 +503,19 @@ func newGlobalScopedPrice(service, productFamily, skuID, description string, pri
 		Currency:      "USD",
 		Attributes:    attrs,
 	}
-	stampGlobalScope(price)
-	return price
+}
+
+// newGlobalScopedPrice builds a global-scoped (Region="global",
+// Attributes["scope"]="global") NormalizedPrice with Provider=GCP,
+// PricingTerm=OnDemand, and Currency=USD already filled in — the fields
+// shared by every region-invariant GCP pricing domain (Cloud DNS, Cloud
+// Pub/Sub, ...). Domain-specific constructors like newDNSPrice/newPubSubPrice
+// wrap this with their fixed Service/ProductFamily so call sites keep their
+// existing, domain-named entry point.
+func newGlobalScopedPrice(service, productFamily, skuID, description string, pricePerUnit float64, unit models.PriceUnit, attrs map[string]string) *models.NormalizedPrice {
+	price := newGCPBasePrice(service, productFamily, skuID, description, pricePerUnit, unit, attrs)
+	stampGlobalScope(&price)
+	return &price
 }
 
 // isGlobalSKU reports whether a raw GCP SKU's geoTaxonomy defensively
