@@ -122,14 +122,16 @@ func (s *AppServer) callTool(
 				"panic", fmt.Sprintf("%v", r),
 				"latency_ms", time.Since(start).Milliseconds(),
 			)
-			b, _ := json.Marshal(map[string]any{
+			fields := map[string]any{
 				"error":   "internal_error",
 				"message": "An unexpected error occurred. Please try again.",
-			})
+			}
+			b, _ := json.Marshal(fields)
 			res = &mcp.CallToolResult{
 				Content: []mcp.Content{
 					&mcp.TextContent{Text: string(b)},
 				},
+				StructuredContent: fields,
 			}
 			retErr = nil
 		}

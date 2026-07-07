@@ -224,11 +224,23 @@ func (h *Handler) resolveSKUPriceEntry(
 				"message": skuErr.Message,
 			}
 		}
+		// regions is schema-declared as a plain (non-nullable) array (see
+		// schemaGetPriceBySKUOutput's top-level "regions" property in
+		// server.go). HandleGetPriceBySKU (unlike the batch handler) does not
+		// length-check in.Regions before calling resolveSKUPriceEntry, so a
+		// caller who omits regions entirely reaches here with in.Regions nil
+		// on any non-SKULookupError failure (e.g. context cancellation) —
+		// default defensively here for the same reason attempted_services is
+		// defaulted above.
+		regions := in.Regions
+		if regions == nil {
+			regions = []string{}
+		}
 		return map[string]any{
 			"error":     "upstream_failure",
 			"message":   "SKU lookup failed. Try again shortly.",
 			"retryable": true,
-			"regions":   in.Regions,
+			"regions":   regions,
 		}
 	}
 
@@ -305,9 +317,20 @@ func (h *Handler) resolveSKUPriceEntry(
 			}
 			ambiguousRegions = append(ambiguousRegions, ar)
 		case skuResultNoMapping:
+			// attempted_services is schema-declared as a plain (non-nullable)
+			// array (see server.go's no_mapping_in schema). rr.AttemptedServices
+			// is nil, not just empty, on this path for Azure (azure_sku_lookup.go
+			// never populates it before setting NoMapping) — left as-is, that nil
+			// marshals to JSON null and a strict client (the official Python mcp
+			// SDK) rejects the whole response. AWS/GCP always populate it
+			// non-nil, but default defensively here regardless of provider.
+			attemptedServices := rr.AttemptedServices
+			if attemptedServices == nil {
+				attemptedServices = []string{}
+			}
 			noMapping = append(noMapping, map[string]any{
 				"region":             rr.Region,
-				"attempted_services": rr.AttemptedServices,
+				"attempted_services": attemptedServices,
 			})
 		case skuResultError:
 			erroredRegions = append(erroredRegions, map[string]any{
