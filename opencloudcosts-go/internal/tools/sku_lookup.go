@@ -182,7 +182,7 @@ func classifySKURegionResult(rr skulookup.SKULookupRegionResult) skuRegionResult
 	}
 }
 
-// resolveSKUPriceEntry resolves a single SKU against awsP/regions and shapes
+// resolveSKUPriceEntry resolves a single SKU against lookupP/regions and shapes
 // the response. This is the shared core of get_price_by_sku (a single SKU)
 // and get_prices_by_sku (a batch of SKUs) — the disambiguation/sorting/
 // baseline-delta shaping logic below is intricate (see the ambiguous_in/
