@@ -1351,6 +1351,37 @@ const (
 					},
 					"delta_pct": {
 						"type": "string"
+					},
+					"tiered": {
+						"type": "boolean"
+					},
+					"all_tier_rates": {
+						"type": "array",
+						"items": {
+							"type": "object",
+							"properties": {
+								"price_per_unit": {
+									"type": "object",
+									"properties": {
+										"amount": {
+											"type": "number"
+										},
+										"unit": {
+											"type": "string"
+										},
+										"currency": {
+											"type": "string"
+										},
+										"display": {
+											"type": "string"
+										}
+									}
+								},
+								"tier_start_usage": {
+									"type": "number"
+								}
+							}
+						}
 					}
 				}
 			}
@@ -1633,6 +1664,37 @@ const (
 								},
 								"delta_pct": {
 									"type": "string"
+								},
+								"tiered": {
+									"type": "boolean"
+								},
+								"all_tier_rates": {
+									"type": "array",
+									"items": {
+										"type": "object",
+										"properties": {
+											"price_per_unit": {
+												"type": "object",
+												"properties": {
+													"amount": {
+														"type": "number"
+													},
+													"unit": {
+														"type": "string"
+													},
+													"currency": {
+														"type": "string"
+													},
+													"display": {
+														"type": "string"
+													}
+												}
+											},
+											"tier_start_usage": {
+												"type": "number"
+											}
+										}
+									}
 								}
 							}
 						}
