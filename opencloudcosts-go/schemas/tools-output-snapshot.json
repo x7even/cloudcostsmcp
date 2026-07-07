@@ -1542,6 +1542,9 @@
                 },
                 "fallback_note": {
                   "type": "string"
+                },
+                "sku": {
+                  "type": "string"
                 }
               }
             }
@@ -1802,6 +1805,9 @@
                         "type": "string"
                       },
                       "fallback_note": {
+                        "type": "string"
+                      },
+                      "sku": {
                         "type": "string"
                       }
                     }

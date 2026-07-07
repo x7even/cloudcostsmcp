@@ -2,10 +2,14 @@ package tools_test
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/config"
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/models"
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/providers"
+	awsprovider "github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/providers/aws"
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/tools"
 )
 
@@ -151,5 +155,103 @@ func TestCompareBOMRegions_BaselineRegionNotFound(t *testing.T) {
 	region := regions[0].(map[string]any)
 	if region["delta_monthly"] != nil {
 		t.Errorf("expected nulled delta_monthly when baseline not found, got %v", region["delta_monthly"])
+	}
+}
+
+// TestCompareBOMRegions_RawSKUItem verifies a raw-SKU BoM item (issue #31,
+// RC3-004) resolves per region against a real *awsprovider.Provider — same
+// fixture/mocking pattern as TestHandleGetPriceBySKU_HappyPath in
+// sku_lookup_test.go, since resolveBOMSKUItem type-asserts the concrete AWS
+// provider rather than going through the mockProvider interface.
+func TestCompareBOMRegions_RawSKUItem(t *testing.T) {
+	awsprovider.ResetSKUCatalogCacheForTesting()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/AmazonEC2/current/us-east-1/index.json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(skuFixtureJSON("SKU1", "BoxUsage:r6id.24xlarge", "US East (N. Virginia)", "0.5000000000")))
+	})
+	mux.HandleFunc("/AmazonEC2/current/us-west-2/index.json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(skuFixtureJSON("SKU2", "USW2-BoxUsage:r6id.24xlarge", "US West (Oregon)", "0.6000000000")))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	restore := awsprovider.SetBulkPricingBaseURLForTesting(server.URL)
+	defer restore()
+
+	realAWS, err := awsprovider.NewProvider(&config.Config{}, nil)
+	if err != nil {
+		t.Fatalf("awsprovider.NewProvider: %v", err)
+	}
+	h := tools.New(map[string]tools.Provider{"aws": realAWS})
+
+	resp := callCompareBOMRegions(t, h, tools.CompareBOMRegionsInput{
+		Items: []map[string]any{
+			{"sku": "BoxUsage:r6id.24xlarge", "service": "AmazonEC2", "quantity": float64(2)},
+		},
+		Regions: []string{"us-east-1", "us-west-2"},
+	})
+
+	regions, ok := resp["regions"].([]any)
+	if !ok || len(regions) != 2 {
+		t.Fatalf("expected 2 region entries, got: %v", resp["regions"])
+	}
+
+	first := regions[0].(map[string]any)
+	if first["region"] != "us-east-1" {
+		t.Errorf("expected cheapest region us-east-1 first, got %v", first["region"])
+	}
+	lineItems, ok := first["line_items"].([]any)
+	if !ok || len(lineItems) != 1 {
+		t.Fatalf("expected 1 line item for us-east-1, got: %v", first["line_items"])
+	}
+	li := lineItems[0].(map[string]any)
+	if li["sku"] != "BoxUsage:r6id.24xlarge" {
+		t.Errorf("expected sku field populated, got %v", li["sku"])
+	}
+	monthly := li["monthly_cost"].(map[string]any)
+	// 0.50/hr * 730 hrs/mo (default) * quantity 2 = $730.00/mo.
+	if monthly["display"] != "$730.00/mo" {
+		t.Errorf("expected monthly_cost $730.00/mo, got %v", monthly["display"])
+	}
+
+	last := regions[1].(map[string]any)
+	if last["region"] != "us-west-2" {
+		t.Errorf("expected us-west-2 second (more expensive), got %v", last["region"])
+	}
+}
+
+// TestCompareBOMRegions_RawSKUNonAWSProviderReportedOnce verifies a raw-SKU
+// item with an explicit non-AWS provider is reported once in not_supported
+// (Finding 1 fix), not duplicated once per compared region.
+func TestCompareBOMRegions_RawSKUNonAWSProviderReportedOnce(t *testing.T) {
+	pvdr := newRegionPricedProvider(map[string]float64{"us-east-1": 0.192, "us-west-2": 0.150})
+	h := tools.New(map[string]tools.Provider{"aws": pvdr})
+
+	resp := callCompareBOMRegions(t, h, tools.CompareBOMRegionsInput{
+		Items: []map[string]any{
+			{"sku": "BoxUsage:m5.xlarge", "provider": "gcp", "service": "AmazonEC2"},
+		},
+		Regions: []string{"us-east-1", "us-west-2"},
+	})
+
+	notSupported, ok := resp["not_supported"].([]any)
+	if !ok || len(notSupported) != 1 {
+		t.Fatalf("expected exactly 1 not_supported entry, got: %v", resp["not_supported"])
+	}
+	entry := notSupported[0].(map[string]any)
+	if entry["provider"] != "gcp" {
+		t.Errorf("expected gcp in not_supported entry, got %v", entry)
+	}
+
+	regions := resp["regions"].([]any)
+	for _, r := range regions {
+		region := r.(map[string]any)
+		if errs, ok := region["errors"].([]any); ok && len(errs) > 0 {
+			t.Errorf("expected no per-region errors for the gcp raw-SKU item (should be reported once at top level), got: %v in region %v", errs, region["region"])
+		}
 	}
 }

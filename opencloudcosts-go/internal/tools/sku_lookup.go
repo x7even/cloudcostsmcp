@@ -119,22 +119,19 @@ func (h *Handler) HandleGetPriceBySKU(
 	return jsonText(h.resolveSKUPriceEntry(ctx, awsP, providerName, in)), nil, nil
 }
 
-// resolveAWSSKUProvider resolves and type-asserts the AWS provider for
-// providerName, shared by get_price_by_sku and get_prices_by_sku (both
-// AWS-only — raw usage-type/SKU strings are an AWS CUR concept with no GCP/
-// Azure equivalent). toolName is interpolated into the error message so each
-// caller's error reads as coming from itself. Returns a non-nil errOut (and
-// a nil *awsprovider.Provider) when resolution fails; callers must check
-// errOut before using the returned provider.
-func (h *Handler) resolveAWSSKUProvider(providerName, toolName string) (awsP *awsprovider.Provider, errOut map[string]any) {
-	pvdr := h.provider(strings.ToLower(providerName))
+// resolveAWSSKUProviderFromMap is the provider-agnostic core of
+// resolveAWSSKUProvider, extracted so raw-SKU BoM item resolution
+// (resolveBOMSKUItem in bom.go) can share the identical provider-resolution
+// and type-assertion logic without needing a *Handler receiver —
+// processBOMItems already threads a plain provs map, not a Handler.
+func resolveAWSSKUProviderFromMap(provs map[string]Provider, providerName, toolName string) (*awsprovider.Provider, map[string]any) {
+	pvdr := provs[strings.ToLower(providerName)]
 	if pvdr == nil {
 		return nil, map[string]any{
 			"error":   "unsupported_provider",
 			"message": fmt.Sprintf("%s only supports provider=\"aws\" (got %q).", toolName, providerName),
 		}
 	}
-
 	awsP, ok := pvdr.(*awsprovider.Provider)
 	if !ok {
 		// Should not be reachable in practice (only "aws" resolves to an AWS
@@ -146,6 +143,47 @@ func (h *Handler) resolveAWSSKUProvider(providerName, toolName string) (awsP *aw
 		}
 	}
 	return awsP, nil
+}
+
+// resolveAWSSKUProvider resolves and type-asserts the AWS provider for
+// providerName, shared by get_price_by_sku and get_prices_by_sku (both
+// AWS-only — raw usage-type/SKU strings are an AWS CUR concept with no GCP/
+// Azure equivalent). toolName is interpolated into the error message so each
+// caller's error reads as coming from itself. Returns a non-nil errOut (and
+// a nil *awsprovider.Provider) when resolution fails; callers must check
+// errOut before using the returned provider.
+func (h *Handler) resolveAWSSKUProvider(providerName, toolName string) (awsP *awsprovider.Provider, errOut map[string]any) {
+	return resolveAWSSKUProviderFromMap(h.providers, providerName, toolName)
+}
+
+// skuRegionResultKind classifies a single awsprovider.SKULookupRegionResult
+// into exactly one of five buckets. resolveSKUPriceEntry (looping over every
+// region) and resolveBOMSKUItem (bom.go, a single region) both need this
+// same four-way discrimination over Prices/Ambiguous/NoMapping/Error — kept
+// in one place here rather than reimplemented at each call site.
+type skuRegionResultKind int
+
+const (
+	skuResultMatched skuRegionResultKind = iota
+	skuResultAmbiguous
+	skuResultNoMapping
+	skuResultError
+	skuResultUnresolved // none of Prices/NoMapping/Error set — should not occur in practice
+)
+
+func classifySKURegionResult(rr awsprovider.SKULookupRegionResult) skuRegionResultKind {
+	switch {
+	case len(rr.Prices) > 0 && !rr.Ambiguous:
+		return skuResultMatched
+	case len(rr.Prices) > 0 && rr.Ambiguous:
+		return skuResultAmbiguous
+	case rr.NoMapping:
+		return skuResultNoMapping
+	case rr.Error != "":
+		return skuResultError
+	default:
+		return skuResultUnresolved
+	}
 }
 
 // resolveSKUPriceEntry resolves a single SKU against awsP/regions and shapes
@@ -210,8 +248,8 @@ func (h *Handler) resolveSKUPriceEntry(
 	anyAmbiguous := false
 
 	for _, rr := range result.Regions {
-		switch {
-		case len(rr.Prices) > 0 && !rr.Ambiguous:
+		switch classifySKURegionResult(rr) {
+		case skuResultMatched:
 			// resolveSKUCandidates guarantees exactly one row whenever it
 			// reports ambiguous=false.
 			matched = append(matched, matchedRegion{
@@ -221,7 +259,7 @@ func (h *Handler) resolveSKUPriceEntry(
 				mismatch:    rr.ServiceMismatch,
 				hintStatus:  rr.HintStatus,
 			})
-		case len(rr.Prices) > 0 && rr.Ambiguous:
+		case skuResultAmbiguous:
 			// Still ambiguous even after hint-based and canonical-default
 			// narrowing: this region is deliberately excluded from matched
 			// (and therefore from sorting, cheapest/most_expensive, and
@@ -241,12 +279,12 @@ func (h *Handler) resolveSKUPriceEntry(
 				ar["service_mismatch"] = true
 			}
 			ambiguousRegions = append(ambiguousRegions, ar)
-		case rr.NoMapping:
+		case skuResultNoMapping:
 			noMapping = append(noMapping, map[string]any{
 				"region":             rr.Region,
 				"attempted_services": rr.AttemptedServices,
 			})
-		case rr.Error != "":
+		case skuResultError:
 			erroredRegions = append(erroredRegions, map[string]any{
 				"region": rr.Region,
 				"error":  rr.Error,
