@@ -1,8 +1,9 @@
 // compare_bom_regions.go implements the compare_bom_regions MCP tool.
 //
 // v1 scope (issue #31, RC3-004): AWS-only, synchronous per-line region
-// fan-out over PricingSpec-dict items — no raw-SKU line items or weighting
-// yet. It is composed entirely from existing cross-provider machinery —
+// fan-out over PricingSpec-dict and raw-SKU items — no weighting or a
+// providers filter yet. It is composed entirely from existing cross-provider
+// machinery —
 // estimate_bom's processBOMItems (bom.go) for per-item price resolution, and
 // compare_prices' region-fan-out + baseline-delta pattern (this file) for the
 // region loop — rather than new AWS-specific plumbing, so the input/output
@@ -58,6 +59,27 @@ func (h *Handler) HandleCompareBOMRegions(
 	var notSupported []map[string]any
 	for idx, item := range in.Items {
 		label := fmt.Sprintf("Item %d", idx+1)
+
+		// Raw-SKU items are implicitly AWS (same default get_price_by_sku
+		// applies to a missing provider) — but an item that explicitly names
+		// a non-AWS provider is routed to notSupported here, exactly like any
+		// other non-AWS item, rather than being rejected once per region
+		// inside processBOMItems below.
+		if _, ok := rawBOMSKU(item); ok {
+			pvdrName, hasPvdr := item["provider"].(string)
+			if !hasPvdr || pvdrName == "" || strings.EqualFold(pvdrName, compareBOMRegionsV1Provider) {
+				resolvable = append(resolvable, item)
+				continue
+			}
+			notSupported = append(notSupported, map[string]any{
+				"item":     label,
+				"provider": pvdrName,
+				"source":   "not_supported",
+				"reason":   "compare_bom_regions v1 is AWS-only (RC3-004) — this provider is not yet supported.",
+			})
+			continue
+		}
+
 		pvdrName, _ := item["provider"].(string)
 		if strings.ToLower(pvdrName) != compareBOMRegionsV1Provider {
 			notSupported = append(notSupported, map[string]any{

@@ -5,11 +5,15 @@ package tools_test
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/config"
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/models"
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/providers"
+	awsprovider "github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/providers/aws"
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/tools"
 )
 
@@ -1235,5 +1239,333 @@ func TestEstimateBOM_NoFallbackFlagWhenLive(t *testing.T) {
 	}
 	if _, present := li["fallback_note"]; present {
 		t.Errorf("expected no \"fallback_note\" key on a live-priced line item, got %v", li["fallback_note"])
+	}
+}
+
+// --------------------------------------------------------------------------
+// Raw-SKU BoM line items (issue #31, RC3-004)
+// --------------------------------------------------------------------------
+
+// TestEstimateBOM_RawSKUItem verifies a raw-SKU item resolves against a real
+// *awsprovider.Provider and contributes to the BoM total — same fixture/
+// mocking pattern as TestHandleGetPriceBySKU_HappyPath in sku_lookup_test.go,
+// since resolveBOMSKUItem type-asserts the concrete AWS provider rather than
+// going through the mockProvider interface.
+func TestEstimateBOM_RawSKUItem(t *testing.T) {
+	awsprovider.ResetSKUCatalogCacheForTesting()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/AmazonEC2/current/us-east-1/index.json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(skuFixtureJSON("SKU1", "BoxUsage:r6id.24xlarge", "US East (N. Virginia)", "0.5000000000")))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	restore := awsprovider.SetBulkPricingBaseURLForTesting(server.URL)
+	defer restore()
+
+	realAWS, err := awsprovider.NewProvider(&config.Config{}, nil)
+	if err != nil {
+		t.Fatalf("awsprovider.NewProvider: %v", err)
+	}
+	h := tools.New(map[string]tools.Provider{"aws": realAWS})
+
+	items := []map[string]any{
+		{
+			"sku":      "BoxUsage:r6id.24xlarge",
+			"service":  "AmazonEC2",
+			"region":   "us-east-1",
+			"quantity": float64(1),
+		},
+	}
+	resp := callEstimateBOM(t, h, items)
+
+	if _, ok := resp["error"]; ok {
+		t.Fatalf("expected success, got error: %v", resp["error"])
+	}
+
+	lineItems, ok := resp["line_items"].([]any)
+	if !ok || len(lineItems) != 1 {
+		t.Fatalf("expected 1 line item, got %v", resp["line_items"])
+	}
+	li := lineItems[0].(map[string]any)
+	if li["sku"] != "BoxUsage:r6id.24xlarge" {
+		t.Errorf("expected sku field populated, got %v", li["sku"])
+	}
+
+	totals, ok := resp["totals"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected totals in response, got %v", resp["totals"])
+	}
+	monthly := totals["monthly"].(map[string]any)
+	// 0.50/hr * 730 hrs/mo (default) * quantity 1 = $365.00/mo.
+	if monthly["display"] != "$365.00/mo" {
+		t.Errorf("expected total monthly $365.00/mo, got %v", monthly["display"])
+	}
+}
+
+// TestEstimateBOM_RawSKUItem_PartialFailureNoMapping verifies that when a
+// two-item BoM mixes a resolvable raw-SKU item with one whose usage-type
+// suffix has no matching row in its region's catalog (the requested-region
+// fetch succeeds, but no product row matches — see aws_sku_lookup.go's
+// NoMapping branch), the good item still resolves and contributes to
+// total_monthly while the bad item surfaces only as a per-item error
+// entry — mirroring TestEstimateBOM_PartialFailure's "errs, not a top-level
+// error" contract for the raw-SKU path.
+func TestEstimateBOM_RawSKUItem_PartialFailureNoMapping(t *testing.T) {
+	awsprovider.ResetSKUCatalogCacheForTesting()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/AmazonEC2/current/us-east-1/index.json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		// Catalog only contains "BoxUsage:r6id.24xlarge" — a lookup for any
+		// other suffix (e.g. "BoxUsage:doesnotexist" below) hits NoMapping.
+		_, _ = w.Write([]byte(skuFixtureJSON("SKU1", "BoxUsage:r6id.24xlarge", "US East (N. Virginia)", "0.5000000000")))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	restore := awsprovider.SetBulkPricingBaseURLForTesting(server.URL)
+	defer restore()
+
+	realAWS, err := awsprovider.NewProvider(&config.Config{}, nil)
+	if err != nil {
+		t.Fatalf("awsprovider.NewProvider: %v", err)
+	}
+	h := tools.New(map[string]tools.Provider{"aws": realAWS})
+
+	items := []map[string]any{
+		{
+			"sku":      "BoxUsage:r6id.24xlarge",
+			"service":  "AmazonEC2",
+			"region":   "us-east-1",
+			"quantity": float64(1),
+		},
+		{
+			"sku":      "BoxUsage:doesnotexist",
+			"service":  "AmazonEC2",
+			"region":   "us-east-1",
+			"quantity": float64(1),
+		},
+	}
+	resp := callEstimateBOM(t, h, items)
+
+	// Must NOT have a top-level "error" key — one item succeeded.
+	if topErr, ok := resp["error"]; ok {
+		t.Fatalf("expected no top-level error for partial failure, got: %v", topErr)
+	}
+
+	lineItems, ok := resp["line_items"].([]any)
+	if !ok || len(lineItems) != 1 {
+		t.Fatalf("expected 1 successful line item, got: %v", resp["line_items"])
+	}
+	li := lineItems[0].(map[string]any)
+	if li["sku"] != "BoxUsage:r6id.24xlarge" {
+		t.Errorf("expected the resolvable sku on the surviving line item, got %v", li["sku"])
+	}
+
+	errsVal := resp["errors"]
+	if errsVal == nil {
+		t.Fatal("expected errors field to be set for the unmapped item, got nil")
+	}
+	errs, ok := errsVal.([]any)
+	if !ok || len(errs) != 1 {
+		t.Fatalf("expected exactly 1 error entry, got: %v", errsVal)
+	}
+	errStr, _ := errs[0].(string)
+	if !strings.Contains(errStr, "no pricing mapping") {
+		t.Errorf("expected error mentioning 'no pricing mapping', got %q", errStr)
+	}
+
+	totals, ok := resp["totals"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected totals in response, got %v", resp["totals"])
+	}
+	monthly := totals["monthly"].(map[string]any)
+	// Only the resolvable item contributes: 0.50/hr * 730 hrs/mo * qty 1 = $365.00/mo.
+	if monthly["display"] != "$365.00/mo" {
+		t.Errorf("expected total monthly $365.00/mo (unmapped item excluded), got %v", monthly["display"])
+	}
+}
+
+// TestEstimateBOM_RawSKUItemTrimsWhitespace verifies a raw-SKU item whose
+// "sku" carries leading/trailing whitespace (e.g. a copy-pasted CUR export
+// column) still resolves — the whitespace must be trimmed before being
+// handed to the AWS SKU resolver (Finding 3 fix), not just before the
+// raw-SKU-detection check.
+func TestEstimateBOM_RawSKUItemTrimsWhitespace(t *testing.T) {
+	awsprovider.ResetSKUCatalogCacheForTesting()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/AmazonEC2/current/us-east-1/index.json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(skuFixtureJSON("SKU1", "BoxUsage:m5.xlarge", "US East (N. Virginia)", "0.1920000000")))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	restore := awsprovider.SetBulkPricingBaseURLForTesting(server.URL)
+	defer restore()
+
+	realAWS, err := awsprovider.NewProvider(&config.Config{}, nil)
+	if err != nil {
+		t.Fatalf("awsprovider.NewProvider: %v", err)
+	}
+	h := tools.New(map[string]tools.Provider{"aws": realAWS})
+
+	items := []map[string]any{
+		{
+			"sku":      "  BoxUsage:m5.xlarge  ",
+			"service":  "AmazonEC2",
+			"region":   "us-east-1",
+			"quantity": float64(1),
+		},
+	}
+	resp := callEstimateBOM(t, h, items)
+
+	if _, ok := resp["error"]; ok {
+		t.Fatalf("expected success, got error: %v", resp["error"])
+	}
+	if errsVal := resp["errors"]; errsVal != nil {
+		t.Fatalf("expected no per-item errors, got: %v", errsVal)
+	}
+
+	lineItems, ok := resp["line_items"].([]any)
+	if !ok || len(lineItems) != 1 {
+		t.Fatalf("expected 1 line item (whitespace-padded sku trimmed and resolved), got %v", resp["line_items"])
+	}
+}
+
+// TestEstimateBOM_RawSKUItemNonStringProviderRejected verifies a raw-SKU
+// item whose "provider" field is present but not a string (e.g. a number
+// from a caller bug) produces a clear type error rather than silently
+// defaulting to "aws" (Finding 4 fix). The provider-type check runs before
+// any provider resolution or network call, so no AWS provider fixture is
+// needed here.
+func TestEstimateBOM_RawSKUItemNonStringProviderRejected(t *testing.T) {
+	h := tools.New(nil)
+
+	items := []map[string]any{
+		{
+			"sku":      "BoxUsage:m5.xlarge",
+			"service":  "AmazonEC2",
+			"region":   "us-east-1",
+			"provider": float64(123),
+		},
+	}
+	resp := callEstimateBOM(t, h, items)
+
+	errVal, ok := resp["error"]
+	if !ok {
+		t.Fatalf("expected an error for a non-string provider, got: %v", resp)
+	}
+	errStr, _ := errVal.(string)
+	if !strings.Contains(errStr, "provider") || !strings.Contains(errStr, "string") {
+		t.Errorf("expected error to mention 'provider' and 'string', got %q", errStr)
+	}
+}
+
+// TestEstimateBOM_RawSKUItemNonStringOperationRejected verifies a raw-SKU
+// item whose "operation" field is present but not a string (e.g. an array)
+// produces a clear type error, rather than being silently treated as "no
+// hint supplied" and surfacing the misleading ambiguous/disambiguate message
+// (Finding 5 fix). Unlike the provider check, this one runs after provider
+// resolution succeeds, so a real *awsprovider.Provider is required.
+func TestEstimateBOM_RawSKUItemNonStringOperationRejected(t *testing.T) {
+	awsprovider.ResetSKUCatalogCacheForTesting()
+
+	mux := http.NewServeMux()
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	restore := awsprovider.SetBulkPricingBaseURLForTesting(server.URL)
+	defer restore()
+
+	realAWS, err := awsprovider.NewProvider(&config.Config{}, nil)
+	if err != nil {
+		t.Fatalf("awsprovider.NewProvider: %v", err)
+	}
+	h := tools.New(map[string]tools.Provider{"aws": realAWS})
+
+	items := []map[string]any{
+		{
+			"sku":       "BoxUsage:m5.xlarge",
+			"service":   "AmazonEC2",
+			"region":    "us-east-1",
+			"operation": []any{"CreateDBInstance"},
+		},
+	}
+	resp := callEstimateBOM(t, h, items)
+
+	errVal, ok := resp["error"]
+	if !ok {
+		t.Fatalf("expected an error for a non-string operation, got: %v", resp)
+	}
+	errStr, _ := errVal.(string)
+	if !strings.Contains(errStr, "operation") || !strings.Contains(errStr, "string") {
+		t.Errorf("expected error to mention 'operation' and 'string', got %q", errStr)
+	}
+	if strings.Contains(errStr, "ambiguous") || strings.Contains(errStr, "disambiguate") {
+		t.Errorf("expected a type error, not the ambiguous/disambiguate message, got %q", errStr)
+	}
+}
+
+// TestEstimateBOM_RawSKUItemAdvisoriesIncluded verifies Finding 2's fix: a
+// raw-SKU EC2 item's li.service (the raw AWS Pricing API servicecode
+// "AmazonEC2") is normalized via bomAdvisoryServiceToken before being fed to
+// BOMAdvisories, so egress/LB/NAT advisory rows are still produced for a BoM
+// built entirely from raw-SKU items.
+func TestEstimateBOM_RawSKUItemAdvisoriesIncluded(t *testing.T) {
+	awsprovider.ResetSKUCatalogCacheForTesting()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/AmazonEC2/current/us-east-1/index.json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(skuFixtureJSON("SKU1", "BoxUsage:m5.xlarge", "US East (N. Virginia)", "0.1920000000")))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	restore := awsprovider.SetBulkPricingBaseURLForTesting(server.URL)
+	defer restore()
+
+	realAWS, err := awsprovider.NewProvider(&config.Config{}, nil)
+	if err != nil {
+		t.Fatalf("awsprovider.NewProvider: %v", err)
+	}
+	h := tools.New(map[string]tools.Provider{"aws": realAWS})
+
+	items := []map[string]any{
+		{
+			"sku":      "BoxUsage:m5.xlarge",
+			"service":  "AmazonEC2",
+			"region":   "us-east-1",
+			"quantity": float64(1),
+		},
+	}
+	resp := callEstimateBOM(t, h, items)
+
+	if _, ok := resp["error"]; ok {
+		t.Fatalf("expected success, got error: %v", resp["error"])
+	}
+
+	notIncluded, ok := resp["not_included"].([]any)
+	if !ok || len(notIncluded) == 0 {
+		t.Fatalf("expected non-empty not_included advisories for a raw-SKU EC2 item, got: %v", resp["not_included"])
+	}
+
+	found := false
+	for _, row := range notIncluded {
+		m, ok := row.(map[string]any)
+		if !ok {
+			continue
+		}
+		if item, _ := m["item"].(string); strings.Contains(item, "Data transfer") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected a 'Data transfer (egress)' advisory row, got: %v", notIncluded)
 	}
 }

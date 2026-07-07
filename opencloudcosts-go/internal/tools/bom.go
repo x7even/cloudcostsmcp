@@ -6,16 +6,25 @@
 // All monetary values use float64 arithmetic (not shopspring/decimal) per the
 // Phase 0 plan decision. The output shape mirrors the Python implementation
 // in src/opencloudcosts/tools/bom.py and src/opencloudcosts/tools/lookup.py.
+//
+// processBOMItems additionally resolves raw-SKU line items (issue #31,
+// RC3-004) via resolveBOMSKUItem, which type-asserts a concrete
+// *awsprovider.Provider to reuse LookupSKUAcrossRegions — the same AWS-only
+// core get_price_by_sku uses (internal/tools/sku_lookup.go). That import is
+// isolated to the resolveBOMSKUItem call site for the same reason
+// sku_lookup.go isolates it: the rest of this file stays provider-agnostic.
 package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/models"
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/providers"
+	awsprovider "github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/providers/aws"
 )
 
 // --------------------------------------------------------------------------
@@ -141,14 +150,17 @@ type bomLineItem struct {
 	unitPrice   models.NormalizedPrice
 	monthlyCost float64
 	annualCost  float64
+	// sku is set only for line items resolved from a raw-SKU BoM entry
+	// (see resolveBOMSKUItem); empty for PricingSpec-dict items.
+	sku string
 }
 
 func (li bomLineItem) toMap() map[string]any {
 	m := map[string]any{
-		"description": li.description,
-		"provider":    li.provider,
-		"service":     li.service,
-		"region":      li.region,
+		"description":    li.description,
+		"provider":       li.provider,
+		"service":        li.service,
+		"region":         li.region,
 		"quantity":       li.quantity,
 		"price_per_unit": priceDict(li.unitPrice.PricePerUnit, string(li.unitPrice.Unit)),
 		"monthly_cost":   moneyDict(li.monthlyCost, "/mo"),
@@ -167,7 +179,68 @@ func (li bomLineItem) toMap() map[string]any {
 		}
 	}
 
+	if li.sku != "" {
+		m["sku"] = li.sku
+	}
+
 	return m
+}
+
+// --------------------------------------------------------------------------
+// Raw-SKU BoM item helpers — shared by processBOMItems (this file) and
+// HandleCompareBOMRegions's partition loop (compare_bom_regions.go).
+// --------------------------------------------------------------------------
+
+// rawBOMSKU extracts and trims a raw-SKU BoM item's "sku" field, reporting
+// whether one was present (a whitespace-only value does not count). Shared
+// by processBOMItems and HandleCompareBOMRegions's partition loop
+// (compare_bom_regions.go) so both treat "is this a raw-SKU item" — and the
+// exact string handed to the AWS SKU resolver — identically.
+func rawBOMSKU(item map[string]any) (string, bool) {
+	sku, _ := item["sku"].(string)
+	sku = strings.TrimSpace(sku)
+	return sku, sku != ""
+}
+
+// stringItemField extracts item[key] as a string, distinguishing "absent"
+// (returns "", "") from "present but not a string" (returns "", a non-empty
+// error message) — a raw-SKU item with e.g. operation as a number/array
+// should surface a clear type error rather than silently being treated as
+// "field not supplied," which would otherwise produce a misleading
+// disambiguation-hint error later.
+func stringItemField(item map[string]any, key, label, sku string) (string, string) {
+	v, present := item[key]
+	if !present {
+		return "", ""
+	}
+	s, ok := v.(string)
+	if !ok {
+		return "", fmt.Sprintf("%s: %q must be a string (sku %q)", label, key, sku)
+	}
+	return s, ""
+}
+
+// awsServiceCodeToAdvisoryToken maps a raw AWS Pricing API servicecode (as
+// stored on raw-SKU line items' li.service — see resolveBOMSKUItem) to the
+// short-form category token BOMAdvisories' svcSet already recognizes for
+// PricingSpec-dict line items, so advisory rows (egress, LB, NAT, RDS
+// backups, EBS snapshots) aren't silently skipped just because a BoM used
+// raw-SKU items instead of PricingSpec dicts for the same AWS service.
+var awsServiceCodeToAdvisoryToken = map[string]string{
+	"amazonec2":         "ec2",
+	"amazonrds":         "rds",
+	"amazonelasticache": "elasticache",
+	"amazons3":          "s3",
+	"amazonebs":         "ebs",
+}
+
+// bomAdvisoryServiceToken normalizes a bomLineItem.service value for the
+// BOMAdvisories lookup — see awsServiceCodeToAdvisoryToken.
+func bomAdvisoryServiceToken(service string) string {
+	if tok, ok := awsServiceCodeToAdvisoryToken[strings.ToLower(service)]; ok {
+		return tok
+	}
+	return service
 }
 
 // --------------------------------------------------------------------------
@@ -211,6 +284,20 @@ func processBOMItems(
 			}
 		}
 		description, _ := item["description"].(string)
+
+		// Raw-SKU items (issue #31, RC3-004) bypass the PricingSpec path
+		// entirely — they carry a CUR-style usage-type/SKU string instead of
+		// a domain/resource_type spec, so resolve them via the same AWS SKU
+		// lookup get_price_by_sku uses.
+		if sku, ok := rawBOMSKU(item); ok {
+			li, errMsg := resolveBOMSKUItem(ctx, provs, label, item, sku, quantity, hoursPerMonth, sizeGB, description)
+			if errMsg != "" {
+				errs = append(errs, errMsg)
+				continue
+			}
+			lineItems = append(lineItems, li)
+			continue
+		}
 
 		// Build clean spec dict (remove BoM-only fields).
 		specDict := make(map[string]any, len(item))
@@ -334,6 +421,109 @@ func processBOMItems(
 }
 
 // --------------------------------------------------------------------------
+// resolveBOMSKUItem resolves a raw-SKU BoM line item (issue #31, RC3-004) —
+// mirrors resolveSKUPriceEntry's (sku_lookup.go) error-unwrapping and
+// Prices/Ambiguous/NoMapping/Error discrimination exactly, but for a single
+// region and shaped as a bomLineItem rather than get_price_by_sku's response
+// map, since a BoM line item needs exactly one price to cost out.
+// --------------------------------------------------------------------------
+
+func resolveBOMSKUItem(
+	ctx context.Context,
+	provs map[string]Provider,
+	label string,
+	item map[string]any,
+	sku string,
+	quantity float64,
+	hoursPerMonth float64,
+	sizeGB float64,
+	description string,
+) (bomLineItem, string) {
+	region, _ := item["region"].(string)
+	if region == "" {
+		return bomLineItem{}, fmt.Sprintf("%s: region is required for raw-SKU items (sku %q)", label, sku)
+	}
+
+	providerName, errMsg := stringItemField(item, "provider", label, sku)
+	if errMsg != "" {
+		return bomLineItem{}, errMsg
+	}
+	if providerName == "" {
+		// Mirrors HandleGetPriceBySKU's default: raw usage-type/SKU strings
+		// are an AWS CUR concept, so an absent provider means "aws".
+		providerName = "aws"
+	}
+
+	awsP, errOut := resolveAWSSKUProviderFromMap(provs, providerName, "raw-SKU BoM items")
+	if errOut != nil {
+		msg, _ := errOut["message"].(string)
+		return bomLineItem{}, fmt.Sprintf("%s: %s (sku %q)", label, msg, sku)
+	}
+
+	serviceHint, errMsg := stringItemField(item, "service", label, sku)
+	if errMsg != "" {
+		return bomLineItem{}, errMsg
+	}
+	operation, errMsg := stringItemField(item, "operation", label, sku)
+	if errMsg != "" {
+		return bomLineItem{}, errMsg
+	}
+	productFamily, errMsg := stringItemField(item, "product_family", label, sku)
+	if errMsg != "" {
+		return bomLineItem{}, errMsg
+	}
+
+	result, err := awsP.LookupSKUAcrossRegions(ctx, providerName, sku, serviceHint, []string{region}, operation, productFamily)
+	if err != nil {
+		var skuErr *awsprovider.SKULookupError
+		if errors.As(err, &skuErr) {
+			return bomLineItem{}, fmt.Sprintf("%s: [%s] %s (sku %q)", label, skuErr.Code, skuErr.Message, sku)
+		}
+		return bomLineItem{}, fmt.Sprintf("%s: SKU lookup failed (sku %q)", label, sku)
+	}
+
+	rr := result.Regions[0]
+	switch classifySKURegionResult(rr) {
+	case skuResultAmbiguous:
+		return bomLineItem{}, fmt.Sprintf(
+			"%s: sku %q is ambiguous in region '%s' (%d matching rows) — supply operation/product_family to disambiguate",
+			label, sku, region, len(rr.Prices))
+	case skuResultNoMapping:
+		return bomLineItem{}, fmt.Sprintf("%s: sku %q has no pricing mapping in region '%s' (tried service(s): %v)",
+			label, sku, region, rr.AttemptedServices)
+	case skuResultError:
+		return bomLineItem{}, fmt.Sprintf("%s: %s (sku %q, region '%s')", label, rr.Error, sku, region)
+	case skuResultUnresolved:
+		return bomLineItem{}, fmt.Sprintf("%s: sku %q could not be resolved in region '%s'", label, sku, region)
+	}
+
+	price := rr.Prices[0]
+	monthly := bomMonthlyCost(price, quantity, hoursPerMonth, sizeGB)
+	annual := monthly * 12
+
+	lineDesc := description
+	if lineDesc == "" {
+		svc := rr.ServiceUsed
+		if svc == "" {
+			svc = price.Service
+		}
+		lineDesc = fmt.Sprintf("SKU %s (%s)", sku, svc)
+	}
+
+	return bomLineItem{
+		description: lineDesc,
+		provider:    string(price.Provider),
+		service:     price.Service,
+		region:      price.Region,
+		quantity:    quantity,
+		unitPrice:   price,
+		monthlyCost: monthly,
+		annualCost:  annual,
+		sku:         sku,
+	}, ""
+}
+
+// --------------------------------------------------------------------------
 // HandleEstimateBOM — estimate_bom tool handler
 // --------------------------------------------------------------------------
 
@@ -365,7 +555,7 @@ func (h *Handler) HandleEstimateBOM(
 	providersInBoM := make(map[string]bool)
 	providerFirstRegion := make(map[string]string)
 	for _, li := range lineItems {
-		servicesSet[li.service] = struct{}{}
+		servicesSet[bomAdvisoryServiceToken(li.service)] = struct{}{}
 		if !providersInBoM[li.provider] {
 			providersInBoM[li.provider] = true
 			providerFirstRegion[li.provider] = li.region
