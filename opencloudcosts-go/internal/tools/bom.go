@@ -273,7 +273,8 @@ func (li bomLineItem) toMap() map[string]any {
 // whether one was present (a whitespace-only value does not count). Shared
 // by processBOMItems and HandleCompareBOMRegions's partition loop
 // (compare_bom_regions.go) so both treat "is this a raw-SKU item" — and the
-// exact string handed to the AWS SKU resolver — identically.
+// exact string handed to the resolved (AWS or GCP) SKU lookup provider —
+// identically.
 func rawBOMSKU(item map[string]any) (string, bool) {
 	sku, _ := item["sku"].(string)
 	sku = strings.TrimSpace(sku)
@@ -363,10 +364,11 @@ func processBOMItems(
 		}
 		description, _ := item["description"].(string)
 
-		// Raw-SKU items (issue #31, RC3-004) bypass the PricingSpec path
-		// entirely — they carry a CUR-style usage-type/SKU string instead of
-		// a domain/resource_type spec, so resolve them via the same AWS SKU
-		// lookup get_price_by_sku uses.
+		// Raw-SKU items (issue #31, RC3-004; GCP parity RC3-015) bypass the
+		// PricingSpec path entirely — they carry a raw provider-native
+		// SKU/usage-type string instead of a domain/resource_type spec, so
+		// resolve them via the same provider-agnostic SKU lookup
+		// get_price_by_sku uses.
 		if sku, ok := rawBOMSKU(item); ok {
 			li, errMsg := resolveBOMSKUItem(ctx, provs, label, item, sku, quantity, hoursPerMonth, sizeGB, description)
 			if errMsg != "" {

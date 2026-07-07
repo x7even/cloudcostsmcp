@@ -1,13 +1,17 @@
-// sku_lookup.go implements the get_price_by_sku tool: given a raw AWS
-// usage-type/SKU string exactly as it appears in a Cost & Usage Report (CUR)
-// export (e.g. "CAN1-BoxUsage:r5a.8xlarge"), resolve its price across a list
-// of target regions.
+// sku_lookup.go implements the get_price_by_sku tool: given a raw
+// provider-native SKU/usage-type string exactly as it appears in a billing
+// export (e.g. AWS CUR's "CAN1-BoxUsage:r5a.8xlarge", or a GCP Cloud Billing
+// Catalog skuId), resolve its price across a list of target regions. Both AWS
+// and GCP are supported (see resolveSKULookupProviderFromMap below); other
+// providers (e.g. Azure) are rejected with a structured "unsupported_provider"
+// error.
 //
 // This file is deliberately kept separate from lookup.go: lookup.go only
 // imports the provider-agnostic internal/providers package, while this file
-// must import the concrete internal/providers/aws package to type-assert the
-// AWS-specific core logic (LookupSKUAcrossRegions in aws_sku_lookup.go).
-// Isolating that import here keeps lookup.go provider-agnostic.
+// must import the concrete internal/providers/aws and internal/providers/gcp
+// packages to type-switch each one to the provider-agnostic
+// skulookup.SKULookupProvider interface (see resolveSKULookupProviderFromMap).
+// Isolating those imports here keeps lookup.go provider-agnostic.
 package tools
 
 import (
@@ -28,7 +32,7 @@ import (
 )
 
 // --------------------------------------------------------------------------
-// GetPriceBySKU — raw AWS usage-type/SKU lookup
+// GetPriceBySKU — raw provider-native SKU/usage-type lookup (AWS, GCP)
 // --------------------------------------------------------------------------
 
 // GetPriceBySKUInput is the typed input for the get_price_by_sku tool.
@@ -83,12 +87,13 @@ func buildSKUAlternateList(prices []models.NormalizedPrice) []map[string]any {
 }
 
 // HandleGetPriceBySKU implements the get_price_by_sku tool. It resolves a raw
-// AWS usage-type/SKU string (as it appears verbatim in a CUR export) against
-// each requested region's pricing catalog, and shapes the response to mirror
-// compare_prices: a cheapest-first sorted list of matched regions, an
-// explicit list of regions where the SKU has no catalog mapping (checked, not
-// found — distinct from a fetch failure), and an optional baseline-region
-// delta.
+// provider-native SKU/usage-type string (an AWS usage-type string as it
+// appears verbatim in a CUR export, or a GCP Cloud Billing Catalog skuId)
+// against each requested region's pricing catalog, and shapes the response
+// to mirror compare_prices: a cheapest-first sorted list of matched regions,
+// an explicit list of regions where the SKU has no catalog mapping (checked,
+// not found — distinct from a fetch failure), and an optional
+// baseline-region delta.
 func (h *Handler) HandleGetPriceBySKU(
 	ctx context.Context,
 	_ *mcp.CallToolRequest,
@@ -514,13 +519,14 @@ type GetPricesBySKUInput struct {
 }
 
 // HandleGetPricesBySKU implements the get_prices_by_sku tool: a batch form
-// of get_price_by_sku for resolving many raw AWS usage-type/SKU strings
-// (e.g. every distinct line item in a CUR export) against the same set of
-// target regions in one call. It reuses resolveSKUPriceEntry — the exact
-// same per-SKU resolution and response-shaping logic get_price_by_sku uses
-// — for each sku, fanned out concurrently (bounded by skuBatchFanoutLimit)
-// so repeated (service, region) catalog fetches across SKUs benefit from the
-// process-lifetime skuCatalogCache memoization.
+// of get_price_by_sku for resolving many raw provider-native SKU/usage-type
+// strings (e.g. every distinct line item in a CUR export, or a batch of GCP
+// skuIds) against the same set of target regions in one call. It reuses
+// resolveSKUPriceEntry — the exact same per-SKU resolution and
+// response-shaping logic get_price_by_sku uses — for each sku, fanned out
+// concurrently (bounded by skuBatchFanoutLimit) so repeated (service, region)
+// catalog fetches across SKUs benefit from the process-lifetime
+// skuCatalogCache memoization.
 //
 // Each entry in "results" has exactly the shape a standalone get_price_by_sku
 // call for that sku would return (including its own ambiguous_in/
@@ -554,7 +560,7 @@ func (h *Handler) HandleGetPricesBySKU(
 	if len(in.SKUs) == 0 {
 		return errResult(map[string]any{
 			"error":   "skus_required",
-			"message": "skus must contain at least one raw AWS usage-type/SKU string",
+			"message": "skus must contain at least one raw SKU/usage-type string",
 		}), nil, nil
 	}
 	if len(in.SKUs) > maxSKUsPerBatch {

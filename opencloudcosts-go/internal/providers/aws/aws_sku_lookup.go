@@ -488,11 +488,16 @@ type SKULookupResult = skulookup.SKULookupResult
 // semaphore of 10, matching the pattern used by compare_prices in
 // tools/lookup.go).
 //
-// providerName is validated against "aws" as defense-in-depth: this whole
-// feature is AWS-only (raw usage-type strings are an AWS CUR concept with no
-// GCP/Azure equivalent), and the caller — the tool-handler layer added in a
-// later phase — is expected to reject non-AWS providers before ever reaching
-// this AWS-package method, but this function does not assume that happened.
+// providerName is validated against "aws" as defense-in-depth: this function
+// only knows how to parse AWS's usage-type/SKU string shape (GCP's raw-SKU
+// lookup is a separate implementation, internal/providers/gcp/
+// gcp_sku_lookup.go, behind the same skulookup.SKULookupProvider interface —
+// get_price_by_sku itself supports both). The tool-handler layer
+// (internal/tools, see resolveSKULookupProviderFromMap) already resolves
+// providerName to the correct concrete provider before ever reaching this
+// AWS-package method — LookupSKUAcrossRegionsGeneric below always calls this
+// with providerName hardcoded to "aws" — but this function does not assume
+// that happened.
 //
 // serviceHint, if non-empty, is tried first for every region. If the
 // usage-type pattern also allows inferring a servicecode (see
@@ -527,8 +532,9 @@ func (p *Provider) LookupSKUAcrossRegions(
 		return nil, &SKULookupError{
 			Code: SKUErrUnsupportedProvider,
 			Message: fmt.Sprintf(
-				"get_price_by_sku only supports provider=\"aws\" (got %q) — raw AWS usage-type/SKU "+
-					"strings are an AWS Cost & Usage Report concept with no GCP/Azure equivalent",
+				"this raw-SKU lookup path only supports provider=\"aws\" (got %q) — raw AWS "+
+					"usage-type/SKU strings are an AWS Cost & Usage Report concept; GCP raw-SKU "+
+					"lookup is handled by a separate implementation",
 				providerName,
 			),
 		}
