@@ -1,17 +1,18 @@
 // sku_lookup.go implements the get_price_by_sku tool: given a raw
 // provider-native SKU/usage-type string exactly as it appears in a billing
-// export (e.g. AWS CUR's "CAN1-BoxUsage:r5a.8xlarge", or a GCP Cloud Billing
-// Catalog skuId), resolve its price across a list of target regions. Both AWS
-// and GCP are supported (see resolveSKULookupProviderFromMap below); other
-// providers (e.g. Azure) are rejected with a structured "unsupported_provider"
-// error.
+// export (e.g. AWS CUR's "CAN1-BoxUsage:r5a.8xlarge", a GCP Cloud Billing
+// Catalog skuId, or an Azure Retail Prices meterId), resolve its price across
+// a list of target regions. AWS, GCP, and Azure are all supported (see
+// resolveSKULookupProviderFromMap below); any other provider name is rejected
+// with a structured "unsupported_provider" error.
 //
 // This file is deliberately kept separate from lookup.go: lookup.go only
 // imports the provider-agnostic internal/providers package, while this file
-// must import the concrete internal/providers/aws and internal/providers/gcp
-// packages to type-switch each one to the provider-agnostic
-// skulookup.SKULookupProvider interface (see resolveSKULookupProviderFromMap).
-// Isolating those imports here keeps lookup.go provider-agnostic.
+// must import the concrete internal/providers/aws, internal/providers/gcp,
+// and internal/providers/azure packages to type-switch each one to the
+// provider-agnostic skulookup.SKULookupProvider interface (see
+// resolveSKULookupProviderFromMap). Isolating those imports here keeps
+// lookup.go provider-agnostic.
 package tools
 
 import (
@@ -27,12 +28,13 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/models"
 	awsprovider "github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/providers/aws"
+	azureprovider "github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/providers/azure"
 	gcpprovider "github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/providers/gcp"
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/skulookup"
 )
 
 // --------------------------------------------------------------------------
-// GetPriceBySKU — raw provider-native SKU/usage-type lookup (AWS, GCP)
+// GetPriceBySKU — raw provider-native SKU/usage-type lookup (AWS, GCP, Azure)
 // --------------------------------------------------------------------------
 
 // GetPriceBySKUInput is the typed input for the get_price_by_sku tool.
@@ -113,12 +115,13 @@ func (h *Handler) HandleGetPriceBySKU(
 	}
 
 	// The provider map is keyed by the canonical lowercase provider name
-	// (e.g. "aws"/"gcp", populated in cmd/opencloudcosts/main.go). Lowercase
-	// the lookup key so a caller passing "AWS" still resolves the provider,
-	// but pass providerName through to the core function's own validation so
-	// an unsupported provider (e.g. "azure") produces the core function's
-	// honest, structured "unsupported_provider" error rather than a generic
-	// "not configured" message.
+	// (e.g. "aws"/"gcp"/"azure", populated in cmd/opencloudcosts/main.go).
+	// Lowercase the lookup key so a caller passing "AWS" still resolves the
+	// provider, but pass providerName through to the core function's own
+	// validation so an unsupported provider (e.g. "oci", not one of
+	// aws/gcp/azure) produces the core function's honest, structured
+	// "unsupported_provider" error rather than a generic "not configured"
+	// message.
 	lookupP, errOut := resolveSKULookupProviderFromMap(h.providers, providerName, "get_price_by_sku")
 	if errOut != nil {
 		return errResult(errOut), nil, nil
@@ -132,10 +135,10 @@ func (h *Handler) HandleGetPriceBySKU(
 // remaining callers once get_price_by_sku/get_prices_by_sku/resolveBOMSKUItem
 // were all migrated to this function). It resolves providerName to any concrete
 // provider that implements skulookup.SKULookupProvider (today,
-// *awsprovider.Provider and *gcpprovider.Provider), rather than only ever
-// accepting AWS. get_price_by_sku/get_prices_by_sku (this file) and
-// resolveBOMSKUItem (bom.go) use this so raw-SKU lookups work uniformly for
-// both providers instead of hardcoding *awsprovider.Provider.
+// *awsprovider.Provider, *gcpprovider.Provider, and *azureprovider.Provider),
+// rather than only ever accepting AWS. get_price_by_sku/get_prices_by_sku
+// (this file) and resolveBOMSKUItem (bom.go) use this so raw-SKU lookups
+// work uniformly across providers instead of hardcoding *awsprovider.Provider.
 func resolveSKULookupProviderFromMap(provs map[string]Provider, providerName, toolName string) (skulookup.SKULookupProvider, map[string]any) {
 	pvdr := provs[strings.ToLower(providerName)]
 	if pvdr == nil {
@@ -148,6 +151,8 @@ func resolveSKULookupProviderFromMap(provs map[string]Provider, providerName, to
 	case *awsprovider.Provider:
 		return p, nil
 	case *gcpprovider.Provider:
+		return p, nil
+	case *azureprovider.Provider:
 		return p, nil
 	default:
 		return nil, map[string]any{
@@ -426,8 +431,8 @@ func (h *Handler) resolveSKUPriceEntry(
 	// on receiving) both keys, even when the parsed usage-type string happens
 	// to carry no prefix ("") — so gate on provider, not on string-emptiness,
 	// which would otherwise also suppress a legitimately-empty AWS prefix.
-	// GCP never populates these fields at all, so they're omitted for GCP
-	// rather than emitted as misleading empty strings.
+	// GCP and Azure never populate these fields at all, so they're omitted
+	// for both rather than emitted as misleading empty strings.
 	if strings.EqualFold(providerName, "aws") {
 		out["usage_type_prefix"] = result.UsageTypePrefix
 		out["usage_type_suffix"] = result.UsageTypeSuffix

@@ -273,8 +273,8 @@ func (li bomLineItem) toMap() map[string]any {
 // whether one was present (a whitespace-only value does not count). Shared
 // by processBOMItems and HandleCompareBOMRegions's partition loop
 // (compare_bom_regions.go) so both treat "is this a raw-SKU item" — and the
-// exact string handed to the resolved (AWS or GCP) SKU lookup provider —
-// identically.
+// exact string handed to the resolved (AWS, GCP, or Azure) SKU lookup
+// provider — identically.
 func rawBOMSKU(item map[string]any) (string, bool) {
 	sku, _ := item["sku"].(string)
 	sku = strings.TrimSpace(sku)

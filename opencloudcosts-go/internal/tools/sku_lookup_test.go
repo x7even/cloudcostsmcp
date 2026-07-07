@@ -757,15 +757,21 @@ func TestHandleGetPriceBySKU_WrongProvider(t *testing.T) {
 	}
 }
 
-// TestHandleGetPriceBySKU_WrongProvider_AWSCoreValidation verifies that a
-// provider registered under a non-aws/non-gcp key (e.g. "azure" wired to a
-// provider that does NOT implement skulookup.SKULookupProvider, exactly like
-// production's real Azure provider) is still rejected with
-// "unsupported_provider" — via resolveSKULookupProviderFromMap's type-switch
-// default case, not a nil-map miss.
+// TestHandleGetPriceBySKU_WrongProvider_TypeSwitchDefault verifies that a
+// provider registered under some key, but whose concrete type does NOT
+// implement skulookup.SKULookupProvider (mockProvider implements only the
+// base tools.Provider interface — see lookup_test.go), is still rejected
+// with "unsupported_provider" via resolveSKULookupProviderFromMap's
+// type-switch default case, not a nil-map miss. This is a generic
+// unrecognized-provider-type scenario; it does not claim to model any real
+// provider. AWS, GCP, and Azure are all now genuinely supported by
+// get_price_by_sku (each implements skulookup.SKULookupProvider and is
+// covered by its own provider's *_sku_lookup_test.go), so the key below is
+// deliberately a fictitious, never-registered-in-production provider name
+// to avoid implying otherwise.
 //
 // NOTE: this test previously registered the same *awsprovider.Provider
-// instance under both "aws" and "azure" keys to reach a defense-in-depth
+// instance under both "aws" and this key to reach a defense-in-depth
 // providerName guard inside AWS's own core LookupSKUAcrossRegions (which
 // rejects providerName values other than "aws"). That guard is no longer
 // reachable through the provider-agnostic path: LookupSKUAcrossRegionsGeneric
@@ -777,13 +783,14 @@ func TestHandleGetPriceBySKU_WrongProvider(t *testing.T) {
 // interface — a real (if low-impact, since production only ever registers
 // each provider under its own canonical key) regression introduced by the
 // RC3-015 hoist, flagged here rather than papered over. This test now
-// exercises the guard that actually enforces the "azure" rejection in
-// production: the provs-map type switch in resolveSKULookupProviderFromMap.
-func TestHandleGetPriceBySKU_WrongProvider_AWSCoreValidation(t *testing.T) {
-	h := tools.New(map[string]tools.Provider{"azure": &mockProvider{name: "azure"}})
+// exercises the guard that actually enforces rejection of an
+// unrecognized-type provider in production: the provs-map type switch in
+// resolveSKULookupProviderFromMap.
+func TestHandleGetPriceBySKU_WrongProvider_TypeSwitchDefault(t *testing.T) {
+	h := tools.New(map[string]tools.Provider{"faketestcloud": &mockProvider{name: "faketestcloud"}})
 
 	resp := callGetPriceBySKU(t, h, tools.GetPriceBySKUInput{
-		Provider: "azure",
+		Provider: "faketestcloud",
 		SKU:      "BoxUsage:r6id.24xlarge",
 		Regions:  []string{"us-east-1"},
 	})
@@ -869,6 +876,48 @@ func TestHandleGetPriceBySKU_GCPHappyPath(t *testing.T) {
 	}
 	if _, ok := resp["usage_type_suffix"]; ok {
 		t.Errorf("expected usage_type_suffix to be omitted for a GCP result, got present: %v", resp["usage_type_suffix"])
+	}
+}
+
+// --------------------------------------------------------------------------
+// Azure raw-SKU lookup (SKU-lookup-tool wiring, third provider alongside AWS/GCP)
+// --------------------------------------------------------------------------
+
+// TestHandleGetPriceBySKU_AzureHappyPath verifies an Azure Retail Prices API
+// meterId resolves through HandleGetPriceBySKU against a real
+// *azureprovider.Provider (proving resolveSKULookupProviderFromMap's
+// type-switch reaches its *azureprovider.Provider case, not just the
+// AWS/GCP cases), and that the AWS-only usage_type_prefix/usage_type_suffix
+// fields are omitted entirely from the response for an Azure result — the
+// Azure counterpart to TestHandleGetPriceBySKU_GCPHappyPath above.
+func TestHandleGetPriceBySKU_AzureHappyPath(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(azureSKUFixtureJSON(
+			"00000000-0000-0000-0000-000000000000", "eastus", "D4s v3", "Virtual Machines Dsv3 Series", "Virtual Machines", 0.192)))
+	}))
+	defer server.Close()
+	realAzure := newAzureSKUTestProvider(server)
+	h := tools.New(map[string]tools.Provider{"azure": realAzure})
+
+	resp := callGetPriceBySKU(t, h, tools.GetPriceBySKUInput{
+		Provider: "azure",
+		SKU:      "00000000-0000-0000-0000-000000000000",
+		Regions:  []string{"eastus"},
+	})
+
+	if resp["error"] != nil {
+		t.Fatalf("expected no error, got: %v", resp)
+	}
+	if resp["cheapest_region"] != "eastus" {
+		t.Errorf("expected cheapest_region eastus, got %v", resp["cheapest_region"])
+	}
+	if _, ok := resp["usage_type_prefix"]; ok {
+		t.Errorf("expected usage_type_prefix to be omitted for an Azure result, got present: %v", resp["usage_type_prefix"])
+	}
+	if _, ok := resp["usage_type_suffix"]; ok {
+		t.Errorf("expected usage_type_suffix to be omitted for an Azure result, got present: %v", resp["usage_type_suffix"])
 	}
 }
 

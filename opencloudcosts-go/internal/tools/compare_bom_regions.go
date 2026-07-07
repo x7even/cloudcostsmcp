@@ -10,16 +10,17 @@
 // items are reported once at the top level, tagged "not_supported", rather
 // than guessed or dropped silently.
 //
-// Raw-SKU items (RC3-015, GCP parity) additionally accept provider=="gcp" —
-// resolveBOMSKUItem (bom.go) already resolves either provider generically via
-// resolveSKULookupProviderFromMap, so no per-region plumbing here needs to
-// change, only the partitioning check below. Because a single
-// compare_bom_regions call's resolvable items can therefore now span more
-// than one provider (e.g. an AWS EC2 SKU and a GCP Compute Engine SKU in the
-// same BoM), and a region's regionResult aggregates cost across every
-// resolvable item for that region, there is no longer one single "the"
-// provider to pass to regionDisplayNameFn — see the resolvableProviders
-// computation and its use below.
+// Raw-SKU items (RC3-015, GCP parity; extended to Azure alongside the
+// sku_lookup tool-layer wiring) additionally accept provider=="gcp" or
+// provider=="azure" — resolveBOMSKUItem (bom.go) already resolves any of
+// these providers generically via resolveSKULookupProviderFromMap, so no
+// per-region plumbing here needs to change, only the partitioning check
+// below. Because a single compare_bom_regions call's resolvable items can
+// therefore now span more than one provider (e.g. an AWS EC2 SKU and a GCP
+// Compute Engine SKU in the same BoM), and a region's regionResult
+// aggregates cost across every resolvable item for that region, there is no
+// longer one single "the" provider to pass to regionDisplayNameFn — see the
+// resolvableProviders computation and its use below.
 package tools
 
 import (
@@ -63,24 +64,25 @@ func (h *Handler) HandleCompareBOMRegions(
 	}
 
 	// Partition items up front: v1 resolves AWS PricingSpec-dict items and
-	// AWS/GCP raw-SKU items. Unsupported items are reported once (provider
-	// does not vary per region), not re-derived on every region iteration.
+	// AWS/GCP/Azure raw-SKU items. Unsupported items are reported once
+	// (provider does not vary per region), not re-derived on every region
+	// iteration.
 	var resolvable []map[string]any
 	var notSupported []map[string]any
 	for idx, item := range in.Items {
 		label := fmt.Sprintf("Item %d", idx+1)
 
 		// Raw-SKU items are implicitly AWS (same default get_price_by_sku
-		// applies to a missing provider) and, as of RC3-015, also accept an
-		// explicit provider=="gcp" — resolveBOMSKUItem resolves either
-		// provider generically. An item naming any other provider is routed
-		// to notSupported here, exactly like any other unsupported item,
-		// rather than being rejected once per region inside processBOMItems
-		// below.
+		// applies to a missing provider) and also accept an explicit
+		// provider=="gcp" (RC3-015) or provider=="azure" — resolveBOMSKUItem
+		// resolves any of these providers generically. An item naming any
+		// other provider is routed to notSupported here, exactly like any
+		// other unsupported item, rather than being rejected once per region
+		// inside processBOMItems below.
 		if _, ok := rawBOMSKU(item); ok {
 			pvdrName, hasPvdr := item["provider"].(string)
 			if !hasPvdr || pvdrName == "" || strings.EqualFold(pvdrName, compareBOMRegionsV1Provider) ||
-				strings.EqualFold(pvdrName, "gcp") {
+				strings.EqualFold(pvdrName, "gcp") || strings.EqualFold(pvdrName, "azure") {
 				resolvable = append(resolvable, item)
 				continue
 			}
@@ -88,7 +90,7 @@ func (h *Handler) HandleCompareBOMRegions(
 				"item":     label,
 				"provider": pvdrName,
 				"source":   "not_supported",
-				"reason":   "compare_bom_regions raw-SKU items support aws and gcp providers only — this provider is not yet supported.",
+				"reason":   "compare_bom_regions raw-SKU items support aws, gcp, and azure providers only — this provider is not yet supported.",
 			})
 			continue
 		}

@@ -410,6 +410,14 @@ type azureRetailItem struct {
 	UnitOfMeasure    string  `json:"unitOfMeasure"`
 	TierMinimumUnits float64 `json:"tierMinimumUnits"`
 	Type             string  `json:"type"`
+	// IsPrimaryMeterRegion distinguishes the canonical cross-region row for a
+	// given meterId from duplicate rows the live Azure Retail Prices API
+	// serves for the same meter in more than one region entry (required for
+	// raw-meterId lookup disambiguation — see azure_sku_lookup.go). Not used
+	// by any pre-existing per-domain fetch in this file (those all filter by
+	// armRegionName server-side already, so the duplicate-row shape never
+	// surfaces), but it is a real field the live API returns.
+	IsPrimaryMeterRegion bool `json:"isPrimaryMeterRegion"`
 }
 
 // azureRetailResponse is the top-level API response.
@@ -537,6 +545,15 @@ func (p *Provider) SupportedTerms(domain models.PricingDomain, service string) [
 // HTTP helpers
 // --------------------------------------------------------------------------
 
+// azureMaxPageSize is the page size ($top) ceiling for a single Azure Retail
+// Prices API request. The live API actually serves up to 1000 rows per page
+// (verified live) — this previously hard-capped at 100 regardless of the
+// maxResults argument, which cost every caller extra round trips for no
+// reason, and is far too small for the new SKU-lookup call site
+// (azure_sku_lookup.go), whose single meterId fetch must see every
+// region/type/tier row for that meter in as few pages as possible.
+const azureMaxPageSize = 1000
+
 // fetchPrices calls the Azure Retail Prices API with the given filters and
 // follows pagination until maxResults are collected.
 func (p *Provider) fetchPrices(ctx context.Context, filters map[string]string, maxResults int) ([]azureRetailItem, error) {
@@ -547,8 +564,8 @@ func (p *Provider) fetchPrices(ctx context.Context, filters map[string]string, m
 	filterStr := strings.Join(parts, " and ")
 
 	top := maxResults
-	if top > 100 {
-		top = 100
+	if top > azureMaxPageSize {
+		top = azureMaxPageSize
 	}
 	rawURL := fmt.Sprintf("%s?api-version=%s&$filter=%s&$top=%d",
 		p.baseURL, apiVersion, url.QueryEscape(filterStr), top)
