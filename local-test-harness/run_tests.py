@@ -1426,6 +1426,426 @@ TEST_PROMPTS = {
         " Standard, and state whether any of the three test volumes crosses"
         " that threshold."
     ),
+    # -----------------------------------------------------------------------
+    # Raw-SKU lookup — AWS raw-SKU success (RSKU)
+    # -----------------------------------------------------------------------
+    "RSKU_AWS_OK1": (
+        "Our AWS Cost and Usage Report has a line item with usage type \"BoxUsage:c8g.xlarge\" "
+        "billed in us-east-1. What's the on-demand hourly rate for that usage type so I can "
+        "check it against what we were actually charged?"
+    ),
+    "RSKU_AWS_OK2": (
+        "I'm reconciling our EC2 bill and one CUR row shows usage type BoxUsage:m6a.8xlarge in "
+        "us-east-1. Can you pull the current public on-demand rate for that exact usage type "
+        "and tell me if it lines up with $1.3824/hr?"
+    ),
+    "RSKU_AWS_OK3": (
+        "In our billing export there's a usage type of BoxUsage:c7i.2xlarge running in "
+        "us-east-1. Can you give me both the hourly rate and what that works out to per month "
+        "if it runs 24/7?"
+    ),
+    # -----------------------------------------------------------------------
+    # Raw-SKU lookup — Azure no-mapping (RSKU)
+    # -----------------------------------------------------------------------
+    "RSKU_AZ_NF1": (
+        "Our Azure billing export has a line item with meter ID "
+        "00000000-0000-0000-0000-000000000000 in the eastus region, but I can't find a current "
+        "rate for it anywhere. What does this meter ID actually correspond to, and what's the "
+        "current price?"
+    ),
+    # -----------------------------------------------------------------------
+    # Raw-SKU lookup — Azure raw-SKU success (RSKU)
+    # -----------------------------------------------------------------------
+    "RSKU_AZ_OK1": (
+        "I'm reconciling our Azure CUR-style usage export and one line shows meter ID "
+        "3da19ca3-6007-4a29-89ea-cab10c2010ed for the eastus region. What VM SKU is that, and "
+        "what's the current hourly rate?"
+    ),
+    # -----------------------------------------------------------------------
+    # Raw-SKU lookup — ambiguous match (RSKU)
+    # -----------------------------------------------------------------------
+    "RSKU_AWS_AMB1": (
+        "My AWS Cost and Usage Report has a line item with usage type just \"LCUUsage\" in "
+        "us-east-1 — no BoxUsage prefix, and the export doesn't say which load balancer it's "
+        "billing. What's the hourly rate for that?"
+    ),
+    "RSKU_AWS_AMB2": (
+        "I'm reconciling my AWS bill and see a CUR line item with usage type "
+        "\"InstanceUsage:db.r6g.large\" in us-east-1 — that's my MySQL RDS instance, right? "
+        "What's the hourly rate for it?"
+    ),
+    "RSKU_GCP_AMB1": (
+        "My GCP billing export has a Cloud KMS line item with skuId \"1017-1BAF-7159\" — what's "
+        "the rate for those HSM asymmetric key versions?"
+    ),
+    "RSKU_GCP_AMB2": (
+        "There's a GCP Cloud KMS charge on my bill for skuId \"4A51-C764-8B93\", described as "
+        "\"Active Single Tenant HSM key versions (above 15000)\" — what does that cost per month?"
+    ),
+    "RSKU_AZ_AMB1": (
+        "My Azure invoice has a Network Watcher connection-monitor charge in West US with meter "
+        "ID \"ba2b4df6-e886-4cf2-9818-33f27d22b3cf\" — what's the per-unit rate for that?"
+    ),
+    "RSKU_AZ_AMB2": (
+        "My Azure invoice has an Azure Database for MySQL Single Server (Gen5, General Purpose) "
+        "compute charge in UK South with meter ID \"ace03b73-4864-4a8c-afcb-55ddf91e010e\" — "
+        "what's the hourly compute rate for that vCore?"
+    ),
+    # -----------------------------------------------------------------------
+    # Raw-SKU lookup — tiered rate (RSKU)
+    # -----------------------------------------------------------------------
+    "RSKU_GCP_TIER1": (
+        "Our GCP billing export has a Cloud KMS line item with SKU ID 77F8-D8AF-3CCE for "
+        "Autokey key-versions. Right now we're under 100 key versions a month and it's showing "
+        "$0. If our key-version count grows past 100 next quarter, does the per-unit rate "
+        "actually kick in at that point, or does this SKU stay free no matter how much we use?"
+    ),
+    "RSKU_GCP_TIER2": (
+        "We're reconciling a Cloud KMS charge with SKU ID 1017-1BAF-7159 for HSM asymmetric key "
+        "versions. Our HSM key usage is ramping up fast — is there a volume discount that kicks "
+        "in once we cross 2000 key versions in a month, or does this SKU charge the same rate "
+        "no matter how much we use?"
+    ),
+    "RSKU_AZ_TIER1": (
+        "On our Azure invoice, meter ID 6bd64e8e-5cb9-49d3-893d-800c9b28dca3 shows up for "
+        "standard outbound data transfer in southcentralus. Some months we push well past "
+        "10,000 GB of egress — does the per-GB rate step down once we hit higher volumes, or is "
+        "this a single flat rate no matter how much we send?"
+    ),
+    "RSKU_AZ_TIER2": (
+        "We have meter ID 9995d93a-7d35-4d3f-9c69-7a7fea447ef4 on our Azure bill for data "
+        "transfer out of mexicocentral. Our egress there is climbing past 50,000 GB some months "
+        "— is there a lower per-GB rate once we cross that volume, or does this meter bill flat "
+        "regardless of usage?"
+    ),
+    # -----------------------------------------------------------------------
+    # Raw-SKU lookup — batch match (RSKU)
+    # -----------------------------------------------------------------------
+    "RSKU_AWS_BATCH1": (
+        "I'm reconciling our AWS Cost and Usage Report for the compute team and I've got a few "
+        "EC2 usage-type line items I need current on-demand rates for, all in us-east-1: "
+        "BoxUsage:c8g.xlarge and BoxUsage:m6a.8xlarge. Can you price both out for me in one go?"
+    ),
+    "RSKU_AWS_BATCH2": (
+        "Our finance team pulled these three EC2 usage-type codes off the billing export and "
+        "wants a per-hour rate check for us-east-1: BoxUsage:c8g.xlarge, BoxUsage:c7i.2xlarge, "
+        "and BoxUsage:m6a.8xlarge. Can you pull current on-demand pricing for all three at "
+        "once?"
+    ),
+    "RSKU_AWS_BATCH3": (
+        "Quick sanity check on two line items from our AWS bill, both us-east-1: "
+        "BoxUsage:c7i.2xlarge and BoxUsage:c8g.xlarge. What's the hourly rate on each?"
+    ),
+    "RSKU_GCP_BATCH1": (
+        "My GCP Cloud Billing export has three SKU IDs I don't recognize, all billed against "
+        "us-central1: 77F8-D8AF-3CCE, 88D6-F2EE-C781, and C054-7F72-A02E. Can you tell me what "
+        "each one costs?"
+    ),
+    "RSKU_GCP_BATCH2": (
+        "I'm reconciling a GCP invoice and see SKU IDs 77F8-D8AF-3CCE and C054-7F72-A02E on the "
+        "europe-west1 line items. What's the rate for each of these?"
+    ),
+    "RSKU_GCP_BATCH3": (
+        "Two SKU IDs on my GCP bill for us-east1 that I can't match to anything internally: "
+        "88D6-F2EE-C781 and C054-7F72-A02E. What am I being charged for these, and what's the "
+        "per-unit rate?"
+    ),
+    "RSKU_AZURE_BATCH1": (
+        "My Azure cost export for eastus this month has two meter IDs I need priced out: "
+        "3da19ca3-6007-4a29-89ea-cab10c2010ed and cf64c470-a287-5429-8dd7-756a877824a0. Can you "
+        "look both up and tell me the hourly rate for each?"
+    ),
+    "RSKU_AZURE_BATCH2": (
+        "I'm reconciling an Azure invoice for eastus and don't recognize two of the meter IDs "
+        "on it: cf64c470-a287-5429-8dd7-756a877824a0 and 93a6a529-4f49-47cb-9b1e-db9e5f23263f. "
+        "Can you pull the current rate for each?"
+    ),
+    "RSKU_AZURE_BATCH3": (
+        "Our Azure cost management export for eastus lists three distinct meterId values this "
+        "cycle: 3da19ca3-6007-4a29-89ea-cab10c2010ed, cf64c470-a287-5429-8dd7-756a877824a0, and "
+        "93a6a529-4f49-47cb-9b1e-db9e5f23263f. Can you get me the current price for each one so "
+        "I can match them to the right line items?"
+    ),
+    # -----------------------------------------------------------------------
+    # Raw-SKU lookup — batch not-found (RSKU)
+    # -----------------------------------------------------------------------
+    "RSKU_AWS_BATCH4": (
+        "I've got some odd EC2 usage-type strings in our Cost and Usage Report that I don't "
+        "recognize from any instance family we run: BoxUsage:zz99.999xlarge and "
+        "BoxUsage:nonexistent.type, both in us-east-1. Can you check what these actually cost, "
+        "or flag if they're not real instance types?"
+    ),
+    "RSKU_AWS_BATCH5": (
+        "Two more mystery line items showed up on the export this month, both us-east-1: "
+        "BoxUsage:zz99.999xlarge and CAN1-BoxUsage:totallyfake.4xlarge. Neither matches any "
+        "instance type our team has ever provisioned — can you look them up and tell me what "
+        "they resolve to?"
+    ),
+    "RSKU_AWS_BATCH6": (
+        "Trying to true up last month's compute spend and three of the usage-type codes on the "
+        "report don't ring a bell: BoxUsage:nonexistent.type, "
+        "CAN1-BoxUsage:totallyfake.4xlarge, and BoxUsage:zz99.999xlarge, all us-east-1. Can you "
+        "check current pricing for these and let me know if any of them just aren't real SKUs?"
+    ),
+    "RSKU_GCP_BATCH4": (
+        "My GCP billing export shows SKU IDs 0000-0000-0000 and FFFF-FFFF-FFFF for us-central1, "
+        "and I can't find pricing for either one anywhere. Are these even real SKUs?"
+    ),
+    "RSKU_GCP_BATCH5": (
+        "I've got two mystery GCP SKU IDs off a europe-west1 line item: FFFF-FFFF-FFFF and "
+        "1234-5678-9ABC. Can you price these out for me?"
+    ),
+    "RSKU_GCP_BATCH6": (
+        "Three SKU IDs showed up on our GCP Cloud Billing export for us-central1 that don't "
+        "match anything in our records: 0000-0000-0000, 1234-5678-9ABC, and FFFF-FFFF-FFFF. "
+        "What do they cost?"
+    ),
+    "RSKU_AZURE_BATCH4": (
+        "There are two Azure meter IDs on my eastus billing export I can't find any pricing "
+        "documentation for: 00000000-0000-0000-0000-000000000000 and "
+        "11111111-1111-1111-1111-111111111111. Can you check whether either one actually maps "
+        "to a priced meter?"
+    ),
+    "RSKU_AZURE_BATCH5": (
+        "Two meter IDs on our Azure eastus export don't match anything I can find: "
+        "11111111-1111-1111-1111-111111111111 and 99999999-9999-9999-9999-999999999999. Can you "
+        "confirm whether these are real billable meters or not?"
+    ),
+    "RSKU_AZURE_BATCH6": (
+        "My Azure billing export for eastus has three meter IDs that look suspicious to me: "
+        "00000000-0000-0000-0000-000000000000, 11111111-1111-1111-1111-111111111111, and "
+        "99999999-9999-9999-9999-999999999999. Can you check all three against current pricing "
+        "and tell me if any of them are legitimate?"
+    ),
+    # -----------------------------------------------------------------------
+    # Raw-SKU lookup — batch invalid SKU (RSKU)
+    # -----------------------------------------------------------------------
+    "RSKU_AWS_BATCH7": (
+        "I copy-pasted a couple of lines from our billing export into a spreadsheet and I think "
+        "the columns got scrambled — these don't look like real SKU codes to me: \"just some "
+        "random billing text\" and \"12345-not-a-sku\". Can you check whether either of these "
+        "actually prices out to anything on AWS?"
+    ),
+    "RSKU_AWS_BATCH8": (
+        "Our export tool spit out some garbage-looking entries this run — \"###invalid###\" and "
+        "\"12345-not-a-sku\" — instead of proper usage-type codes. Before I file a bug with the "
+        "export vendor, can you confirm these really aren't valid AWS SKUs?"
+    ),
+    "RSKU_AWS_BATCH9": (
+        "Three rows in our cost export look totally malformed to me — \"just some random billing "
+        "text\", \"###invalid###\", and \"12345-not-a-sku\" — none of them look like real AWS "
+        "usage-type codes. Can you try pricing them and tell me what's going on?"
+    ),
+    "RSKU_GCP_BATCH7": (
+        "Our finance team pasted these into the GCP cost spreadsheet as SKU references but they "
+        "don't look like real SKU IDs to me: not-a-real-sku and gcp-fake-id. Can you check what "
+        "they cost?"
+    ),
+    "RSKU_GCP_BATCH8": (
+        "Someone hand-typed these SKU references into our GCP billing tracker: gcp-fake-id and "
+        "???. Can you tell me what those bill at?"
+    ),
+    "RSKU_GCP_BATCH9": (
+        "I've got three garbled entries in a GCP billing export column that's supposed to hold "
+        "SKU IDs: not-a-real-sku, ???, and gcp-fake-id. What are their prices?"
+    ),
+    "RSKU_AZURE_BATCH7": (
+        "Our billing export tool spat out a couple of garbled meter ID values for the eastus "
+        "region: 'not-a-guid' and 'azure-meter-xyz'. Can you check if either of those actually "
+        "resolves to anything priced?"
+    ),
+    "RSKU_AZURE_BATCH8": (
+        "Two of the meter ID fields in our eastus Azure export got mangled somehow: "
+        "'azure-meter-xyz' and '!!!bad!!!'. Can you look these up and tell me what's going on?"
+    ),
+    "RSKU_AZURE_BATCH9": (
+        "I've got three meter ID values from an Azure eastus export that all look wrong to me: "
+        "'not-a-guid', 'azure-meter-xyz', and '!!!bad!!!'. Can you check whether any of these "
+        "actually price out to something real?"
+    ),
+    # -----------------------------------------------------------------------
+    # Raw-SKU lookup — batch mixed outcomes (RSKU)
+    # -----------------------------------------------------------------------
+    "RSKU_AWS_BATCH10": (
+        "I've got a batch of five weird line items from this month's Cost and Usage Report and "
+        "I want to reconcile all of them at once: BoxUsage:c8g.xlarge, BoxUsage:zz99.999xlarge, "
+        "BoxUsage:m6a.8xlarge, \"just some random billing text\", and "
+        "CAN1-BoxUsage:totallyfake.4xlarge, all us-east-1. Can you price out whichever of these "
+        "are real and flag anything that isn't?"
+    ),
+    "RSKU_GCP_BATCH10": (
+        "My GCP Cloud Billing export for us-central1 has three SKU IDs I need priced all at "
+        "once: 77F8-D8AF-3CCE, 0000-0000-0000, and gcp-fake-id. Can you look up all three and "
+        "tell me which ones actually resolve?"
+    ),
+    "RSKU_AZURE_BATCH10": (
+        "I need to reconcile three meter IDs from our Azure eastus export in one go: "
+        "3da19ca3-6007-4a29-89ea-cab10c2010ed, 00000000-0000-0000-0000-000000000000, and "
+        "'!!!bad!!!'. Can you check all three and tell me which ones are actually billable and "
+        "at what rate?"
+    ),
+    # -----------------------------------------------------------------------
+    # Raw-SKU lookup — Bill of Materials (RSKU)
+    # -----------------------------------------------------------------------
+    "RSKU_AWS_BOM1": (
+        "My AWS Cost and Usage Report shows a cluster made up entirely of BoxUsage:c8g.xlarge "
+        "line items across three different node groups — 4 of them, 2 of them, and 6 of them, "
+        "all in us-east-1. Can you total up what this whole fleet costs me per month?"
+    ),
+    "RSKU_AWS_BOM2": (
+        "I'm reconciling my AWS bill for a small web tier: the CUR shows 3x BoxUsage:c8g.xlarge "
+        "for the app servers, plus we're also provisioning 500GB of gp3 EBS storage for the "
+        "shared volume, all in us-east-1. What's the total monthly cost for this stack?"
+    ),
+    "RSKU_AWS_BOM3": (
+        "We're deciding where to place a pair of m6a.8xlarge instances — the CUR usage type is "
+        "BoxUsage:m6a.8xlarge. Can you compare the monthly cost of running 2 of these in "
+        "us-east-1 versus eu-west-1 and tell me how much cheaper or more expensive eu-west-1 "
+        "is?"
+    ),
+    "RSKU_AWS_BOM4": (
+        "I've got a batch-processing job that only runs 200 hours a month (not 24/7) using 5x "
+        "BoxUsage:c8g.xlarge instances in us-east-1. What would that actually cost me monthly "
+        "given the reduced runtime?"
+    ),
+    "RSKU_AWS_BOM5": (
+        "My billing export lists two compute line items I need to estimate together: 2x "
+        "BoxUsage:c7i.2xlarge and 1x BoxUsage:z9.fake, both in us-east-1. Can you total up what "
+        "this stack costs per month, and flag anything you can't price?"
+    ),
+    "RSKU_AWS_BOM6": (
+        "I'm sizing out a small stack: 2x BoxUsage:c8g.xlarge for the app tier, plus 1x "
+        "InstanceUsage:db.r6g.large for the database, both from the us-east-1 CUR. Does this "
+        "whole thing estimate cleanly, or is one of these line items going to need more info "
+        "from me?"
+    ),
+    "RSKU_AWS_BOM7": (
+        "For a burst-capacity plan I want to compare 3x BoxUsage:m6a.8xlarge across us-east-1, "
+        "us-west-2, and eu-west-1 — which region comes out cheapest for this instance type and "
+        "by how much per month?"
+    ),
+    "RSKU_GCP_BOM1": (
+        "My GCP Cloud Billing export has two Cloud KMS line items I want folded into a monthly "
+        "estimate, both in us-central1: skuId 77F8-D8AF-3CCE (active HSM symmetric key versions "
+        "for our Autokey setup) and skuId 88D6-F2EE-C781 (HSM symmetric crypto operations for "
+        "Autokey). Staging runs about 60 key versions and 8,000 crypto operations a month; "
+        "production runs about 400 key versions and 60,000 crypto operations a month. Can you "
+        "build a combined monthly cost estimate across both environments?"
+    ),
+    "RSKU_GCP_BOM2": (
+        "I'm putting together a monthly estimate for a small stack in us-central1: 3 "
+        "n2-standard-4 Compute Engine instances running 24/7, plus the external IP charge for "
+        "those same 3 VMs which shows up in my billing export as skuId C054-7F72-A02E, plus "
+        "200GB of pd-ssd persistent disk. What's the total monthly cost?"
+    ),
+    "RSKU_GCP_BOM3": (
+        "I have a Compute Engine external IP charge in my billing export — skuId C054-7F72-A02E "
+        "— for 5 VMs running 24/7, and I'm deciding which region to deploy in. Can you compare "
+        "the monthly cost of just that external IP charge across us-central1, europe-west4, and "
+        "asia-southeast1?"
+    ),
+    "RSKU_GCP_BOM4": (
+        "My dev team spins up 8 Compute Engine VMs with external IPs, but only during work "
+        "hours — about 300 hours a month per VM, not 24/7. The billing export tags this as "
+        "skuId C054-7F72-A02E in us-east1. What would the external IP portion of my monthly "
+        "bill look like for those 8 dev VMs at 300 hours/month each?"
+    ),
+    "RSKU_GCP_BOM5": (
+        "I'm building a monthly estimate for our GCP footprint in us-central1: 200 Cloud KMS "
+        "Autokey HSM key versions under skuId 77F8-D8AF-3CCE, plus another line item from the "
+        "billing export tagged skuId 1234-5678-90AB that I can't find documented anywhere. Can "
+        "you estimate the whole bundle and flag anything that doesn't resolve?"
+    ),
+    "RSKU_GCP_BOM6": (
+        "Our Cloud KMS Autokey usage varies a lot by environment. The billing export shows "
+        "skuId 88D6-F2EE-C781 (HSM symmetric crypto operations for Autokey), all in "
+        "us-central1, at roughly 2,000 operations/month in dev, 9,500 in staging, and 45,000 in "
+        "production. Can you build a combined monthly cost estimate across those three "
+        "environments?"
+    ),
+    "RSKU_GCP_BOM7": (
+        "We're deciding between us-central1 and europe-west4 for a new deployment: 2 "
+        "n2-standard-4 Compute Engine instances, 100GB of pd-balanced storage, and a Cloud KMS "
+        "Autokey line item from our billing export — skuId 77F8-D8AF-3CCE, 150 active HSM key "
+        "versions/month. Can you compare the total monthly cost of this whole stack across both "
+        "regions?"
+    ),
+    "RSKU_AZURE_BOM1": (
+        "My Azure cost export lists two Virtual Machines line items under the same Dv3 family: "
+        "meterId 3da19ca3-6007-4a29-89ea-cab10c2010ed for 3 on-demand instances, and meterId "
+        "cf64c470-a287-5429-8dd7-756a877824a0 for 2 Spot instances, both in eastus running "
+        "24/7. Can you estimate my total monthly bill for this VM fleet?"
+    ),
+    "RSKU_AZURE_BOM2": (
+        "I've got two rows in my Azure billing export for the same managed-disk meter, meterId "
+        "93a6a529-4f49-47cb-9b1e-db9e5f23263f, in eastus — one for 12 disks attached to "
+        "production and one for 2 disks in a dev environment. What's my total monthly disk "
+        "spend across both?"
+    ),
+    "RSKU_AZURE_BOM3": (
+        "I'm reconciling a mixed-cloud bill. On the Azure side there are 2 D4s v3 VMs billed "
+        "under meterId 3da19ca3-6007-4a29-89ea-cab10c2010ed in eastus for our app servers, and "
+        "on the AWS side we're storing 500GB of gp3 log storage in us-east-1. What's the "
+        "combined monthly cost of that stack?"
+    ),
+    "RSKU_AZURE_BOM4": (
+        "For our eastus environment I have 4 web-tier VMs I'd size as Standard_D4s_v3, plus 4 "
+        "attached P10 managed data disks billed under meterId "
+        "93a6a529-4f49-47cb-9b1e-db9e5f23263f — one disk per VM. Can you estimate the combined "
+        "monthly cost of the VMs and their attached disks?"
+    ),
+    "RSKU_AZURE_BOM5": (
+        "We're deciding where to run 2 D4s v3 VMs — the CUR/billing meter we're currently "
+        "paying under is 3da19ca3-6007-4a29-89ea-cab10c2010ed, and today they run in eastus. "
+        "Can you compare our current eastus rate for those 2 VMs against running the same 2 VMs "
+        "in westus2 or centralus instead?"
+    ),
+    "RSKU_AZURE_BOM6": (
+        "We run 3 D4s v3 Spot instances (meterId cf64c470-a287-5429-8dd7-756a877824a0) plus 3 "
+        "attached P10 managed data disks (meterId 93a6a529-4f49-47cb-9b1e-db9e5f23263f) in "
+        "eastus for a batch job — the VMs only run about 300 hours a month since the job shuts "
+        "down nights and weekends, but the disks stay attached and billed 24/7. What would that "
+        "combination cost us monthly?"
+    ),
+    "RSKU_AZURE_BOM7": (
+        "My Azure export has 6 P10 managed disks in eastus under meterId "
+        "93a6a529-4f49-47cb-9b1e-db9e5f23263f, plus one more row with meterId "
+        "00000000-0000-0000-0000-badf00d00000 that I can't identify. Can you estimate my "
+        "monthly disk spend and flag anything you can't price?"
+    ),
+    # -----------------------------------------------------------------------
+    # Raw-SKU lookup — protocol edge cases (RSKU)
+    # -----------------------------------------------------------------------
+    "RSKU_ERR1": (
+        "My AWS Cost and Usage Report has a line item for BoxUsage:c8g.xlarge but I forgot to "
+        "note which region it's billed in — can you tell me what that usage type costs?"
+    ),
+    "RSKU_ERR2": (
+        "I'm about to reconcile a stack of AWS usage-type codes from this month's billing "
+        "export, but I haven't pulled the actual list together yet — can you get the batch SKU "
+        "pricing check ready to go so I can just hand you the codes in a minute?"
+    ),
+    "RSKU_ERR3": (
+        "I moved one workload over to Oracle Cloud (OCI) and my OCI bill lists a line item by "
+        "its raw SKU code — can you look up its current rate the same way you did for my AWS "
+        "usage-type codes?"
+    ),
+    "RSKU_ERR4": (
+        "My monthly AWS Cost and Usage Report export lists these usage types, all billed in "
+        "us-east-1 — can you price all of these in one shot: BoxUsage:x1.large, "
+        "BoxUsage:x2.large, BoxUsage:x3.large, BoxUsage:x4.large, BoxUsage:x5.large, "
+        "BoxUsage:x6.large, BoxUsage:x7.large, BoxUsage:x8.large, BoxUsage:x9.large, "
+        "BoxUsage:x10.large, BoxUsage:x11.large, BoxUsage:x12.large, BoxUsage:x13.large, "
+        "BoxUsage:x14.large, BoxUsage:x15.large, BoxUsage:x16.large, BoxUsage:x17.large, "
+        "BoxUsage:x18.large, BoxUsage:x19.large, BoxUsage:x20.large, BoxUsage:x21.large, "
+        "BoxUsage:x22.large, BoxUsage:x23.large, BoxUsage:x24.large, BoxUsage:x25.large, "
+        "BoxUsage:x26.large, BoxUsage:x27.large, BoxUsage:x28.large, BoxUsage:x29.large, "
+        "BoxUsage:x30.large?"
+    ),
+    "RSKU_ERR5": (
+        "I have a line item on my AWS bill but the usage type column is blank — can you still "
+        "figure out what it costs?"
+    ),
 }
 
 
