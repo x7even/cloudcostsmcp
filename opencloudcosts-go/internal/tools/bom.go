@@ -500,6 +500,12 @@ func processBOMItems(
 	return lineItems, errs
 }
 
+// rawSKUProviderRequiredHint is the shared guidance clause used both by
+// resolveBOMSKUItem below and by HandleCompareBOMRegions's item-partitioning
+// loop (compare_bom_regions.go) when a raw-SKU BoM item omits provider, so
+// the two call sites' messages can't drift independently.
+const rawSKUProviderRequiredHint = `specify "provider": "aws", "gcp", or "azure"`
+
 // --------------------------------------------------------------------------
 // resolveBOMSKUItem resolves a raw-SKU BoM line item (issue #31, RC3-004) —
 // mirrors resolveSKUPriceEntry's (sku_lookup.go) error-unwrapping and
@@ -529,9 +535,14 @@ func resolveBOMSKUItem(
 		return bomLineItem{}, errMsg
 	}
 	if providerName == "" {
-		// Mirrors HandleGetPriceBySKU's default: raw usage-type/SKU strings
-		// are an AWS CUR concept, so an absent provider means "aws".
-		providerName = "aws"
+		// Unlike HandleGetPriceBySKU (a single-provider-per-call tool where
+		// an absent provider safely defaults to "aws"), BoM calls routinely
+		// mix items from different providers in one request, so a silent
+		// default here would misroute non-AWS SKUs into AWS's usage-type
+		// resolver. Require an explicit provider instead.
+		return bomLineItem{}, fmt.Sprintf(
+			"%s: provider is required for raw-SKU BoM items (sku %q) — %s",
+			label, sku, rawSKUProviderRequiredHint)
 	}
 
 	lookupP, errOut := resolveSKULookupProviderFromMap(provs, providerName, "raw-SKU BoM items")

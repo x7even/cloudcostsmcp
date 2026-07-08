@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/config"
@@ -190,7 +191,7 @@ func TestCompareBOMRegions_RawSKUItem(t *testing.T) {
 
 	resp := callCompareBOMRegions(t, h, tools.CompareBOMRegionsInput{
 		Items: []map[string]any{
-			{"sku": "BoxUsage:r6id.24xlarge", "service": "AmazonEC2", "quantity": float64(2)},
+			{"sku": "BoxUsage:r6id.24xlarge", "provider": "aws", "service": "AmazonEC2", "quantity": float64(2)},
 		},
 		Regions: []string{"us-east-1", "us-west-2"},
 	})
@@ -264,6 +265,42 @@ func TestCompareBOMRegions_RawSKUNonAWSProviderReportedOnce(t *testing.T) {
 		region := r.(map[string]any)
 		if errs, ok := region["errors"].([]any); ok && len(errs) > 0 {
 			t.Errorf("expected no per-region errors for the unsupported-provider raw-SKU item (should be reported once at top level), got: %v in region %v", errs, region["region"])
+		}
+	}
+}
+
+// TestCompareBOMRegions_RawSKUMissingProviderReportedOnce verifies a raw-SKU
+// item that omits "provider" entirely (rather than naming an explicit
+// unsupported one, as in TestCompareBOMRegions_RawSKUNonAWSProviderReportedOnce
+// above) is also routed to not_supported exactly once at the top level —
+// not silently defaulted to "aws" and not re-derived/re-errored once per
+// compared region.
+func TestCompareBOMRegions_RawSKUMissingProviderReportedOnce(t *testing.T) {
+	pvdr := newRegionPricedProvider(map[string]float64{"us-east-1": 0.192, "us-west-2": 0.150})
+	h := tools.New(map[string]tools.Provider{"aws": pvdr})
+
+	resp := callCompareBOMRegions(t, h, tools.CompareBOMRegionsInput{
+		Items: []map[string]any{
+			{"sku": "93a6a529-0000-0000-0000-000000000000", "region": "eastus"},
+		},
+		Regions: []string{"us-east-1", "us-west-2"},
+	})
+
+	notSupported, ok := resp["not_supported"].([]any)
+	if !ok || len(notSupported) != 1 {
+		t.Fatalf("expected exactly 1 not_supported entry, got: %v", resp["not_supported"])
+	}
+	entry := notSupported[0].(map[string]any)
+	reason, _ := entry["reason"].(string)
+	if !strings.Contains(reason, "provider is required") {
+		t.Errorf("expected a 'provider is required' reason, got %v", entry)
+	}
+
+	regions := resp["regions"].([]any)
+	for _, r := range regions {
+		region := r.(map[string]any)
+		if errs, ok := region["errors"].([]any); ok && len(errs) > 0 {
+			t.Errorf("expected no per-region errors for the missing-provider raw-SKU item (should be reported once at top level), got: %v in region %v", errs, region["region"])
 		}
 	}
 }

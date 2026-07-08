@@ -37,6 +37,19 @@ import (
 // resolves to real prices in v1.
 const compareBOMRegionsV1Provider = "aws"
 
+// notSupportedEntry builds one "not_supported" entry for the partitioning
+// loop below — factored out since the loop appends this exact four-key shape
+// for three distinct rejection reasons (missing provider, unsupported raw-SKU
+// provider, unsupported PricingSpec-dict provider).
+func notSupportedEntry(label, provider, reason string) map[string]any {
+	return map[string]any{
+		"item":     label,
+		"provider": provider,
+		"source":   "not_supported",
+		"reason":   reason,
+	}
+}
+
 // CompareBOMRegionsInput is the typed input for the compare_bom_regions tool.
 type CompareBOMRegionsInput struct {
 	Items          []map[string]any `json:"items"`
@@ -72,37 +85,46 @@ func (h *Handler) HandleCompareBOMRegions(
 	for idx, item := range in.Items {
 		label := fmt.Sprintf("Item %d", idx+1)
 
-		// Raw-SKU items are implicitly AWS (same default get_price_by_sku
-		// applies to a missing provider) and also accept an explicit
-		// provider=="gcp" (RC3-015) or provider=="azure" — resolveBOMSKUItem
-		// resolves any of these providers generically. An item naming any
-		// other provider is routed to notSupported here, exactly like any
-		// other unsupported item, rather than being rejected once per region
-		// inside processBOMItems below.
-		if _, ok := rawBOMSKU(item); ok {
-			pvdrName, hasPvdr := item["provider"].(string)
-			if !hasPvdr || pvdrName == "" || strings.EqualFold(pvdrName, compareBOMRegionsV1Provider) ||
+		// Raw-SKU items require an explicit provider=="aws", "gcp" (RC3-015),
+		// or "azure" — resolveBOMSKUItem (bom.go) resolves any of these
+		// generically, but no longer defaults a missing provider to "aws":
+		// compare_bom_regions routinely mixes items from different providers
+		// in one call, so a silent default risks misrouting a non-AWS SKU
+		// into AWS's usage-type resolver. An item with a missing or
+		// unsupported provider is routed to notSupported here, exactly once,
+		// since the provider problem does not vary per region — rather than
+		// being rejected identically inside processBOMItems on every region
+		// iteration below.
+		if sku, ok := rawBOMSKU(item); ok {
+			// stringItemField (bom.go), not a bare type assertion, so a
+			// provider value that is present but not a string (e.g. a
+			// number) is reported as a type error instead of being folded
+			// into the same "provider is required" message as a genuinely
+			// absent field.
+			pvdrName, typeErr := stringItemField(item, "provider", label, sku)
+			if typeErr != "" {
+				notSupported = append(notSupported, notSupportedEntry(label, "", typeErr))
+				continue
+			}
+			if pvdrName == "" {
+				notSupported = append(notSupported, notSupportedEntry(label, pvdrName,
+					fmt.Sprintf("provider is required for raw-SKU BoM items — %s.", rawSKUProviderRequiredHint)))
+				continue
+			}
+			if strings.EqualFold(pvdrName, compareBOMRegionsV1Provider) ||
 				strings.EqualFold(pvdrName, "gcp") || strings.EqualFold(pvdrName, "azure") {
 				resolvable = append(resolvable, item)
 				continue
 			}
-			notSupported = append(notSupported, map[string]any{
-				"item":     label,
-				"provider": pvdrName,
-				"source":   "not_supported",
-				"reason":   "compare_bom_regions raw-SKU items support aws, gcp, and azure providers only — this provider is not yet supported.",
-			})
+			notSupported = append(notSupported, notSupportedEntry(label, pvdrName,
+				"compare_bom_regions raw-SKU items support aws, gcp, and azure providers only — this provider is not yet supported."))
 			continue
 		}
 
 		pvdrName, _ := item["provider"].(string)
 		if strings.ToLower(pvdrName) != compareBOMRegionsV1Provider {
-			notSupported = append(notSupported, map[string]any{
-				"item":     label,
-				"provider": pvdrName,
-				"source":   "not_supported",
-				"reason":   "compare_bom_regions v1 is AWS-only (RC3-004) — this provider is not yet supported.",
-			})
+			notSupported = append(notSupported, notSupportedEntry(label, pvdrName,
+				"compare_bom_regions v1 is AWS-only (RC3-004) — this provider is not yet supported."))
 			continue
 		}
 		resolvable = append(resolvable, item)
@@ -124,7 +146,11 @@ func (h *Handler) HandleCompareBOMRegions(
 		pvdrName, _ := item["provider"].(string)
 		pvdrName = strings.ToLower(pvdrName)
 		if pvdrName == "" {
-			pvdrName = compareBOMRegionsV1Provider // raw-SKU/PricingSpec-dict default
+			// Defensive fallback only: every item reaching resolvable now
+			// carries an explicit, validated provider (raw-SKU items require
+			// one per the partitioning above; PricingSpec-dict items already
+			// required one). This branch should be unreachable.
+			pvdrName = compareBOMRegionsV1Provider
 		}
 		resolvableProviders[pvdrName] = struct{}{}
 	}

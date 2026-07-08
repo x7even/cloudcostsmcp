@@ -1274,6 +1274,7 @@ func TestEstimateBOM_RawSKUItem(t *testing.T) {
 	items := []map[string]any{
 		{
 			"sku":      "BoxUsage:r6id.24xlarge",
+			"provider": "aws",
 			"service":  "AmazonEC2",
 			"region":   "us-east-1",
 			"quantity": float64(1),
@@ -1338,12 +1339,14 @@ func TestEstimateBOM_RawSKUItem_PartialFailureNoMapping(t *testing.T) {
 	items := []map[string]any{
 		{
 			"sku":      "BoxUsage:r6id.24xlarge",
+			"provider": "aws",
 			"service":  "AmazonEC2",
 			"region":   "us-east-1",
 			"quantity": float64(1),
 		},
 		{
 			"sku":      "BoxUsage:doesnotexist",
+			"provider": "aws",
 			"service":  "AmazonEC2",
 			"region":   "us-east-1",
 			"quantity": float64(1),
@@ -1417,6 +1420,7 @@ func TestEstimateBOM_RawSKUItemTrimsWhitespace(t *testing.T) {
 	items := []map[string]any{
 		{
 			"sku":      "  BoxUsage:m5.xlarge  ",
+			"provider": "aws",
 			"service":  "AmazonEC2",
 			"region":   "us-east-1",
 			"quantity": float64(1),
@@ -1490,6 +1494,7 @@ func TestEstimateBOM_RawSKUItemNonStringOperationRejected(t *testing.T) {
 	items := []map[string]any{
 		{
 			"sku":       "BoxUsage:m5.xlarge",
+			"provider":  "aws",
 			"service":   "AmazonEC2",
 			"region":    "us-east-1",
 			"operation": []any{"CreateDBInstance"},
@@ -1538,6 +1543,7 @@ func TestEstimateBOM_RawSKUItemAdvisoriesIncluded(t *testing.T) {
 	items := []map[string]any{
 		{
 			"sku":      "BoxUsage:m5.xlarge",
+			"provider": "aws",
 			"service":  "AmazonEC2",
 			"region":   "us-east-1",
 			"quantity": float64(1),
@@ -1567,6 +1573,89 @@ func TestEstimateBOM_RawSKUItemAdvisoriesIncluded(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected a 'Data transfer (egress)' advisory row, got: %v", notIncluded)
+	}
+}
+
+// TestEstimateBOM_RawSKUItemMissingProviderRequiresExplicitProvider is the
+// regression test for the bug where a raw-SKU BoM item omitting "provider"
+// was silently defaulted to "aws" (fine for get_price_by_sku's single-SKU,
+// single-provider-per-call contract, but wrong for estimate_bom, which
+// routinely mixes items from different providers in one call). A BoM with
+// two items — one explicit non-aws (azure) domain-based item, and one
+// raw-SKU item with a GUID-style SKU (the Azure meterId shape) but no
+// "provider" field — must now surface a clear "provider is required" error
+// for the second item, and the first (valid) item must still resolve and
+// contribute to totals: one bad item must not take down the whole BoM
+// (processBOMItems' existing partial-success contract, unchanged by this
+// fix). The negative assertions below (no "servicecode"/"AWS" wording) check
+// the new message's own wording only — resolveSKULookupProviderFromMap only
+// recognizes concrete provider implementations (see its type switch in
+// sku_lookup.go), so this mockProvider-based test can't reach the old code's
+// deeper "could not infer AWS servicecode" error to prove non-regression
+// directly; the "provider is required" assertion is what actually
+// distinguishes old vs. new behavior here.
+func TestEstimateBOM_RawSKUItemMissingProviderRequiresExplicitProvider(t *testing.T) {
+	pvdr := &mockProvider{
+		name:          "azure",
+		defaultRegion: "eastus",
+		supportsFunc:  func(_ models.PricingDomain, _ string) bool { return true },
+		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
+			price := makeComputePrice("azure", "eastus", "D4s_v3", 0.192)
+			return &models.PricingResult{PublicPrices: []models.NormalizedPrice{price}}, nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"azure": pvdr})
+
+	items := []map[string]any{
+		{
+			"provider":      "azure",
+			"domain":        "compute",
+			"resource_type": "D4s_v3",
+			"region":        "eastus",
+			"quantity":      float64(4),
+		},
+		{
+			// A GUID-style SKU (the shape of an Azure Retail Prices API
+			// meterId) with no "provider" field — the exact regression
+			// scenario from the bug report.
+			"sku":      "93a6a529-0000-0000-0000-000000000000",
+			"region":   "eastus",
+			"quantity": float64(4),
+		},
+	}
+	resp := callEstimateBOM(t, h, items)
+
+	if topErr, ok := resp["error"]; ok {
+		t.Fatalf("expected no top-level error (the valid item should still resolve), got: %v", topErr)
+	}
+
+	lineItems, ok := resp["line_items"].([]any)
+	if !ok || len(lineItems) != 1 {
+		t.Fatalf("expected 1 successful line item (the azure domain item), got: %v", resp["line_items"])
+	}
+
+	errsVal := resp["errors"]
+	errs, ok := errsVal.([]any)
+	if !ok || len(errs) != 1 {
+		t.Fatalf("expected exactly 1 per-item error for the missing-provider raw-SKU item, got: %v", errsVal)
+	}
+	errStr, _ := errs[0].(string)
+	if !strings.Contains(errStr, "provider is required") {
+		t.Errorf("expected a clear 'provider is required' error, got %q", errStr)
+	}
+	if strings.Contains(errStr, "servicecode") || strings.Contains(errStr, "AWS") {
+		t.Errorf("expected no misleading AWS-servicecode language in the error, got %q", errStr)
+	}
+
+	totals, ok := resp["totals"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected totals in response, got %v", resp["totals"])
+	}
+	monthly := totals["monthly"].(map[string]any)
+	// Only the resolvable azure domain item contributes:
+	// 0.192/hr * 730 hrs/mo * quantity 4 = $560.64/mo.
+	if monthly["display"] != "$560.64/mo" {
+		t.Errorf("expected total monthly $560.64/mo (missing-provider item excluded), got %v", monthly["display"])
 	}
 }
 
