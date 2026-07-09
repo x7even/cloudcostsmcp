@@ -5,6 +5,69 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.3.0] — 2026-07-09
+
+### Added
+- **Raw-SKU BoM line items** — `estimate_bom` and `compare_bom_regions` now accept raw
+  usage-type/SKU dicts (`{"sku": ..., "provider": ..., "region": ..., "quantity": ...}`) as
+  BoM line items alongside PricingSpec dicts, resolved via the same per-provider SKU resolver
+  `get_price_by_sku` already uses. `compare_bom_regions`' region fan-out reports a raw-SKU
+  item with an unsupported provider once in `not_supported`, not once per compared region.
+  (RC3-004 / #31, #96)
+- **GCP raw-SKU lookup parity** — `get_price_by_sku`, `get_prices_by_sku`, and raw-SKU BoM
+  line items now accept `provider="gcp"`, resolving GCP Cloud Billing Catalog `skuId` strings
+  the same way AWS CUR usage-type strings already resolve. GCP region attribution is
+  geoTaxonomy-first with a serviceRegions fallback, since some SKUs (observed in KMS) carry a
+  restrictive `serviceRegions` list despite being globally priced. Introduces a shared
+  `internal/skulookup` package (`SKULookupProvider` interface) so AWS and GCP implement one
+  contract instead of AWS-only types being reused by convention. (RC3-015 / #35, #97)
+- **Azure raw-SKU lookup parity** — the same raw-SKU lookup surface (`get_price_by_sku`,
+  `get_prices_by_sku`, BoM raw-SKU line items) now also accepts `provider="azure"`, resolving
+  Azure Retail Prices API `meterId` strings. (RC3-015 / #35, #97)
+- **GCP catalog coverage** — five new GCP services added to `describe_catalog`/`get_price`,
+  closing the remaining zero-coverage gaps from the customer-feedback catalog sweep:
+  - External IP pricing — standard and spot/preemptible VM-attached rates. (RC3-023a / #76, #91)
+  - Cloud KMS pricing — 27 SKUs covering per-key-version and per-operation rates, software/HSM/
+    external key versions, tiered HSM-asymmetric volume discounts, and Autokey allowances.
+    (RC3-023b / #77, #92)
+  - Cloud DNS pricing — tiered managed-zone monthly fees and tiered query volume.
+    (RC3-023c / #78, #93)
+  - Cloud Pub/Sub pricing — message throughput (basic + per-destination delivery + Schema/
+    Message Transform) and storage, sourced from 77 live-verified SKUs. (RC3-023d / #79, #94)
+  - Cloud Firestore pricing — document reads/writes/deletes, stored data, PITR storage, backups,
+    and restore/clone, region-dispatched across ~41 regions plus multi-region groups.
+    (RC3-023e / #80, #95)
+- **Published per-tool output schemas** — every tool now advertises a JSON output schema via
+  the MCP `tools/list` response (`mcp.Tool.OutputSchema`), checked into
+  `schemas/tools-output-snapshot.json` with a parity test. (RC3-032 sub-part e / #30, #90)
+
+### Fixed
+- **MCP `structuredContent` now populated on every tool response** — every tool declares an
+  `OutputSchema`, but responses only ever set the unstructured `Content` field. Strict MCP
+  clients (including the official Python SDK) reject a tool call outright when a schema is
+  declared but `structuredContent` is absent. Also fixes two response fields that could
+  marshal to JSON `null` against a non-nullable array schema
+  (`no_mapping_in[].attempted_services`, `upstream_failure`'s `regions`).
+- **Raw-SKU BoM items require an explicit `provider`** — a raw-SKU BoM item omitting
+  `provider` was previously defaulted to `"aws"`, risking a non-AWS SKU being misrouted into
+  AWS's usage-type resolver when a BoM mixes items from multiple providers in one call. Now
+  returns a clear "provider is required" error instead of guessing. (part of #97)
+- **`price_per_unit` / `size_gb` / GCP breakdown consistency (RC3-032 remainder)** — BoM line
+  items now build `price_per_unit` and `totals` via the shared `priceDict`/`moneyDict` helpers
+  (fixing missing `currency`/`display` on `totals.monthly`/`totals.annual`); `get_price` now
+  scales `monthly_estimate` for `per_gb_month` storage prices by `size_gb`, matching how
+  `per_hour`/`per_month` prices already scale; GCP LB/CDN/NAT/Armor cost breakdowns use the
+  same currency-typed map shape as the rest of the codebase. (#30, #89)
+- **GCP egress price unit label** — internet/inter-region egress was labeled `per_gb_month`
+  (implying a recurring monthly rate) when it's actually a flat `per_gb` transfer price;
+  corrected to match CDN/NAT/LB data-processing prices in the same file. Note: this also
+  changes how a GCP egress BoM line item computes `monthly_cost` (see #88 for the
+  `bomMonthlyCost()` side effect this was reviewed against). (RC3-032 sub-part d / #30, #88)
+
+### Security
+- Go toolchain bumped to 1.25.12, resolving GO-2026-5856 (an Encrypted Client Hello privacy
+  leak in `crypto/tls`, fixed upstream in 1.25.12).
+
 ## [1.2.0] — 2026-07-05
 
 ### Changed
