@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/cache"
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/config"
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/models"
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/providers"
@@ -2720,6 +2722,196 @@ func realGCPProvider(t *testing.T) *gcpprovider.Provider {
 	if err != nil {
 		t.Fatalf("gcpprovider.NewProvider: %v", err)
 	}
+	return p
+}
+
+// gcpSKUCatalogFixtureJSON builds a minimal Cloud Billing Catalog SKU-list
+// page JSON body carrying one SKU with the given skuId/description/
+// serviceRegions/unitPrice — the GCP raw-SKU-lookup counterpart to
+// skuFixtureJSON (sku_lookup_test.go), used by tests that drive a real
+// *gcpprovider.Provider (via gcpprovider.NewProviderForTesting) through a
+// fake single-service Cloud Billing Catalog server.
+func gcpSKUCatalogFixtureJSON(skuID, description, region string, units string, nanos int) string {
+	b, _ := json.Marshal(map[string]any{
+		"skus": []map[string]any{
+			{
+				"skuId":          skuID,
+				"description":    description,
+				"serviceRegions": []string{region},
+				"category": map[string]any{
+					"resourceFamily": "Compute",
+					"resourceGroup":  "Compute",
+					"usageType":      "OnDemand",
+				},
+				"pricingInfo": []map[string]any{
+					{
+						"pricingExpression": map[string]any{
+							"usageUnit": "h",
+							"tieredRates": []map[string]any{
+								{
+									"startUsageAmount": 0,
+									"unitPrice": map[string]any{
+										"units": units,
+										"nanos": nanos,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		"nextPageToken": "",
+	})
+	return string(b)
+}
+
+// gcpTierFixture is one (start, unitPrice) tier for
+// gcpSKUCatalogFixtureJSONTiered.
+type gcpTierFixture struct {
+	start float64
+	units string
+	nanos int
+}
+
+// gcpSKUCatalogFixtureJSONTiered is gcpSKUCatalogFixtureJSON's multi-tier
+// counterpart, used by tests exercising GCP tiered-rate quantity-based tier
+// selection (resolveBOMSKUItem's rr.Tiered branch, bom.go).
+func gcpSKUCatalogFixtureJSONTiered(skuID, description, region, usageUnit string, tiers []gcpTierFixture) string {
+	tieredRates := make([]map[string]any, 0, len(tiers))
+	for _, t := range tiers {
+		tieredRates = append(tieredRates, map[string]any{
+			"startUsageAmount": t.start,
+			"unitPrice": map[string]any{
+				"units": t.units,
+				"nanos": t.nanos,
+			},
+		})
+	}
+	b, _ := json.Marshal(map[string]any{
+		"skus": []map[string]any{
+			{
+				"skuId":          skuID,
+				"description":    description,
+				"serviceRegions": []string{region},
+				"category": map[string]any{
+					"resourceFamily": "Compute",
+					"resourceGroup":  "Compute",
+					"usageType":      "OnDemand",
+				},
+				"pricingInfo": []map[string]any{
+					{
+						"pricingExpression": map[string]any{
+							"usageUnit":   usageUnit,
+							"tieredRates": tieredRates,
+						},
+					},
+				},
+			},
+		},
+		"nextPageToken": "",
+	})
+	return string(b)
+}
+
+// newGCPSKUTestProvider builds a *gcpprovider.Provider wired (via the
+// gcpprovider.NewProviderForTesting test hook) to server, for tests driving
+// raw-SKU tools (get_price_by_sku, estimate_bom, compare_bom_regions)
+// end-to-end against a real GCP provider without a live network call.
+func newGCPSKUTestProvider(t *testing.T, server *httptest.Server) *gcpprovider.Provider {
+	t.Helper()
+	dir := t.TempDir()
+	cm, err := cache.New(dir)
+	if err != nil {
+		t.Fatalf("cache.New: %v", err)
+	}
+	cfg := &config.Config{GCPAPIKey: "test-key", CacheTTLHours: 24, MetadataTTLDays: 7}
+	return gcpprovider.NewProviderForTesting(cfg, cm, server.URL, server.Client())
+}
+
+// azureSKUFixtureJSON builds a minimal Azure Retail Prices API items-page
+// JSON body carrying one Consumption-type meter row for the given
+// meterID/region/skuName/productName/serviceName/retail price — the Azure
+// raw-SKU-lookup counterpart to gcpSKUCatalogFixtureJSON/skuFixtureJSON,
+// used by tests that drive a real *azureprovider.Provider (via SetBaseURL/
+// SetHTTPClient) through a fake single-meter Retail Prices API server.
+func azureSKUFixtureJSON(meterID, region, skuName, productName, serviceName string, retailPrice float64) string {
+	b, _ := json.Marshal(map[string]any{
+		"Items": []map[string]any{
+			{
+				"meterId":              meterID,
+				"armRegionName":        region,
+				"skuName":              skuName,
+				"productName":          productName,
+				"meterName":            skuName,
+				"serviceName":          serviceName,
+				"type":                 "Consumption",
+				"unitOfMeasure":        "1 Hour",
+				"tierMinimumUnits":     0,
+				"retailPrice":          retailPrice,
+				"isPrimaryMeterRegion": true,
+			},
+		},
+		"NextPageLink": "",
+	})
+	return string(b)
+}
+
+// azureTierFixture is one (tierMinimumUnits, retailPrice) row for
+// azureSKUFixtureJSONTiered.
+type azureTierFixture struct {
+	start float64
+	price float64
+}
+
+// azureSKUFixtureJSONTiered is azureSKUFixtureJSON's multi-tier counterpart:
+// several rows sharing one meterId/skuName/productName but differing
+// tierMinimumUnits/retailPrice, and an explicit unitOfMeasure (rather than
+// azureSKUFixtureJSON's hardcoded "1 Hour") so tests can exercise a
+// non-hourly unit (e.g. "1 GB/Month") end to end through
+// resolveBOMSKUItem/bom.go's rr.Tiered graduated-billing branch — see
+// TestEstimateBOM_AzureRawSKUItem_TieredQuantitySelectsCorrectTier, which
+// specifically closes the gap between azureSKUUnit (Fix #7) selecting the
+// right models.PriceUnit and gcpGraduatedTieredCost/gcpTieredUsageVolume
+// (bom.go, shared with GCP) bracketing usage in that same unit's
+// denomination — a per_hour-denominated tier ladder over a GB-based
+// threshold would silently mis-bracket every request.
+func azureSKUFixtureJSONTiered(meterID, region, skuName, productName, serviceName, unitOfMeasure string, tiers []azureTierFixture) string {
+	items := make([]map[string]any, 0, len(tiers))
+	for _, t := range tiers {
+		items = append(items, map[string]any{
+			"meterId":              meterID,
+			"armRegionName":        region,
+			"skuName":              skuName,
+			"productName":          productName,
+			"meterName":            skuName,
+			"serviceName":          serviceName,
+			"type":                 "Consumption",
+			"unitOfMeasure":        unitOfMeasure,
+			"tierMinimumUnits":     t.start,
+			"retailPrice":          t.price,
+			"isPrimaryMeterRegion": true,
+		})
+	}
+	b, _ := json.Marshal(map[string]any{
+		"Items":        items,
+		"NextPageLink": "",
+	})
+	return string(b)
+}
+
+// newAzureSKUTestProvider builds a *azureprovider.Provider wired (via
+// SetBaseURL/SetHTTPClient) to server, for tests driving raw-SKU tools
+// (get_price_by_sku, estimate_bom, compare_bom_regions) end-to-end against a
+// real Azure provider without a live network call. Mirrors
+// newGCPSKUTestProvider; a nil cache.CacheManager is sufficient because the
+// Azure raw-SKU lookup path uses its own bespoke in-process cache
+// (azureSKUCatalogCache, internal/providers/azure/azure_sku_lookup.go)
+// rather than p.cache.
+func newAzureSKUTestProvider(server *httptest.Server) *azureprovider.Provider {
+	p := azureprovider.NewProvider(nil, 0, 0)
+	p.SetBaseURL(server.URL)
+	p.SetHTTPClient(server.Client())
 	return p
 }
 

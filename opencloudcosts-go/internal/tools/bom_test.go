@@ -1274,6 +1274,7 @@ func TestEstimateBOM_RawSKUItem(t *testing.T) {
 	items := []map[string]any{
 		{
 			"sku":      "BoxUsage:r6id.24xlarge",
+			"provider": "aws",
 			"service":  "AmazonEC2",
 			"region":   "us-east-1",
 			"quantity": float64(1),
@@ -1338,12 +1339,14 @@ func TestEstimateBOM_RawSKUItem_PartialFailureNoMapping(t *testing.T) {
 	items := []map[string]any{
 		{
 			"sku":      "BoxUsage:r6id.24xlarge",
+			"provider": "aws",
 			"service":  "AmazonEC2",
 			"region":   "us-east-1",
 			"quantity": float64(1),
 		},
 		{
 			"sku":      "BoxUsage:doesnotexist",
+			"provider": "aws",
 			"service":  "AmazonEC2",
 			"region":   "us-east-1",
 			"quantity": float64(1),
@@ -1417,6 +1420,7 @@ func TestEstimateBOM_RawSKUItemTrimsWhitespace(t *testing.T) {
 	items := []map[string]any{
 		{
 			"sku":      "  BoxUsage:m5.xlarge  ",
+			"provider": "aws",
 			"service":  "AmazonEC2",
 			"region":   "us-east-1",
 			"quantity": float64(1),
@@ -1490,6 +1494,7 @@ func TestEstimateBOM_RawSKUItemNonStringOperationRejected(t *testing.T) {
 	items := []map[string]any{
 		{
 			"sku":       "BoxUsage:m5.xlarge",
+			"provider":  "aws",
 			"service":   "AmazonEC2",
 			"region":    "us-east-1",
 			"operation": []any{"CreateDBInstance"},
@@ -1538,6 +1543,7 @@ func TestEstimateBOM_RawSKUItemAdvisoriesIncluded(t *testing.T) {
 	items := []map[string]any{
 		{
 			"sku":      "BoxUsage:m5.xlarge",
+			"provider": "aws",
 			"service":  "AmazonEC2",
 			"region":   "us-east-1",
 			"quantity": float64(1),
@@ -1567,5 +1573,369 @@ func TestEstimateBOM_RawSKUItemAdvisoriesIncluded(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected a 'Data transfer (egress)' advisory row, got: %v", notIncluded)
+	}
+}
+
+// TestEstimateBOM_RawSKUItemMissingProviderRequiresExplicitProvider is the
+// regression test for the bug where a raw-SKU BoM item omitting "provider"
+// was silently defaulted to "aws" (fine for get_price_by_sku's single-SKU,
+// single-provider-per-call contract, but wrong for estimate_bom, which
+// routinely mixes items from different providers in one call). A BoM with
+// two items — one explicit non-aws (azure) domain-based item, and one
+// raw-SKU item with a GUID-style SKU (the Azure meterId shape) but no
+// "provider" field — must now surface a clear "provider is required" error
+// for the second item, and the first (valid) item must still resolve and
+// contribute to totals: one bad item must not take down the whole BoM
+// (processBOMItems' existing partial-success contract, unchanged by this
+// fix). The negative assertions below (no "servicecode"/"AWS" wording) check
+// the new message's own wording only — resolveSKULookupProviderFromMap only
+// recognizes concrete provider implementations (see its type switch in
+// sku_lookup.go), so this mockProvider-based test can't reach the old code's
+// deeper "could not infer AWS servicecode" error to prove non-regression
+// directly; the "provider is required" assertion is what actually
+// distinguishes old vs. new behavior here.
+func TestEstimateBOM_RawSKUItemMissingProviderRequiresExplicitProvider(t *testing.T) {
+	pvdr := &mockProvider{
+		name:          "azure",
+		defaultRegion: "eastus",
+		supportsFunc:  func(_ models.PricingDomain, _ string) bool { return true },
+		getPriceFunc: func(_ context.Context, spec models.PricingSpec) (*models.PricingResult, error) {
+			price := makeComputePrice("azure", "eastus", "D4s_v3", 0.192)
+			return &models.PricingResult{PublicPrices: []models.NormalizedPrice{price}}, nil
+		},
+	}
+	h := tools.New(map[string]tools.Provider{"azure": pvdr})
+
+	items := []map[string]any{
+		{
+			"provider":      "azure",
+			"domain":        "compute",
+			"resource_type": "D4s_v3",
+			"region":        "eastus",
+			"quantity":      float64(4),
+		},
+		{
+			// A GUID-style SKU (the shape of an Azure Retail Prices API
+			// meterId) with no "provider" field — the exact regression
+			// scenario from the bug report.
+			"sku":      "93a6a529-0000-0000-0000-000000000000",
+			"region":   "eastus",
+			"quantity": float64(4),
+		},
+	}
+	resp := callEstimateBOM(t, h, items)
+
+	if topErr, ok := resp["error"]; ok {
+		t.Fatalf("expected no top-level error (the valid item should still resolve), got: %v", topErr)
+	}
+
+	lineItems, ok := resp["line_items"].([]any)
+	if !ok || len(lineItems) != 1 {
+		t.Fatalf("expected 1 successful line item (the azure domain item), got: %v", resp["line_items"])
+	}
+
+	errsVal := resp["errors"]
+	errs, ok := errsVal.([]any)
+	if !ok || len(errs) != 1 {
+		t.Fatalf("expected exactly 1 per-item error for the missing-provider raw-SKU item, got: %v", errsVal)
+	}
+	errStr, _ := errs[0].(string)
+	if !strings.Contains(errStr, "provider is required") {
+		t.Errorf("expected a clear 'provider is required' error, got %q", errStr)
+	}
+	if strings.Contains(errStr, "servicecode") || strings.Contains(errStr, "AWS") {
+		t.Errorf("expected no misleading AWS-servicecode language in the error, got %q", errStr)
+	}
+
+	totals, ok := resp["totals"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected totals in response, got %v", resp["totals"])
+	}
+	monthly := totals["monthly"].(map[string]any)
+	// Only the resolvable azure domain item contributes:
+	// 0.192/hr * 730 hrs/mo * quantity 4 = $560.64/mo.
+	if monthly["display"] != "$560.64/mo" {
+		t.Errorf("expected total monthly $560.64/mo (missing-provider item excluded), got %v", monthly["display"])
+	}
+}
+
+// --------------------------------------------------------------------------
+// GCP raw-SKU BoM items (RC3-015)
+// --------------------------------------------------------------------------
+
+// TestEstimateBOM_GCPRawSKUItem verifies a GCP raw-SKU BoM item resolves
+// against a real *gcpprovider.Provider and contributes to the BoM total —
+// the GCP counterpart to TestEstimateBOM_RawSKUItem above.
+func TestEstimateBOM_GCPRawSKUItem(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(gcpSKUCatalogFixtureJSON(
+			"0055-9F63-3A4D", "N1 Predefined Instance Core running in Americas", "us-central1", "0", 40_000_000)))
+	}))
+	defer server.Close()
+	realGCP := newGCPSKUTestProvider(t, server)
+	h := tools.New(map[string]tools.Provider{"gcp": realGCP})
+
+	items := []map[string]any{
+		{
+			"sku":      "0055-9F63-3A4D",
+			"provider": "gcp",
+			"service":  "compute",
+			"region":   "us-central1",
+			"quantity": float64(1),
+		},
+	}
+	resp := callEstimateBOM(t, h, items)
+
+	if _, ok := resp["error"]; ok {
+		t.Fatalf("expected success, got error: %v", resp["error"])
+	}
+	lineItems, ok := resp["line_items"].([]any)
+	if !ok || len(lineItems) != 1 {
+		t.Fatalf("expected 1 line item, got %v", resp["line_items"])
+	}
+	li := lineItems[0].(map[string]any)
+	if li["sku"] != "0055-9F63-3A4D" {
+		t.Errorf("expected sku field populated, got %v", li["sku"])
+	}
+	if li["provider"] != "gcp" {
+		t.Errorf("expected provider gcp, got %v", li["provider"])
+	}
+
+	totals, ok := resp["totals"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected totals in response, got %v", resp["totals"])
+	}
+	monthly := totals["monthly"].(map[string]any)
+	// 0.04/hr * 730 hrs/mo (default) * quantity 1 = $29.20/mo.
+	if monthly["display"] != "$29.20/mo" {
+		t.Errorf("expected total monthly $29.20/mo, got %v", monthly["display"])
+	}
+}
+
+// --------------------------------------------------------------------------
+// Azure raw-SKU BoM items (SKU-lookup-tool wiring, third provider)
+// --------------------------------------------------------------------------
+
+// TestEstimateBOM_AzureRawSKUItem verifies an Azure raw-SKU BoM item
+// (a Retail Prices API meterId) resolves against a real
+// *azureprovider.Provider and contributes to the BoM total — the Azure
+// counterpart to TestEstimateBOM_GCPRawSKUItem above.
+func TestEstimateBOM_AzureRawSKUItem(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(azureSKUFixtureJSON(
+			"00000000-0000-0000-0000-000000000000", "eastus", "D4s v3", "Virtual Machines Dsv3 Series", "Virtual Machines", 0.192)))
+	}))
+	defer server.Close()
+	realAzure := newAzureSKUTestProvider(server)
+	h := tools.New(map[string]tools.Provider{"azure": realAzure})
+
+	items := []map[string]any{
+		{
+			"sku":      "00000000-0000-0000-0000-000000000000",
+			"provider": "azure",
+			"region":   "eastus",
+			"quantity": float64(1),
+		},
+	}
+	resp := callEstimateBOM(t, h, items)
+
+	if _, ok := resp["error"]; ok {
+		t.Fatalf("expected success, got error: %v", resp["error"])
+	}
+	lineItems, ok := resp["line_items"].([]any)
+	if !ok || len(lineItems) != 1 {
+		t.Fatalf("expected 1 line item, got %v", resp["line_items"])
+	}
+	li := lineItems[0].(map[string]any)
+	if li["sku"] != "00000000-0000-0000-0000-000000000000" {
+		t.Errorf("expected sku field populated, got %v", li["sku"])
+	}
+	if li["provider"] != "azure" {
+		t.Errorf("expected provider azure, got %v", li["provider"])
+	}
+
+	totals, ok := resp["totals"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected totals in response, got %v", resp["totals"])
+	}
+	monthly := totals["monthly"].(map[string]any)
+	// 0.192/hr * 730 hrs/mo (default) * quantity 1 = $140.16/mo.
+	if monthly["display"] != "$140.16/mo" {
+		t.Errorf("expected total monthly $140.16/mo, got %v", monthly["display"])
+	}
+}
+
+// TestEstimateBOM_GCPRawSKUItem_TieredQuantitySelectsCorrectTier verifies
+// resolveBOMSKUItem's graduated tiered-billing rule (bom.go): each tier's
+// rate applies only to the slice of usage that falls within that tier's own
+// bracket, not to the whole quantity at one flat rate. Two BoM items share
+// the same tiered GCP SKU but differ only in quantity, to exercise both a
+// quantity that stays within the first bracket and one that spans both.
+func TestEstimateBOM_GCPRawSKUItem_TieredQuantitySelectsCorrectTier(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(gcpSKUCatalogFixtureJSONTiered(
+			"SKU-TIER-BOM", "Tiered storage rate", "us-central1", "count",
+			[]gcpTierFixture{
+				{start: 0, units: "0", nanos: 100_000_000},  // $0.10/unit below 100 units
+				{start: 100, units: "0", nanos: 50_000_000}, // $0.05/unit at/above 100 units
+			})))
+	}))
+	defer server.Close()
+	realGCP := newGCPSKUTestProvider(t, server)
+	h := tools.New(map[string]tools.Provider{"gcp": realGCP})
+
+	items := []map[string]any{
+		{
+			"sku":         "SKU-TIER-BOM",
+			"provider":    "gcp",
+			"service":     "gcs",
+			"region":      "us-central1",
+			"quantity":    float64(50), // below the second tier's start (100) → first/cheapest tier
+			"description": "low-quantity item",
+		},
+		{
+			"sku":         "SKU-TIER-BOM",
+			"provider":    "gcp",
+			"service":     "gcs",
+			"region":      "us-central1",
+			"quantity":    float64(200), // above the second tier's start (100) → that later tier
+			"description": "high-quantity item",
+		},
+	}
+	resp := callEstimateBOM(t, h, items)
+
+	if _, ok := resp["error"]; ok {
+		t.Fatalf("expected success, got error: %v", resp["error"])
+	}
+	lineItems, ok := resp["line_items"].([]any)
+	if !ok || len(lineItems) != 2 {
+		t.Fatalf("expected 2 line items, got %v", resp["line_items"])
+	}
+
+	byDesc := map[string]map[string]any{}
+	for _, raw := range lineItems {
+		li := raw.(map[string]any)
+		byDesc[li["description"].(string)] = li
+	}
+
+	low := byDesc["low-quantity item"]
+	if low == nil {
+		t.Fatalf("expected a low-quantity item line, got: %v", lineItems)
+	}
+	lowMonthly := low["monthly_cost"].(map[string]any)
+	// quantity 50 is below tier 2's start (100) → first/cheapest tier ($0.10/unit): 50 * 0.10 = $5.00/mo.
+	if lowMonthly["display"] != "$5.00/mo" {
+		t.Errorf("expected low-quantity item to use the first tier ($5.00/mo), got %v", lowMonthly["display"])
+	}
+
+	high := byDesc["high-quantity item"]
+	if high == nil {
+		t.Fatalf("expected a high-quantity item line, got: %v", lineItems)
+	}
+	highMonthly := high["monthly_cost"].(map[string]any)
+	// quantity 200 spans both brackets under graduated billing: the first
+	// 100 units at tier 1's $0.10/unit, plus the remaining 100 units at tier
+	// 2's $0.05/unit: 100*0.10 + 100*0.05 = $15.00/mo.
+	if highMonthly["display"] != "$15.00/mo" {
+		t.Errorf("expected high-quantity item to be billed graduated across both tiers ($15.00/mo), got %v", highMonthly["display"])
+	}
+}
+
+// TestEstimateBOM_AzureRawSKUItem_TieredQuantitySelectsCorrectTier is the
+// Azure counterpart to TestEstimateBOM_GCPRawSKUItem_TieredQuantitySelects
+// CorrectTier, and closes a gap neither TestEstimateBOM_AzureRawSKUItem nor
+// azure_sku_lookup_test.go's TestLookupSKUAcrossRegionsGeneric_GenuineTier
+// Ladder cover: the latter only asserts that tier_start_usage is present on
+// each row (Fix #6), using a fixture hardcoded to UnitOfMeasure "1 Hour"
+// (azure_sku_lookup_test.go's consumptionItem helper) — it never proves the
+// dollar total actually comes out right, and a per-hour-denominated tier
+// ladder compared against GB-denominated thresholds would silently
+// mis-bracket every request. This test drives a genuinely GB/Month-billed
+// tiered SKU ("1 GB/Month", so azureSKUUnit — Fix #7 — resolves it to
+// PriceUnitPerGBMonth, not the previous hardcoded-to-PerHour default) all
+// the way through resolveBOMSKUItem/bom.go's rr.Tiered branch, so both the
+// unit selection and the tier-bracketing math are proven together, not just
+// the attribute's presence.
+func TestEstimateBOM_AzureRawSKUItem_TieredQuantitySelectsCorrectTier(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(azureSKUFixtureJSONTiered(
+			"SKU-AZURE-TIER-BOM", "eastus", "S1 Blob Storage", "Blob Storage", "Storage",
+			"1 GB/Month",
+			[]azureTierFixture{
+				{start: 0, price: 0.10},   // $0.10/GB below 100 GB
+				{start: 100, price: 0.05}, // $0.05/GB at/above 100 GB
+			})))
+	}))
+	defer server.Close()
+	realAzure := newAzureSKUTestProvider(server)
+	h := tools.New(map[string]tools.Provider{"azure": realAzure})
+
+	items := []map[string]any{
+		{
+			"sku":         "SKU-AZURE-TIER-BOM",
+			"provider":    "azure",
+			"region":      "eastus",
+			"quantity":    float64(1),
+			"size_gb":     float64(50), // below the second tier's start (100 GB) → first/cheapest tier
+			"description": "low-usage item",
+		},
+		{
+			"sku":         "SKU-AZURE-TIER-BOM",
+			"provider":    "azure",
+			"region":      "eastus",
+			"quantity":    float64(1),
+			"size_gb":     float64(200), // spans both brackets
+			"description": "high-usage item",
+		},
+	}
+	resp := callEstimateBOM(t, h, items)
+
+	if _, ok := resp["error"]; ok {
+		t.Fatalf("expected success, got error: %v", resp["error"])
+	}
+	lineItems, ok := resp["line_items"].([]any)
+	if !ok || len(lineItems) != 2 {
+		t.Fatalf("expected 2 line items, got %v", resp["line_items"])
+	}
+
+	byDesc := map[string]map[string]any{}
+	for _, raw := range lineItems {
+		li := raw.(map[string]any)
+		byDesc[li["description"].(string)] = li
+	}
+
+	low := byDesc["low-usage item"]
+	if low == nil {
+		t.Fatalf("expected a low-usage item line, got: %v", lineItems)
+	}
+	lowMonthly := low["monthly_cost"].(map[string]any)
+	// 50 GB, entirely within tier 1 ($0.10/GB): 50 * 0.10 = $5.00/mo. If Fix
+	// #7 regressed (unit fell back to per_hour instead of per_gb_month), this
+	// would instead come out as 0.10 * 730 hrs * quantity 1 = $73.00/mo.
+	if lowMonthly["display"] != "$5.00/mo" {
+		t.Errorf("expected low-usage item to use the first tier ($5.00/mo), got %v", lowMonthly["display"])
+	}
+
+	high := byDesc["high-usage item"]
+	if high == nil {
+		t.Fatalf("expected a high-usage item line, got: %v", lineItems)
+	}
+	highMonthly := high["monthly_cost"].(map[string]any)
+	// 200 GB spans both brackets under graduated billing: the first 100 GB
+	// at tier 1's $0.10/GB, plus the remaining 100 GB at tier 2's $0.05/GB:
+	// 100*0.10 + 100*0.05 = $15.00/mo. If Fix #6 regressed (tier_start_usage
+	// missing/unset), gcpGraduatedTieredCost would bracket nothing and this
+	// would come out as $0.00/mo instead — the exact CRITICAL repro Finding
+	// #6 was filed against.
+	if highMonthly["display"] != "$15.00/mo" {
+		t.Errorf("expected high-usage item to be billed graduated across both tiers ($15.00/mo), got %v", highMonthly["display"])
 	}
 }

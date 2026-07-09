@@ -8,23 +8,27 @@
 // in src/opencloudcosts/tools/bom.py and src/opencloudcosts/tools/lookup.py.
 //
 // processBOMItems additionally resolves raw-SKU line items (issue #31,
-// RC3-004) via resolveBOMSKUItem, which type-asserts a concrete
-// *awsprovider.Provider to reuse LookupSKUAcrossRegions — the same AWS-only
-// core get_price_by_sku uses (internal/tools/sku_lookup.go). That import is
-// isolated to the resolveBOMSKUItem call site for the same reason
-// sku_lookup.go isolates it: the rest of this file stays provider-agnostic.
+// RC3-004; GCP parity RC3-015) via resolveBOMSKUItem, which resolves the
+// concrete provider through resolveSKULookupProviderFromMap and calls
+// LookupSKUAcrossRegionsGeneric — the same provider-agnostic core
+// get_price_by_sku uses (internal/tools/sku_lookup.go). That
+// skulookup/provider-specific plumbing is isolated to the resolveBOMSKUItem
+// call site for the same reason sku_lookup.go isolates it: the rest of this
+// file stays provider-agnostic.
 package tools
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
+	"strconv"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/models"
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/providers"
-	awsprovider "github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/providers/aws"
+	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/skulookup"
 )
 
 // --------------------------------------------------------------------------
@@ -70,6 +74,80 @@ func bomMonthlyCost(price models.NormalizedPrice, quantity float64, hoursPerMont
 	default:
 		return price.PricePerUnit * quantity
 	}
+}
+
+// gcpTieredUsageVolume returns the usage volume that a tiered GCP price's
+// tier_start_usage thresholds are denominated in, matching bomMonthlyCost's
+// own per-unit scaling exactly (PER_HOUR: hoursPerMonth*quantity,
+// PER_GB_MONTH: sizeGB*quantity, else: quantity) — tier thresholds must be
+// compared against this same scaled volume, not raw quantity, since that is
+// what the thresholds mean on the underlying GCP catalog (e.g. Firestore
+// storage tiers are denominated in GB/month, not in the BoM item's
+// "quantity" of database instances).
+func gcpTieredUsageVolume(unit models.PriceUnit, quantity, hoursPerMonth, sizeGB float64) float64 {
+	switch unit { //nolint:exhaustive // mirrors bomMonthlyCost's own switch
+	case models.PriceUnitPerHour:
+		return hoursPerMonth * quantity
+	case models.PriceUnitPerGBMonth:
+		return sizeGB * quantity
+	default:
+		return quantity
+	}
+}
+
+// tierStartUsage parses a tier row's tier_start_usage attribute (set by every
+// GCP tiered-price row — see gcp_sku_lookup.go's gcpBuildMatchedPrices). ok
+// is false when the attribute is absent or unparseable, so callers can
+// gracefully skip a malformed tier rather than mis-bracket the whole
+// calculation around it.
+func tierStartUsage(t models.NormalizedPrice) (start float64, ok bool) {
+	startStr, present := t.Attributes["tier_start_usage"]
+	if !present {
+		return 0, false
+	}
+	start, err := strconv.ParseFloat(startStr, 64)
+	return start, err == nil
+}
+
+// gcpGraduatedTieredCost computes the total monthly cost for a tiered
+// (graduated) GCP price across every bracket usageVolume actually spans,
+// mirroring the established graduated-billing model this codebase already
+// uses elsewhere (gcp_networking.go's computeTieredCost, gcp_dns.go's
+// addTieredEstimate): each tier's rate applies only to the portion of
+// usageVolume that falls within that tier's own [start, nextStart) bracket,
+// not to the entire usageVolume at one flat rate. tiers must be sorted
+// ascending by tier_start_usage (LookupSKUAcrossRegionsGeneric's rr.Prices
+// already are). Returns the total cost and the marginal (highest-bracket-
+// reached) tier row, used only for the line item's displayed
+// "price_per_unit" — a graduated rate has no single applicable per-unit
+// price, so the marginal rate (the rate on the last unit of usage) is
+// reported, the same convention computeTieredCost's own BlendedRatePerQty
+// stands in for at its call sites.
+func gcpGraduatedTieredCost(tiers []models.NormalizedPrice, usageVolume float64) (monthly float64, marginal models.NormalizedPrice) {
+	marginal = tiers[0]
+	for i, t := range tiers {
+		start, ok := tierStartUsage(t)
+		if !ok {
+			continue
+		}
+		if start > usageVolume {
+			// Tiers are ascending, so this and every later tier's bracket
+			// starts beyond usageVolume — neither is reached.
+			break
+		}
+		marginal = t
+		upper := math.Inf(1)
+		if i+1 < len(tiers) {
+			if nextStart, ok2 := tierStartUsage(tiers[i+1]); ok2 {
+				upper = nextStart
+			}
+		}
+		bracketEnd := math.Min(usageVolume, upper)
+		if bracketEnd > start {
+			monthly += (bracketEnd - start) * t.PricePerUnit
+		}
+	}
+	return monthly, marginal
 }
 
 // --------------------------------------------------------------------------
@@ -195,7 +273,8 @@ func (li bomLineItem) toMap() map[string]any {
 // whether one was present (a whitespace-only value does not count). Shared
 // by processBOMItems and HandleCompareBOMRegions's partition loop
 // (compare_bom_regions.go) so both treat "is this a raw-SKU item" — and the
-// exact string handed to the AWS SKU resolver — identically.
+// exact string handed to the resolved (AWS, GCP, or Azure) SKU lookup
+// provider — identically.
 func rawBOMSKU(item map[string]any) (string, bool) {
 	sku, _ := item["sku"].(string)
 	sku = strings.TrimSpace(sku)
@@ -285,10 +364,11 @@ func processBOMItems(
 		}
 		description, _ := item["description"].(string)
 
-		// Raw-SKU items (issue #31, RC3-004) bypass the PricingSpec path
-		// entirely — they carry a CUR-style usage-type/SKU string instead of
-		// a domain/resource_type spec, so resolve them via the same AWS SKU
-		// lookup get_price_by_sku uses.
+		// Raw-SKU items (issue #31, RC3-004; GCP parity RC3-015) bypass the
+		// PricingSpec path entirely — they carry a raw provider-native
+		// SKU/usage-type string instead of a domain/resource_type spec, so
+		// resolve them via the same provider-agnostic SKU lookup
+		// get_price_by_sku uses.
 		if sku, ok := rawBOMSKU(item); ok {
 			li, errMsg := resolveBOMSKUItem(ctx, provs, label, item, sku, quantity, hoursPerMonth, sizeGB, description)
 			if errMsg != "" {
@@ -420,6 +500,12 @@ func processBOMItems(
 	return lineItems, errs
 }
 
+// rawSKUProviderRequiredHint is the shared guidance clause used both by
+// resolveBOMSKUItem below and by HandleCompareBOMRegions's item-partitioning
+// loop (compare_bom_regions.go) when a raw-SKU BoM item omits provider, so
+// the two call sites' messages can't drift independently.
+const rawSKUProviderRequiredHint = `specify "provider": "aws", "gcp", or "azure"`
+
 // --------------------------------------------------------------------------
 // resolveBOMSKUItem resolves a raw-SKU BoM line item (issue #31, RC3-004) —
 // mirrors resolveSKUPriceEntry's (sku_lookup.go) error-unwrapping and
@@ -449,12 +535,17 @@ func resolveBOMSKUItem(
 		return bomLineItem{}, errMsg
 	}
 	if providerName == "" {
-		// Mirrors HandleGetPriceBySKU's default: raw usage-type/SKU strings
-		// are an AWS CUR concept, so an absent provider means "aws".
-		providerName = "aws"
+		// Unlike HandleGetPriceBySKU (a single-provider-per-call tool where
+		// an absent provider safely defaults to "aws"), BoM calls routinely
+		// mix items from different providers in one request, so a silent
+		// default here would misroute non-AWS SKUs into AWS's usage-type
+		// resolver. Require an explicit provider instead.
+		return bomLineItem{}, fmt.Sprintf(
+			"%s: provider is required for raw-SKU BoM items (sku %q) — %s",
+			label, sku, rawSKUProviderRequiredHint)
 	}
 
-	awsP, errOut := resolveAWSSKUProviderFromMap(provs, providerName, "raw-SKU BoM items")
+	lookupP, errOut := resolveSKULookupProviderFromMap(provs, providerName, "raw-SKU BoM items")
 	if errOut != nil {
 		msg, _ := errOut["message"].(string)
 		return bomLineItem{}, fmt.Sprintf("%s: %s (sku %q)", label, msg, sku)
@@ -473,9 +564,12 @@ func resolveBOMSKUItem(
 		return bomLineItem{}, errMsg
 	}
 
-	result, err := awsP.LookupSKUAcrossRegions(ctx, providerName, sku, serviceHint, []string{region}, operation, productFamily)
+	result, err := lookupP.LookupSKUAcrossRegionsGeneric(ctx, sku, []string{region}, serviceHint, skulookup.SKUHint{
+		OperationHint:     operation,
+		ProductFamilyHint: productFamily,
+	})
 	if err != nil {
-		var skuErr *awsprovider.SKULookupError
+		var skuErr *skulookup.SKULookupError
 		if errors.As(err, &skuErr) {
 			return bomLineItem{}, fmt.Sprintf("%s: [%s] %s (sku %q)", label, skuErr.Code, skuErr.Message, sku)
 		}
@@ -498,7 +592,35 @@ func resolveBOMSKUItem(
 	}
 
 	price := rr.Prices[0]
-	monthly := bomMonthlyCost(price, quantity, hoursPerMonth, sizeGB)
+	// Tiered (GCP only — see skulookup.SKULookupRegionResult.Tiered): rr.Prices
+	// holds every usage-volume tier's rate, ascending by usage threshold, each
+	// tagged with its own Attributes["tier_start_usage"]. GCP's tiered SKUs are
+	// graduated/bracketed billing (the same model as gcp_networking.go's
+	// computeTieredCost / gcp_dns.go's addTieredEstimate): each tier's rate
+	// applies only to the slice of usage that falls within that tier's own
+	// bracket, not to the whole quantity at one flat rate. Tier-threshold
+	// comparisons must also use the same usage volume bomMonthlyCost itself
+	// scales by (hoursPerMonth*quantity for PER_HOUR, sizeGB*quantity for
+	// PER_GB_MONTH), not raw quantity, or a PER_GB_MONTH/PER_HOUR item would
+	// select tiers based on a number the customer never actually sees billed.
+	var monthly float64
+	if rr.Tiered {
+		usageVolume := gcpTieredUsageVolume(price.Unit, quantity, hoursPerMonth, sizeGB)
+		monthly, price = gcpGraduatedTieredCost(rr.Prices, usageVolume)
+		// Report the blended effective rate (monthly / usage volume), not the
+		// marginal tier's own rate, in unitPrice.PricePerUnit — this is the
+		// same convention gcp_networking.go's computeTieredCost uses
+		// (BlendedRatePerGB = totalCost/dataGB). The marginal rate alone would
+		// make the line item's displayed price_per_unit * quantity disagree
+		// with its own monthly_cost whenever usage spans more than one
+		// bracket (e.g. qty=200 across a $0.10/$0.05 two-tier split: marginal
+		// $0.05 * 200 = $10 != the correct $15 monthly cost).
+		if usageVolume > 0 {
+			price.PricePerUnit = monthly / usageVolume
+		}
+	} else {
+		monthly = bomMonthlyCost(price, quantity, hoursPerMonth, sizeGB)
+	}
 	annual := monthly * 12
 
 	lineDesc := description

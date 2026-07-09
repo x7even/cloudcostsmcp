@@ -1,13 +1,18 @@
-// sku_lookup.go implements the get_price_by_sku tool: given a raw AWS
-// usage-type/SKU string exactly as it appears in a Cost & Usage Report (CUR)
-// export (e.g. "CAN1-BoxUsage:r5a.8xlarge"), resolve its price across a list
-// of target regions.
+// sku_lookup.go implements the get_price_by_sku tool: given a raw
+// provider-native SKU/usage-type string exactly as it appears in a billing
+// export (e.g. AWS CUR's "CAN1-BoxUsage:r5a.8xlarge", a GCP Cloud Billing
+// Catalog skuId, or an Azure Retail Prices meterId), resolve its price across
+// a list of target regions. AWS, GCP, and Azure are all supported (see
+// resolveSKULookupProviderFromMap below); any other provider name is rejected
+// with a structured "unsupported_provider" error.
 //
 // This file is deliberately kept separate from lookup.go: lookup.go only
 // imports the provider-agnostic internal/providers package, while this file
-// must import the concrete internal/providers/aws package to type-assert the
-// AWS-specific core logic (LookupSKUAcrossRegions in aws_sku_lookup.go).
-// Isolating that import here keeps lookup.go provider-agnostic.
+// must import the concrete internal/providers/aws, internal/providers/gcp,
+// and internal/providers/azure packages to type-switch each one to the
+// provider-agnostic skulookup.SKULookupProvider interface (see
+// resolveSKULookupProviderFromMap). Isolating those imports here keeps
+// lookup.go provider-agnostic.
 package tools
 
 import (
@@ -16,16 +21,20 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/models"
 	awsprovider "github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/providers/aws"
+	azureprovider "github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/providers/azure"
+	gcpprovider "github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/providers/gcp"
+	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/skulookup"
 )
 
 // --------------------------------------------------------------------------
-// GetPriceBySKU — raw AWS usage-type/SKU lookup
+// GetPriceBySKU — raw provider-native SKU/usage-type lookup (AWS, GCP, Azure)
 // --------------------------------------------------------------------------
 
 // GetPriceBySKUInput is the typed input for the get_price_by_sku tool.
@@ -80,12 +89,13 @@ func buildSKUAlternateList(prices []models.NormalizedPrice) []map[string]any {
 }
 
 // HandleGetPriceBySKU implements the get_price_by_sku tool. It resolves a raw
-// AWS usage-type/SKU string (as it appears verbatim in a CUR export) against
-// each requested region's pricing catalog, and shapes the response to mirror
-// compare_prices: a cheapest-first sorted list of matched regions, an
-// explicit list of regions where the SKU has no catalog mapping (checked, not
-// found — distinct from a fetch failure), and an optional baseline-region
-// delta.
+// provider-native SKU/usage-type string (an AWS usage-type string as it
+// appears verbatim in a CUR export, or a GCP Cloud Billing Catalog skuId)
+// against each requested region's pricing catalog, and shapes the response
+// to mirror compare_prices: a cheapest-first sorted list of matched regions,
+// an explicit list of regions where the SKU has no catalog mapping (checked,
+// not found — distinct from a fetch failure), and an optional
+// baseline-region delta.
 func (h *Handler) HandleGetPriceBySKU(
 	ctx context.Context,
 	_ *mcp.CallToolRequest,
@@ -105,58 +115,54 @@ func (h *Handler) HandleGetPriceBySKU(
 	}
 
 	// The provider map is keyed by the canonical lowercase provider name
-	// (e.g. "aws", populated in cmd/opencloudcosts/main.go). Lowercase the
-	// lookup key so a caller passing "AWS" still resolves the provider, but
-	// pass providerName through to the core function's own validation so an
-	// unsupported provider (e.g. "gcp") produces the core function's honest,
-	// structured "unsupported_provider" error rather than a generic "not
-	// configured" message.
-	awsP, errOut := h.resolveAWSSKUProvider(providerName, "get_price_by_sku")
+	// (e.g. "aws"/"gcp"/"azure", populated in cmd/opencloudcosts/main.go).
+	// Lowercase the lookup key so a caller passing "AWS" still resolves the
+	// provider, but pass providerName through to the core function's own
+	// validation so an unsupported provider (e.g. "oci", not one of
+	// aws/gcp/azure) produces the core function's honest, structured
+	// "unsupported_provider" error rather than a generic "not configured"
+	// message.
+	lookupP, errOut := resolveSKULookupProviderFromMap(h.providers, providerName, "get_price_by_sku")
 	if errOut != nil {
 		return errResult(errOut), nil, nil
 	}
 
-	return jsonText(h.resolveSKUPriceEntry(ctx, awsP, providerName, in)), nil, nil
+	return jsonText(h.resolveSKUPriceEntry(ctx, lookupP, providerName, in)), nil, nil
 }
 
-// resolveAWSSKUProviderFromMap is the provider-agnostic core of
-// resolveAWSSKUProvider, extracted so raw-SKU BoM item resolution
-// (resolveBOMSKUItem in bom.go) can share the identical provider-resolution
-// and type-assertion logic without needing a *Handler receiver —
-// processBOMItems already threads a plain provs map, not a Handler.
-func resolveAWSSKUProviderFromMap(provs map[string]Provider, providerName, toolName string) (*awsprovider.Provider, map[string]any) {
+// resolveSKULookupProviderFromMap is the provider-agnostic successor to the
+// AWS-only resolver this file used before RC3-015 (removed — it had zero
+// remaining callers once get_price_by_sku/get_prices_by_sku/resolveBOMSKUItem
+// were all migrated to this function). It resolves providerName to any concrete
+// provider that implements skulookup.SKULookupProvider (today,
+// *awsprovider.Provider, *gcpprovider.Provider, and *azureprovider.Provider),
+// rather than only ever accepting AWS. get_price_by_sku/get_prices_by_sku
+// (this file) and resolveBOMSKUItem (bom.go) use this so raw-SKU lookups
+// work uniformly across providers instead of hardcoding *awsprovider.Provider.
+func resolveSKULookupProviderFromMap(provs map[string]Provider, providerName, toolName string) (skulookup.SKULookupProvider, map[string]any) {
 	pvdr := provs[strings.ToLower(providerName)]
 	if pvdr == nil {
 		return nil, map[string]any{
 			"error":   "unsupported_provider",
-			"message": fmt.Sprintf("%s only supports provider=\"aws\" (got %q).", toolName, providerName),
+			"message": fmt.Sprintf("%s does not support provider %q.", toolName, providerName),
 		}
 	}
-	awsP, ok := pvdr.(*awsprovider.Provider)
-	if !ok {
-		// Should not be reachable in practice (only "aws" resolves to an AWS
-		// provider instance), but guards against a future provider map key
-		// aliasing collision.
+	switch p := pvdr.(type) {
+	case *awsprovider.Provider:
+		return p, nil
+	case *gcpprovider.Provider:
+		return p, nil
+	case *azureprovider.Provider:
+		return p, nil
+	default:
 		return nil, map[string]any{
 			"error":   "unsupported_provider",
-			"message": fmt.Sprintf("%s only supports provider=\"aws\" (got %q).", toolName, providerName),
+			"message": fmt.Sprintf("%s does not support provider %q.", toolName, providerName),
 		}
 	}
-	return awsP, nil
 }
 
-// resolveAWSSKUProvider resolves and type-asserts the AWS provider for
-// providerName, shared by get_price_by_sku and get_prices_by_sku (both
-// AWS-only — raw usage-type/SKU strings are an AWS CUR concept with no GCP/
-// Azure equivalent). toolName is interpolated into the error message so each
-// caller's error reads as coming from itself. Returns a non-nil errOut (and
-// a nil *awsprovider.Provider) when resolution fails; callers must check
-// errOut before using the returned provider.
-func (h *Handler) resolveAWSSKUProvider(providerName, toolName string) (awsP *awsprovider.Provider, errOut map[string]any) {
-	return resolveAWSSKUProviderFromMap(h.providers, providerName, toolName)
-}
-
-// skuRegionResultKind classifies a single awsprovider.SKULookupRegionResult
+// skuRegionResultKind classifies a single skulookup.SKULookupRegionResult
 // into exactly one of five buckets. resolveSKUPriceEntry (looping over every
 // region) and resolveBOMSKUItem (bom.go, a single region) both need this
 // same four-way discrimination over Prices/Ambiguous/NoMapping/Error — kept
@@ -171,7 +177,7 @@ const (
 	skuResultUnresolved // none of Prices/NoMapping/Error set — should not occur in practice
 )
 
-func classifySKURegionResult(rr awsprovider.SKULookupRegionResult) skuRegionResultKind {
+func classifySKURegionResult(rr skulookup.SKULookupRegionResult) skuRegionResultKind {
 	switch {
 	case len(rr.Prices) > 0 && !rr.Ambiguous:
 		return skuResultMatched
@@ -186,7 +192,7 @@ func classifySKURegionResult(rr awsprovider.SKULookupRegionResult) skuRegionResu
 	}
 }
 
-// resolveSKUPriceEntry resolves a single SKU against awsP/regions and shapes
+// resolveSKUPriceEntry resolves a single SKU against lookupP/regions and shapes
 // the response. This is the shared core of get_price_by_sku (a single SKU)
 // and get_prices_by_sku (a batch of SKUs) — the disambiguation/sorting/
 // baseline-delta shaping logic below is intricate (see the ambiguous_in/
@@ -202,43 +208,67 @@ func classifySKURegionResult(rr awsprovider.SKULookupRegionResult) skuRegionResu
 // that "error" key.
 func (h *Handler) resolveSKUPriceEntry(
 	ctx context.Context,
-	awsP *awsprovider.Provider,
+	lookupP skulookup.SKULookupProvider,
 	providerName string,
 	in GetPriceBySKUInput,
 ) map[string]any {
-	result, err := awsP.LookupSKUAcrossRegions(ctx, providerName, in.SKU, in.Service, in.Regions, in.Operation, in.ProductFamily)
+	result, err := lookupP.LookupSKUAcrossRegionsGeneric(ctx, in.SKU, in.Regions, in.Service, skulookup.SKUHint{
+		OperationHint:     in.Operation,
+		ProductFamilyHint: in.ProductFamily,
+	})
 	if err != nil {
-		var skuErr *awsprovider.SKULookupError
+		var skuErr *skulookup.SKULookupError
 		if errors.As(err, &skuErr) {
 			return map[string]any{
 				"error":   skuErr.Code,
 				"message": skuErr.Message,
 			}
 		}
+		// regions is schema-declared as a plain (non-nullable) array (see
+		// schemaGetPriceBySKUOutput's top-level "regions" property in
+		// server.go). HandleGetPriceBySKU (unlike the batch handler) does not
+		// length-check in.Regions before calling resolveSKUPriceEntry, so a
+		// caller who omits regions entirely reaches here with in.Regions nil
+		// on any non-SKULookupError failure (e.g. context cancellation) —
+		// default defensively here for the same reason attempted_services is
+		// defaulted above.
+		regions := in.Regions
+		if regions == nil {
+			regions = []string{}
+		}
 		return map[string]any{
 			"error":     "upstream_failure",
 			"message":   "SKU lookup failed. Try again shortly.",
 			"retryable": true,
-			"regions":   in.Regions,
+			"regions":   regions,
 		}
 	}
 
-	// matchedRegion pairs a region's single resolved price with the
+	// matchedRegion pairs a region's resolved price(s) with the
 	// service-resolution provenance needed for the response entry. Only
-	// regions resolveSKUCandidates could narrow to exactly one row — either
-	// because the suffix was unique to begin with, an operation/
-	// product_family hint uniquely resolved it, or the existing canonical-
-	// default narrowing uniquely resolved it — ever land here. A region
-	// whose match is still ambiguous after all of that is NEVER represented
-	// as a matchedRegion (see the ambiguousRegions bucket below): "cheapest
-	// of several different products" is not a defensible default price, so
-	// it must not leak into matched/sorted/cheapest-summary output.
+	// regions resolveSKUCandidates (AWS) / LookupSKUAcrossRegionsGeneric
+	// (GCP) could narrow to exactly one billable item — either because the
+	// suffix/skuId was unique to begin with, an operation/product_family
+	// hint uniquely resolved it (AWS), or the existing canonical-default
+	// narrowing uniquely resolved it (AWS) — ever land here. A region whose
+	// match is still ambiguous after all of that is NEVER represented as a
+	// matchedRegion (see the ambiguousRegions bucket below): "cheapest of
+	// several different products" is not a defensible default price, so it
+	// must not leak into matched/sorted/cheapest-summary output.
+	//
+	// tiered/allTiers hold the GCP tiered-rate case: multiple genuine
+	// usage-volume tiers of ONE matched item, not alternate candidates
+	// requiring disambiguation (see skulookup.SKULookupRegionResult.Tiered).
+	// price is always the primary (lowest-usage-tier, when tiered) price
+	// used for sorting/cheapest_price/most_expensive_price.
 	type matchedRegion struct {
 		region      string
 		price       models.NormalizedPrice
 		serviceUsed string
 		mismatch    bool
 		hintStatus  string
+		tiered      bool
+		allTiers    []models.NormalizedPrice
 	}
 
 	var matched []matchedRegion
@@ -250,15 +280,22 @@ func (h *Handler) resolveSKUPriceEntry(
 	for _, rr := range result.Regions {
 		switch classifySKURegionResult(rr) {
 		case skuResultMatched:
-			// resolveSKUCandidates guarantees exactly one row whenever it
-			// reports ambiguous=false.
-			matched = append(matched, matchedRegion{
+			// resolveSKUCandidates (AWS) guarantees exactly one row whenever
+			// it reports ambiguous=false; GCP's Tiered case also lands here
+			// (Tiered never sets Ambiguous) with more than one row, ordered
+			// ascending by usage threshold — Prices[0] is the lowest tier.
+			m := matchedRegion{
 				region:      rr.Region,
 				price:       rr.Prices[0],
 				serviceUsed: rr.ServiceUsed,
 				mismatch:    rr.ServiceMismatch,
 				hintStatus:  rr.HintStatus,
-			})
+				tiered:      rr.Tiered,
+			}
+			if rr.Tiered {
+				m.allTiers = rr.Prices
+			}
+			matched = append(matched, m)
 		case skuResultAmbiguous:
 			// Still ambiguous even after hint-based and canonical-default
 			// narrowing: this region is deliberately excluded from matched
@@ -280,9 +317,20 @@ func (h *Handler) resolveSKUPriceEntry(
 			}
 			ambiguousRegions = append(ambiguousRegions, ar)
 		case skuResultNoMapping:
+			// attempted_services is schema-declared as a plain (non-nullable)
+			// array (see server.go's no_mapping_in schema). rr.AttemptedServices
+			// is nil, not just empty, on this path for Azure (azure_sku_lookup.go
+			// never populates it before setting NoMapping) — left as-is, that nil
+			// marshals to JSON null and a strict client (the official Python mcp
+			// SDK) rejects the whole response. AWS/GCP always populate it
+			// non-nil, but default defensively here regardless of provider.
+			attemptedServices := rr.AttemptedServices
+			if attemptedServices == nil {
+				attemptedServices = []string{}
+			}
 			noMapping = append(noMapping, map[string]any{
 				"region":             rr.Region,
-				"attempted_services": rr.AttemptedServices,
+				"attempted_services": attemptedServices,
 			})
 		case skuResultError:
 			erroredRegions = append(erroredRegions, map[string]any{
@@ -300,7 +348,7 @@ func (h *Handler) resolveSKUPriceEntry(
 	for _, m := range matched {
 		e := map[string]any{
 			"region":         m.region,
-			"region_name":    regionDisplayNameFn("aws", m.region),
+			"region_name":    regionDisplayNameFn(strings.ToLower(providerName), m.region),
 			"price_per_unit": priceDict(m.price.PricePerUnit, string(m.price.Unit)),
 			"service_used":   m.serviceUsed,
 		}
@@ -311,7 +359,7 @@ func (h *Handler) resolveSKUPriceEntry(
 		// just canonical-default narrowing). Omitted (like the other optional
 		// fields below) when it's just the uninformative "no_hint_supplied"
 		// default. See aws.resolveSKUCandidates.
-		if m.hintStatus != "" && m.hintStatus != awsprovider.HintStatusNoHint {
+		if m.hintStatus != "" && m.hintStatus != skulookup.HintStatusNoHint {
 			e["hint_status"] = m.hintStatus
 		}
 		// Description/attributes/product_family/sku_id disambiguate which
@@ -341,6 +389,31 @@ func (h *Handler) resolveSKUPriceEntry(
 		}
 		if m.mismatch {
 			e["service_mismatch"] = true
+		}
+		// Tiered (GCP only, see SKULookupRegionResult.Tiered's doc comment):
+		// surface every usage-volume tier's rate so a caller can see the full
+		// rate schedule, in addition to the primary (lowest-tier) price above
+		// used for sorting/cheapest_price/most_expensive_price. This is
+		// deliberately its own case rather than folded into ambiguous_in —
+		// these are tiers of one matched item, not alternate candidates
+		// requiring disambiguation.
+		if m.tiered {
+			e["tiered"] = true
+			allTierRates := make([]map[string]any, 0, len(m.allTiers))
+			for _, t := range m.allTiers {
+				tier := map[string]any{
+					"price_per_unit": priceDict(t.PricePerUnit, string(t.Unit)),
+				}
+				if startStr, ok := t.Attributes["tier_start_usage"]; ok {
+					if start, perr := strconv.ParseFloat(startStr, 64); perr == nil {
+						tier["tier_start_usage"] = start
+					} else {
+						tier["tier_start_usage"] = startStr
+					}
+				}
+				allTierRates = append(allTierRates, tier)
+			}
+			e["all_tier_rates"] = allTierRates
 		}
 		entries = append(entries, e)
 	}
@@ -373,10 +446,19 @@ func (h *Handler) resolveSKUPriceEntry(
 
 	out := map[string]any{
 		"sku":                result.SKU,
-		"usage_type_prefix":  result.UsageTypePrefix,
-		"usage_type_suffix":  result.UsageTypeSuffix,
 		"service_source":     result.ServiceSource,
 		"all_regions_sorted": entries, // mirrors compare_prices' "all_regions_sorted" field name
+	}
+	// usage_type_prefix/usage_type_suffix are AWS-only concepts (see
+	// SKULookupResult's doc comment): AWS always sets (and callers/tests rely
+	// on receiving) both keys, even when the parsed usage-type string happens
+	// to carry no prefix ("") — so gate on provider, not on string-emptiness,
+	// which would otherwise also suppress a legitimately-empty AWS prefix.
+	// GCP and Azure never populate these fields at all, so they're omitted
+	// for both rather than emitted as misleading empty strings.
+	if strings.EqualFold(providerName, "aws") {
+		out["usage_type_prefix"] = result.UsageTypePrefix
+		out["usage_type_suffix"] = result.UsageTypeSuffix
 	}
 	if result.ServiceHint != "" {
 		out["service_hint"] = result.ServiceHint
@@ -465,13 +547,14 @@ type GetPricesBySKUInput struct {
 }
 
 // HandleGetPricesBySKU implements the get_prices_by_sku tool: a batch form
-// of get_price_by_sku for resolving many raw AWS usage-type/SKU strings
-// (e.g. every distinct line item in a CUR export) against the same set of
-// target regions in one call. It reuses resolveSKUPriceEntry — the exact
-// same per-SKU resolution and response-shaping logic get_price_by_sku uses
-// — for each sku, fanned out concurrently (bounded by skuBatchFanoutLimit)
-// so repeated (service, region) catalog fetches across SKUs benefit from the
-// process-lifetime skuCatalogCache memoization.
+// of get_price_by_sku for resolving many raw provider-native SKU/usage-type
+// strings (e.g. every distinct line item in a CUR export, or a batch of GCP
+// skuIds) against the same set of target regions in one call. It reuses
+// resolveSKUPriceEntry — the exact same per-SKU resolution and
+// response-shaping logic get_price_by_sku uses — for each sku, fanned out
+// concurrently (bounded by skuBatchFanoutLimit) so repeated (service, region)
+// catalog fetches across SKUs benefit from the process-lifetime
+// skuCatalogCache memoization.
 //
 // Each entry in "results" has exactly the shape a standalone get_price_by_sku
 // call for that sku would return (including its own ambiguous_in/
@@ -497,7 +580,7 @@ func (h *Handler) HandleGetPricesBySKU(
 		providerName = "aws"
 	}
 
-	awsP, errOut := h.resolveAWSSKUProvider(providerName, "get_prices_by_sku")
+	lookupP, errOut := resolveSKULookupProviderFromMap(h.providers, providerName, "get_prices_by_sku")
 	if errOut != nil {
 		return errResult(errOut), nil, nil
 	}
@@ -505,7 +588,7 @@ func (h *Handler) HandleGetPricesBySKU(
 	if len(in.SKUs) == 0 {
 		return errResult(map[string]any{
 			"error":   "skus_required",
-			"message": "skus must contain at least one raw AWS usage-type/SKU string",
+			"message": "skus must contain at least one raw SKU/usage-type string",
 		}), nil, nil
 	}
 	if len(in.SKUs) > maxSKUsPerBatch {
@@ -537,7 +620,7 @@ func (h *Handler) HandleGetPricesBySKU(
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			outs[idx] = h.resolveSKUPriceEntry(ctx, awsP, providerName, GetPriceBySKUInput{
+			outs[idx] = h.resolveSKUPriceEntry(ctx, lookupP, providerName, GetPriceBySKUInput{
 				SKU:            s,
 				Regions:        in.Regions,
 				BaselineRegion: in.BaselineRegion,

@@ -1,0 +1,641 @@
+[
+  {
+    "id": "RSKU_AWS_OK1",
+    "prompt": "Our AWS Cost and Usage Report has a line item with usage type \"BoxUsage:c8g.xlarge\" billed in us-east-1. What's the on-demand hourly rate for that usage type so I can check it against what we were actually charged?",
+    "category": "aws-raw-sku-success",
+    "cloud": "aws",
+    "expected_outcome": "matched",
+    "sku_used": "BoxUsage:c8g.xlarge",
+    "notes": "Live-verified against running server: us-east-1 -> $0.15952/hr (c8g.xlarge, AWS Graviton4 compute-optimized, service inferred as AmazonEC2)."
+  },
+  {
+    "id": "RSKU_AWS_OK2",
+    "prompt": "I'm reconciling our EC2 bill and one CUR row shows usage type BoxUsage:m6a.8xlarge in us-east-1. Can you pull the current public on-demand rate for that exact usage type and tell me if it lines up with $1.3824/hr?",
+    "category": "aws-raw-sku-success",
+    "cloud": "aws",
+    "expected_outcome": "matched",
+    "sku_used": "BoxUsage:m6a.8xlarge",
+    "notes": "Live-verified against running server: us-east-1 -> $1.3824/hr (m6a.8xlarge)."
+  },
+  {
+    "id": "RSKU_AWS_OK3",
+    "prompt": "In our billing export there's a usage type of BoxUsage:c7i.2xlarge running in us-east-1. Can you give me both the hourly rate and what that works out to per month if it runs 24/7?",
+    "category": "aws-raw-sku-success",
+    "cloud": "aws",
+    "expected_outcome": "matched",
+    "sku_used": "BoxUsage:c7i.2xlarge",
+    "notes": "Live-verified against running server: us-east-1 -> $0.357/hr (c7i.2xlarge), monthly_estimate $260.61/mo returned alongside hourly rate."
+  },
+  {
+    "id": "RSKU_AZ_NF1",
+    "prompt": "Our Azure billing export has a line item with meter ID 00000000-0000-0000-0000-000000000000 in the eastus region, but I can't find a current rate for it anywhere. What does this meter ID actually correspond to, and what's the current price?",
+    "category": "azure-no-mapping",
+    "cloud": "azure",
+    "expected_outcome": "no_mapping",
+    "sku_used": "00000000-0000-0000-0000-000000000000",
+    "notes": "Well-formed but nonexistent GUID meterId, guaranteed absent from the Azure Retail Prices catalog. Exercises resolveAzureSKURegion's miss path, where AttemptedServices is never populated before NoMapping=true is set -- so the no_mapping_in entry should show attempted_services: [] and the response must rely on a defensive nil-guard elsewhere to render cleanly rather than panic/error. Live-verified against 127.0.0.1:8123: returns no_prices_found with no_mapping_in:[{attempted_services:[],region:eastus}]."
+  },
+  {
+    "id": "RSKU_AZ_OK1",
+    "prompt": "I'm reconciling our Azure CUR-style usage export and one line shows meter ID 3da19ca3-6007-4a29-89ea-cab10c2010ed for the eastus region. What VM SKU is that, and what's the current hourly rate?",
+    "category": "azure-raw-sku-success",
+    "cloud": "azure",
+    "expected_outcome": "matched",
+    "sku_used": "3da19ca3-6007-4a29-89ea-cab10c2010ed",
+    "notes": "Live-verified against 127.0.0.1:8123: resolves to Standard_D4_v3/D4s v3 (Virtual Machines Dv3 Series, Compute family), eastus, $0.192000/per_hour ($140.16/mo), single unambiguous match in all_regions_sorted."
+  },
+  {
+    "id": "RSKU_AWS_AMB1",
+    "prompt": "My AWS Cost and Usage Report has a line item with usage type just \"LCUUsage\" in us-east-1 — no BoxUsage prefix, and the export doesn't say which load balancer it's billing. What's the hourly rate for that?",
+    "category": "ambiguous-match",
+    "cloud": "aws",
+    "expected_outcome": "ambiguous",
+    "sku_used": "LCUUsage",
+    "notes": "Live-verified just now against http://127.0.0.1:8123/ with region us-east-1 and no hints: result=\"no_prices_found\", ambiguous_in has one entry with alternate_match_count=3 (ALB $0.008/LCU-hr, NLB $0.006/LCU-hr, GWLB $0.004/LCU-hr — operations LoadBalancing:Application/Network/Gateway), hint_status=\"no_hint_supplied\". Known/documented ELB LCUUsage-suffix collision."
+  },
+  {
+    "id": "RSKU_AWS_AMB2",
+    "prompt": "I'm reconciling my AWS bill and see a CUR line item with usage type \"InstanceUsage:db.r6g.large\" in us-east-1 — that's my MySQL RDS instance, right? What's the hourly rate for it?",
+    "category": "ambiguous-match",
+    "cloud": "aws",
+    "expected_outcome": "ambiguous",
+    "sku_used": "InstanceUsage:db.r6g.large",
+    "notes": "Live-verified just now against http://127.0.0.1:8123/ with region us-east-1 and no hints: result=\"no_prices_found\", ambiguous_in has one entry with alternate_match_count=5 spanning PostgreSQL ($0.225/hr), Aurora PostgreSQL ($0.26/hr), Aurora MySQL ($0.26/hr), MariaDB ($0.215/hr), and MySQL ($0.215/hr) — all on db.r6g.large. Surprising because the usage-type string reads like a single-instance/single-engine SKU but actually spans every RDS engine on that instance class; the user's assumption \"that's my MySQL instance\" is exactly the trap."
+  },
+  {
+    "id": "RSKU_GCP_AMB1",
+    "prompt": "My GCP billing export has a Cloud KMS line item with skuId \"1017-1BAF-7159\" — what's the rate for those HSM asymmetric key versions?",
+    "category": "ambiguous-match",
+    "cloud": "gcp",
+    "expected_outcome": "tiered",
+    "sku_used": "1017-1BAF-7159",
+    "notes": "GCP SKU sourced from code comments (internal/providers/gcp/gcp_kms.go lines ~65-68), not independently live-verified — OCC_GCP_API_KEY unavailable on the 127.0.0.1:8123 test box, so every GCP call there returns a not_configured auth error regardless of skuId. In a GCP-enabled harness environment this is documented as a single, unambiguous SKU within the KMS service catalog (EE2F-D110-890C) but with tiered pricing (tieredRates startUsageAmount 0, then a discounted rate starting at 2000 key versions) — expect a single match with all_tier_rates populated, not an ambiguous_in entry. This is the \"known/expected to just work\" contrast case for the pairing (it should NOT be ambiguous), even though the tool call is exercising the same raw-skuId code path as RSKU_GCP_AMB2."
+  },
+  {
+    "id": "RSKU_GCP_AMB2",
+    "prompt": "There's a GCP Cloud KMS charge on my bill for skuId \"4A51-C764-8B93\", described as \"Active Single Tenant HSM key versions (above 15000)\" — what does that cost per month?",
+    "category": "ambiguous-match",
+    "cloud": "gcp",
+    "expected_outcome": "matched",
+    "sku_used": "4A51-C764-8B93",
+    "notes": "GCP SKU sourced from code comments (internal/providers/gcp/gcp_kms.go lines ~19-23), not independently live-verified — OCC_GCP_API_KEY unavailable on the 127.0.0.1:8123 test box, so every GCP call there returns a not_configured auth error regardless of skuId. gcp_kms.go explicitly documents this SKU as OUT OF SCOPE for its domain-specific KMS pricing helper (belongs to a flat-fee dedicated-instance product, not the per-version/per-operation model that file prices) — but get_price_by_sku bypasses domain logic and queries the raw Cloud Billing Catalog directly, so in a GCP-enabled environment it is expected to resolve as a single, unambiguous match (a genuinely distinct, real SKU ID that exists only in the KMS service catalog) even though the \"friendly\" KMS tool ignores it entirely. This is the surprising-it-works case; the main risk to this expectation (unverifiable here) is if the raw skuId string happened to collide with an unrelated SKU in another of the 13 scanned service catalogs, which would flip this to ambiguous instead — flagged as the one open uncertainty."
+  },
+  {
+    "id": "RSKU_AZ_AMB1",
+    "prompt": "My Azure invoice has a Network Watcher connection-monitor charge in West US with meter ID \"ba2b4df6-e886-4cf2-9818-33f27d22b3cf\" — what's the per-unit rate for that?",
+    "category": "ambiguous-match",
+    "cloud": "azure",
+    "expected_outcome": "ambiguous",
+    "sku_used": "ba2b4df6-e886-4cf2-9818-33f27d22b3cf",
+    "notes": "Live-verified just now against http://127.0.0.1:8123/ with region westus and NO hints supplied: result=\"no_prices_found\", ambiguous_in has one entry with alternate_match_count=5 (prices $0.00, $0.30, $0.02, $0.10, $0.05 at different tierMinimumUnits — the tier-collision guard in azure_sku_lookup.go step 7 rejects this set because the retail-price sequence across tiers is not monotonic, and one row is even missing meterName/productName attributes entirely), hint_status reported as \"hint_ambiguous\" even with no hint. This requires no product_family hint from the calling agent to surface — the raw lookup is ambiguous by default, so the outcome doesn't depend on the LLM's tool-arg choices."
+  },
+  {
+    "id": "RSKU_AZ_AMB2",
+    "prompt": "My Azure invoice has an Azure Database for MySQL Single Server (Gen5, General Purpose) compute charge in UK South with meter ID \"ace03b73-4864-4a8c-afcb-55ddf91e010e\" — what's the hourly compute rate for that vCore?",
+    "category": "ambiguous-match",
+    "cloud": "azure",
+    "expected_outcome": "matched",
+    "sku_used": "ace03b73-4864-4a8c-afcb-55ddf91e010e",
+    "notes": "Live-verified just now against http://127.0.0.1:8123/ with region uksouth and no hints: resolves cleanly to a single match, $0.1016/hr ($74.17/mo), isPrimaryMeterRegion=true, type=Consumption. Surprising/unexpected because the raw Azure Retail Prices API actually returns 3 rows for this exact meterId+region (two Consumption rows at isPrimaryMeterRegion=false/true and one Reservation row at $569/1yr, isPrimaryMeterRegion=false) — a meterId that looks messy (mixed primary-region flags, a bundled reservation row) but the documented step-2 dedup (keep only isPrimaryMeterRegion=true rows, resolved strictly before any type/hint narrowing) collapses it to exactly one row with zero ambiguity and zero hint needed. This is the same 'same meterId/region/differing isPrimaryMeterRegion' fixture shape azure_sku_lookup_test.go describes, found live rather than approximated."
+  },
+  {
+    "id": "RSKU_GCP_TIER1",
+    "prompt": "Our GCP billing export has a Cloud KMS line item with SKU ID 77F8-D8AF-3CCE for Autokey key-versions. Right now we're under 100 key versions a month and it's showing $0. If our key-version count grows past 100 next quarter, does the per-unit rate actually kick in at that point, or does this SKU stay free no matter how much we use?",
+    "category": "tiered-rate",
+    "cloud": "gcp",
+    "expected_outcome": "tiered",
+    "sku_used": "77F8-D8AF-3CCE",
+    "notes": "GCP SKU sourced from code comments (internal/providers/gcp/gcp_kms.go), not independently live-verified — OCC_GCP_API_KEY unavailable. Per those comments: KMS Autokey key-versions SKU, $0.00 tier below 100 key-versions/month, paid rate above 100 — response should show tiered=true with all_tier_rates listing the $0 and paid tiers."
+  },
+  {
+    "id": "RSKU_GCP_TIER2",
+    "prompt": "We're reconciling a Cloud KMS charge with SKU ID 1017-1BAF-7159 for HSM asymmetric key versions. Our HSM key usage is ramping up fast — is there a volume discount that kicks in once we cross 2000 key versions in a month, or does this SKU charge the same rate no matter how much we use?",
+    "category": "tiered-rate",
+    "cloud": "gcp",
+    "expected_outcome": "tiered",
+    "sku_used": "1017-1BAF-7159",
+    "notes": "GCP SKU sourced from code comments (internal/providers/gcp/gcp_kms.go), not independently live-verified — OCC_GCP_API_KEY unavailable. Per those comments (kmsHSMTierThreshold=2000): HSM asymmetric key-version SKU with a volume-discount tier boundary at 2000 key versions/month — response should show tiered=true with all_tier_rates listing the below/above-2000 tiers."
+  },
+  {
+    "id": "RSKU_AZ_TIER1",
+    "prompt": "On our Azure invoice, meter ID 6bd64e8e-5cb9-49d3-893d-800c9b28dca3 shows up for standard outbound data transfer in southcentralus. Some months we push well past 10,000 GB of egress — does the per-GB rate step down once we hit higher volumes, or is this a single flat rate no matter how much we send?",
+    "category": "tiered-rate",
+    "cloud": "azure",
+    "expected_outcome": "ambiguous",
+    "sku_used": "6bd64e8e-5cb9-49d3-893d-800c9b28dca3",
+    "notes": "Live-verified: this meterId (Standard Data Transfer Out, Bandwidth - Routing Preference: Internet, southcentralus) genuinely has 5 real pricing tiers on the Azure Retail Prices API (tierMinimumUnits 0/100/10100/50100/150100 GB, rates $0/$0.08/$0.065/$0.06/$0.04 per GB). However, get_price_by_sku against the live 127.0.0.1:8123 server returns result:\"no_prices_found\" with all 5 tier rows listed under ambiguous_in/alternate_matches (hint_status:\"hint_ambiguous\"), NOT under tiered_rates/all_tier_rates. Confirmed in internal/tools/sku_lookup.go: the `tiered` flag is set only from GCP's rr.Tiered (documented GCP-only) — Azure's provider never sets it, so multi-tier Azure meters always surface as ambiguous alternate matches rather than a consolidated tiered response. Task requested expected_outcome=\"tiered\" for this slot but that is not achievable against current code; set to \"ambiguous\" to match the actual trace per the instruction to be factual, not aspirational."
+  },
+  {
+    "id": "RSKU_AZ_TIER2",
+    "prompt": "We have meter ID 9995d93a-7d35-4d3f-9c69-7a7fea447ef4 on our Azure bill for data transfer out of mexicocentral. Our egress there is climbing past 50,000 GB some months — is there a lower per-GB rate once we cross that volume, or does this meter bill flat regardless of usage?",
+    "category": "tiered-rate",
+    "cloud": "azure",
+    "expected_outcome": "ambiguous",
+    "sku_used": "9995d93a-7d35-4d3f-9c69-7a7fea447ef4",
+    "notes": "Live-verified: this meterId (Standard Data Transfer Out, Rtn Preference: MGN, mexicocentral) genuinely has 6 real pricing tiers on the Azure Retail Prices API (tierMinimumUnits 0/100/10335/51295/153695/512095 GB, rates $0/$0.087/$0.083/$0.07/$0.05/$0.05 per GB). However, get_price_by_sku against the live 127.0.0.1:8123 server returns result:\"no_prices_found\" with all 6 tier rows listed under ambiguous_in/alternate_matches (hint_status:\"hint_ambiguous\"), NOT under tiered_rates/all_tier_rates. Confirmed in internal/tools/sku_lookup.go: the `tiered` flag is set only from GCP's rr.Tiered (documented GCP-only) — Azure's provider never sets it, so multi-tier Azure meters always surface as ambiguous alternate matches rather than a consolidated tiered response. Task requested expected_outcome=\"tiered\" for this slot but that is not achievable against current code; set to \"ambiguous\" to match the actual trace per the instruction to be factual, not aspirational."
+  },
+  {
+    "id": "RSKU_AWS_BATCH1",
+    "prompt": "I'm reconciling our AWS Cost and Usage Report for the compute team and I've got a few EC2 usage-type line items I need current on-demand rates for, all in us-east-1: BoxUsage:c8g.xlarge and BoxUsage:m6a.8xlarge. Can you price both out for me in one go?",
+    "category": "batch-match",
+    "cloud": "aws",
+    "expected_outcome": "matched",
+    "sku_used": "BoxUsage:c8g.xlarge, BoxUsage:m6a.8xlarge",
+    "notes": "Both SKUs live-verified against 127.0.0.1:8123 today (c8g.xlarge $0.15952/hr, m6a.8xlarge $1.3824/hr, us-east-1). Expect both to land in results[] as resolved prices, no errors/no_mapping."
+  },
+  {
+    "id": "RSKU_AWS_BATCH2",
+    "prompt": "Our finance team pulled these three EC2 usage-type codes off the billing export and wants a per-hour rate check for us-east-1: BoxUsage:c8g.xlarge, BoxUsage:c7i.2xlarge, and BoxUsage:m6a.8xlarge. Can you pull current on-demand pricing for all three at once?",
+    "category": "batch-match",
+    "cloud": "aws",
+    "expected_outcome": "matched",
+    "sku_used": "BoxUsage:c8g.xlarge, BoxUsage:c7i.2xlarge, BoxUsage:m6a.8xlarge",
+    "notes": "All three SKUs live-verified against 127.0.0.1:8123 today (us-east-1). Expect all three in results[] as resolved prices, no errors/no_mapping."
+  },
+  {
+    "id": "RSKU_AWS_BATCH3",
+    "prompt": "Quick sanity check on two line items from our AWS bill, both us-east-1: BoxUsage:c7i.2xlarge and BoxUsage:c8g.xlarge. What's the hourly rate on each?",
+    "category": "batch-match",
+    "cloud": "aws",
+    "expected_outcome": "matched",
+    "sku_used": "BoxUsage:c7i.2xlarge, BoxUsage:c8g.xlarge",
+    "notes": "Both SKUs live-verified against 127.0.0.1:8123 today (us-east-1). Expect both in results[] as resolved prices, no errors/no_mapping."
+  },
+  {
+    "id": "RSKU_AWS_BATCH4",
+    "prompt": "I've got some odd EC2 usage-type strings in our Cost and Usage Report that I don't recognize from any instance family we run: BoxUsage:zz99.999xlarge and BoxUsage:nonexistent.type, both in us-east-1. Can you check what these actually cost, or flag if they're not real instance types?",
+    "category": "batch-not-found",
+    "cloud": "aws",
+    "expected_outcome": "no_mapping",
+    "sku_used": "BoxUsage:zz99.999xlarge, BoxUsage:nonexistent.type",
+    "notes": "Both are well-formed BoxUsage: usage-type strings (service infers to AmazonEC2) but the instance types don't exist; live-verified against 127.0.0.1:8123 today that both come back as no_prices_found/no_mapping_in within results[], not top-level errors."
+  },
+  {
+    "id": "RSKU_AWS_BATCH5",
+    "prompt": "Two more mystery line items showed up on the export this month, both us-east-1: BoxUsage:zz99.999xlarge and CAN1-BoxUsage:totallyfake.4xlarge. Neither matches any instance type our team has ever provisioned — can you look them up and tell me what they resolve to?",
+    "category": "batch-not-found",
+    "cloud": "aws",
+    "expected_outcome": "no_mapping",
+    "sku_used": "BoxUsage:zz99.999xlarge, CAN1-BoxUsage:totallyfake.4xlarge",
+    "notes": "Both are well-formed usage-type strings (with/without region prefix) that infer to AmazonEC2 but reference nonexistent instance types; live-verified against 127.0.0.1:8123 today that both come back as no_prices_found/no_mapping_in within results[], not top-level errors."
+  },
+  {
+    "id": "RSKU_AWS_BATCH6",
+    "prompt": "Trying to true up last month's compute spend and three of the usage-type codes on the report don't ring a bell: BoxUsage:nonexistent.type, CAN1-BoxUsage:totallyfake.4xlarge, and BoxUsage:zz99.999xlarge, all us-east-1. Can you check current pricing for these and let me know if any of them just aren't real SKUs?",
+    "category": "batch-not-found",
+    "cloud": "aws",
+    "expected_outcome": "no_mapping",
+    "sku_used": "BoxUsage:nonexistent.type, CAN1-BoxUsage:totallyfake.4xlarge, BoxUsage:zz99.999xlarge",
+    "notes": "All three are well-formed BoxUsage: usage-type strings that infer to AmazonEC2 but the instance types don't exist; live-verified against 127.0.0.1:8123 today that all three come back as no_prices_found/no_mapping_in within results[], not top-level errors."
+  },
+  {
+    "id": "RSKU_AWS_BATCH7",
+    "prompt": "I copy-pasted a couple of lines from our billing export into a spreadsheet and I think the columns got scrambled — these don't look like real SKU codes to me: \"just some random billing text\" and \"12345-not-a-sku\". Can you check whether either of these actually prices out to anything on AWS?",
+    "category": "batch-invalid",
+    "cloud": "aws",
+    "expected_outcome": "invalid_error",
+    "sku_used": "just some random billing text, 12345-not-a-sku",
+    "notes": "Neither string matches any AWS usage-type pattern, so service can't be inferred; live-verified against 127.0.0.1:8123 today that both land in the top-level errors map with 'service is required — could not infer AWS servicecode' rather than a no_mapping result."
+  },
+  {
+    "id": "RSKU_AWS_BATCH8",
+    "prompt": "Our export tool spit out some garbage-looking entries this run — \"###invalid###\" and \"12345-not-a-sku\" — instead of proper usage-type codes. Before I file a bug with the export vendor, can you confirm these really aren't valid AWS SKUs?",
+    "category": "batch-invalid",
+    "cloud": "aws",
+    "expected_outcome": "invalid_error",
+    "sku_used": "###invalid###, 12345-not-a-sku",
+    "notes": "Neither string matches any AWS usage-type pattern, so service can't be inferred; live-verified against 127.0.0.1:8123 today that both land in the top-level errors map with 'service is required — could not infer AWS servicecode' rather than a no_mapping result."
+  },
+  {
+    "id": "RSKU_AWS_BATCH9",
+    "prompt": "Three rows in our cost export look totally malformed to me — \"just some random billing text\", \"###invalid###\", and \"12345-not-a-sku\" — none of them look like real AWS usage-type codes. Can you try pricing them and tell me what's going on?",
+    "category": "batch-invalid",
+    "cloud": "aws",
+    "expected_outcome": "invalid_error",
+    "sku_used": "just some random billing text, ###invalid###, 12345-not-a-sku",
+    "notes": "None of the three strings match any AWS usage-type pattern, so service can't be inferred; live-verified against 127.0.0.1:8123 today that all three land in the top-level errors map with 'service is required — could not infer AWS servicecode' rather than a no_mapping result."
+  },
+  {
+    "id": "RSKU_AWS_BATCH10",
+    "prompt": "I've got a batch of five weird line items from this month's Cost and Usage Report and I want to reconcile all of them at once: BoxUsage:c8g.xlarge, BoxUsage:zz99.999xlarge, BoxUsage:m6a.8xlarge, \"just some random billing text\", and CAN1-BoxUsage:totallyfake.4xlarge, all us-east-1. Can you price out whichever of these are real and flag anything that isn't?",
+    "category": "batch-mixed",
+    "cloud": "aws",
+    "expected_outcome": "batch_mixed",
+    "sku_used": "BoxUsage:c8g.xlarge, BoxUsage:zz99.999xlarge, BoxUsage:m6a.8xlarge, just some random billing text, CAN1-BoxUsage:totallyfake.4xlarge",
+    "notes": "Mix live-verified against 127.0.0.1:8123 today in a single batch call: BoxUsage:c8g.xlarge and BoxUsage:m6a.8xlarge resolve as matched prices in results[]; BoxUsage:zz99.999xlarge and CAN1-BoxUsage:totallyfake.4xlarge come back as no_prices_found/no_mapping_in within results[]; 'just some random billing text' lands in the top-level errors map since service can't be inferred. Expect all three buckets (resolved results, no-mapping results, and errors) exercised in one response."
+  },
+  {
+    "id": "RSKU_GCP_BATCH1",
+    "prompt": "My GCP Cloud Billing export has three SKU IDs I don't recognize, all billed against us-central1: 77F8-D8AF-3CCE, 88D6-F2EE-C781, and C054-7F72-A02E. Can you tell me what each one costs?",
+    "category": "batch-match",
+    "cloud": "gcp",
+    "expected_outcome": "matched",
+    "sku_used": "77F8-D8AF-3CCE, 88D6-F2EE-C781, C054-7F72-A02E",
+    "notes": "GCP SKU sourced from code comments (internal/providers/gcp/...), not independently live-verified — OCC_GCP_API_KEY unavailable"
+  },
+  {
+    "id": "RSKU_GCP_BATCH2",
+    "prompt": "I'm reconciling a GCP invoice and see SKU IDs 77F8-D8AF-3CCE and C054-7F72-A02E on the europe-west1 line items. What's the rate for each of these?",
+    "category": "batch-match",
+    "cloud": "gcp",
+    "expected_outcome": "matched",
+    "sku_used": "77F8-D8AF-3CCE, C054-7F72-A02E",
+    "notes": "GCP SKU sourced from code comments (internal/providers/gcp/...), not independently live-verified — OCC_GCP_API_KEY unavailable"
+  },
+  {
+    "id": "RSKU_GCP_BATCH3",
+    "prompt": "Two SKU IDs on my GCP bill for us-east1 that I can't match to anything internally: 88D6-F2EE-C781 and C054-7F72-A02E. What am I being charged for these, and what's the per-unit rate?",
+    "category": "batch-match",
+    "cloud": "gcp",
+    "expected_outcome": "matched",
+    "sku_used": "88D6-F2EE-C781, C054-7F72-A02E",
+    "notes": "GCP SKU sourced from code comments (internal/providers/gcp/...), not independently live-verified — OCC_GCP_API_KEY unavailable"
+  },
+  {
+    "id": "RSKU_GCP_BATCH4",
+    "prompt": "My GCP billing export shows SKU IDs 0000-0000-0000 and FFFF-FFFF-FFFF for us-central1, and I can't find pricing for either one anywhere. Are these even real SKUs?",
+    "category": "batch-not-found",
+    "cloud": "gcp",
+    "expected_outcome": "no_mapping",
+    "sku_used": "0000-0000-0000, FFFF-FFFF-FFFF",
+    "notes": "GCP SKU sourced from code comments (internal/providers/gcp/...), not independently live-verified — OCC_GCP_API_KEY unavailable"
+  },
+  {
+    "id": "RSKU_GCP_BATCH5",
+    "prompt": "I've got two mystery GCP SKU IDs off a europe-west1 line item: FFFF-FFFF-FFFF and 1234-5678-9ABC. Can you price these out for me?",
+    "category": "batch-not-found",
+    "cloud": "gcp",
+    "expected_outcome": "no_mapping",
+    "sku_used": "FFFF-FFFF-FFFF, 1234-5678-9ABC",
+    "notes": "GCP SKU sourced from code comments (internal/providers/gcp/...), not independently live-verified — OCC_GCP_API_KEY unavailable"
+  },
+  {
+    "id": "RSKU_GCP_BATCH6",
+    "prompt": "Three SKU IDs showed up on our GCP Cloud Billing export for us-central1 that don't match anything in our records: 0000-0000-0000, 1234-5678-9ABC, and FFFF-FFFF-FFFF. What do they cost?",
+    "category": "batch-not-found",
+    "cloud": "gcp",
+    "expected_outcome": "no_mapping",
+    "sku_used": "0000-0000-0000, 1234-5678-9ABC, FFFF-FFFF-FFFF",
+    "notes": "GCP SKU sourced from code comments (internal/providers/gcp/...), not independently live-verified — OCC_GCP_API_KEY unavailable"
+  },
+  {
+    "id": "RSKU_GCP_BATCH7",
+    "prompt": "Our finance team pasted these into the GCP cost spreadsheet as SKU references but they don't look like real SKU IDs to me: not-a-real-sku and gcp-fake-id. Can you check what they cost?",
+    "category": "batch-invalid",
+    "cloud": "gcp",
+    "expected_outcome": "invalid_error",
+    "sku_used": "not-a-real-sku, gcp-fake-id",
+    "notes": "Garbage strings that don't match GCP's skuId shape; should surface in the batch tool's top-level errors map rather than resolving. Not independently live-verified — OCC_GCP_API_KEY unavailable"
+  },
+  {
+    "id": "RSKU_GCP_BATCH8",
+    "prompt": "Someone hand-typed these SKU references into our GCP billing tracker: gcp-fake-id and ???. Can you tell me what those bill at?",
+    "category": "batch-invalid",
+    "cloud": "gcp",
+    "expected_outcome": "invalid_error",
+    "sku_used": "gcp-fake-id, ???",
+    "notes": "Garbage strings that don't match GCP's skuId shape; should surface in the batch tool's top-level errors map rather than resolving. Not independently live-verified — OCC_GCP_API_KEY unavailable"
+  },
+  {
+    "id": "RSKU_GCP_BATCH9",
+    "prompt": "I've got three garbled entries in a GCP billing export column that's supposed to hold SKU IDs: not-a-real-sku, ???, and gcp-fake-id. What are their prices?",
+    "category": "batch-invalid",
+    "cloud": "gcp",
+    "expected_outcome": "invalid_error",
+    "sku_used": "not-a-real-sku, ???, gcp-fake-id",
+    "notes": "Garbage strings that don't match GCP's skuId shape; should surface in the batch tool's top-level errors map rather than resolving. Not independently live-verified — OCC_GCP_API_KEY unavailable"
+  },
+  {
+    "id": "RSKU_GCP_BATCH10",
+    "prompt": "My GCP Cloud Billing export for us-central1 has three SKU IDs I need priced all at once: 77F8-D8AF-3CCE, 0000-0000-0000, and gcp-fake-id. Can you look up all three and tell me which ones actually resolve?",
+    "category": "batch-mixed",
+    "cloud": "gcp",
+    "expected_outcome": "batch_mixed",
+    "sku_used": "77F8-D8AF-3CCE (match), 0000-0000-0000 (well-formed, not found), gcp-fake-id (invalid shape)",
+    "notes": "Exercises results/no_mapping/errors buckets together in one get_prices_by_sku call. The match SKU is sourced from code comments (internal/providers/gcp/...), not independently live-verified — OCC_GCP_API_KEY unavailable"
+  },
+  {
+    "id": "RSKU_AZURE_BATCH1",
+    "prompt": "My Azure cost export for eastus this month has two meter IDs I need priced out: 3da19ca3-6007-4a29-89ea-cab10c2010ed and cf64c470-a287-5429-8dd7-756a877824a0. Can you look both up and tell me the hourly rate for each?",
+    "category": "batch-match",
+    "cloud": "azure",
+    "expected_outcome": "matched",
+    "sku_used": "3da19ca3-6007-4a29-89ea-cab10c2010ed, cf64c470-a287-5429-8dd7-756a877824a0",
+    "notes": "Both meterIds live-verified against 127.0.0.1:8123 today: D4s v3 on-demand ($0.192/hr) and D4s v3 Spot ($0.037632/hr) in eastus. Both should land in the batch response's results array."
+  },
+  {
+    "id": "RSKU_AZURE_BATCH2",
+    "prompt": "I'm reconciling an Azure invoice for eastus and don't recognize two of the meter IDs on it: cf64c470-a287-5429-8dd7-756a877824a0 and 93a6a529-4f49-47cb-9b1e-db9e5f23263f. Can you pull the current rate for each?",
+    "category": "batch-match",
+    "cloud": "azure",
+    "expected_outcome": "matched",
+    "sku_used": "cf64c470-a287-5429-8dd7-756a877824a0, 93a6a529-4f49-47cb-9b1e-db9e5f23263f",
+    "notes": "Both meterIds live-verified against 127.0.0.1:8123 today: D4s v3 Spot ($0.037632/hr) and P10 LRS managed disk ($19.71/mo) in eastus. Both should land in results."
+  },
+  {
+    "id": "RSKU_AZURE_BATCH3",
+    "prompt": "Our Azure cost management export for eastus lists three distinct meterId values this cycle: 3da19ca3-6007-4a29-89ea-cab10c2010ed, cf64c470-a287-5429-8dd7-756a877824a0, and 93a6a529-4f49-47cb-9b1e-db9e5f23263f. Can you get me the current price for each one so I can match them to the right line items?",
+    "category": "batch-match",
+    "cloud": "azure",
+    "expected_outcome": "matched",
+    "sku_used": "3da19ca3-6007-4a29-89ea-cab10c2010ed, cf64c470-a287-5429-8dd7-756a877824a0, 93a6a529-4f49-47cb-9b1e-db9e5f23263f",
+    "notes": "All three meterIds live-verified against 127.0.0.1:8123 today (D4s v3 on-demand, D4s v3 Spot, P10 LRS disk). All three should land in results."
+  },
+  {
+    "id": "RSKU_AZURE_BATCH4",
+    "prompt": "There are two Azure meter IDs on my eastus billing export I can't find any pricing documentation for: 00000000-0000-0000-0000-000000000000 and 11111111-1111-1111-1111-111111111111. Can you check whether either one actually maps to a priced meter?",
+    "category": "batch-not-found",
+    "cloud": "azure",
+    "expected_outcome": "no_mapping",
+    "sku_used": "00000000-0000-0000-0000-000000000000, 11111111-1111-1111-1111-111111111111",
+    "notes": "Both are well-formed GUIDs, live-verified against 127.0.0.1:8123 today to be absent from the eastus catalog. Each result entry should carry result:'no_prices_found' with no_mapping_in populated and an empty all_regions_sorted; no top-level errors entry for either."
+  },
+  {
+    "id": "RSKU_AZURE_BATCH5",
+    "prompt": "Two meter IDs on our Azure eastus export don't match anything I can find: 11111111-1111-1111-1111-111111111111 and 99999999-9999-9999-9999-999999999999. Can you confirm whether these are real billable meters or not?",
+    "category": "batch-not-found",
+    "cloud": "azure",
+    "expected_outcome": "no_mapping",
+    "sku_used": "11111111-1111-1111-1111-111111111111, 99999999-9999-9999-9999-999999999999",
+    "notes": "Both are well-formed GUIDs, live-verified against 127.0.0.1:8123 today to be absent from the eastus catalog. Each should return result:'no_prices_found' with no_mapping_in populated."
+  },
+  {
+    "id": "RSKU_AZURE_BATCH6",
+    "prompt": "My Azure billing export for eastus has three meter IDs that look suspicious to me: 00000000-0000-0000-0000-000000000000, 11111111-1111-1111-1111-111111111111, and 99999999-9999-9999-9999-999999999999. Can you check all three against current pricing and tell me if any of them are legitimate?",
+    "category": "batch-not-found",
+    "cloud": "azure",
+    "expected_outcome": "no_mapping",
+    "sku_used": "00000000-0000-0000-0000-000000000000, 11111111-1111-1111-1111-111111111111, 99999999-9999-9999-9999-999999999999",
+    "notes": "All three are well-formed GUIDs, live-verified against 127.0.0.1:8123 today to be absent from the eastus catalog. All three should return result:'no_prices_found' with no_mapping_in populated, none in a top-level errors map."
+  },
+  {
+    "id": "RSKU_AZURE_BATCH7",
+    "prompt": "Our billing export tool spat out a couple of garbled meter ID values for the eastus region: 'not-a-guid' and 'azure-meter-xyz'. Can you check if either of those actually resolves to anything priced?",
+    "category": "batch-invalid",
+    "cloud": "azure",
+    "expected_outcome": "no_mapping",
+    "sku_used": "not-a-guid, azure-meter-xyz",
+    "notes": "DEVIATION FROM SPEC: task instructions expected 'invalid_error' (top-level errors map) for malformed strings, modeled on AWS behavior. Live-verified against 127.0.0.1:8123 today that Azure has no reachable errors-map path for shape-invalid SKUs: per get_prices_by_sku's own docstring (internal/server/server.go ~line 3066), the top-level 'errors' map is populated only when 'a usage-type pattern no service could be inferred for' -- an AWS-only parse/inference stage. Azure's meterId lookup is direct (no parse stage), so malformed strings collapse into the same no_mapping_in/'no_prices_found' bucket as well-formed-but-absent GUIDs. Confirmed empirically: both garbage strings returned result:'no_prices_found' with no_mapping_in populated and no top-level errors key in the response at all."
+  },
+  {
+    "id": "RSKU_AZURE_BATCH8",
+    "prompt": "Two of the meter ID fields in our eastus Azure export got mangled somehow: 'azure-meter-xyz' and '!!!bad!!!'. Can you look these up and tell me what's going on?",
+    "category": "batch-invalid",
+    "cloud": "azure",
+    "expected_outcome": "no_mapping",
+    "sku_used": "azure-meter-xyz, !!!bad!!!",
+    "notes": "DEVIATION FROM SPEC: same as RSKU_AZURE_BATCH7 -- live-verified against 127.0.0.1:8123 today that Azure has no reachable top-level errors-map path for shape-invalid strings (that path is AWS's usage-type-parse-failure only, per get_prices_by_sku docstring in internal/server/server.go ~line 3066). Both strings returned result:'no_prices_found' with no_mapping_in populated, no errors entry."
+  },
+  {
+    "id": "RSKU_AZURE_BATCH9",
+    "prompt": "I've got three meter ID values from an Azure eastus export that all look wrong to me: 'not-a-guid', 'azure-meter-xyz', and '!!!bad!!!'. Can you check whether any of these actually price out to something real?",
+    "category": "batch-invalid",
+    "cloud": "azure",
+    "expected_outcome": "no_mapping",
+    "sku_used": "not-a-guid, azure-meter-xyz, !!!bad!!!",
+    "notes": "DEVIATION FROM SPEC: same as RSKU_AZURE_BATCH7/8 -- live-verified against 127.0.0.1:8123 today. Azure's meterId lookup has no parse/inference stage that could trigger the top-level errors map (that mechanism is AWS-specific per get_prices_by_sku docstring in internal/server/server.go ~line 3066: errors fires only for 'a usage-type pattern no service could be inferred for'). All three malformed strings returned result:'no_prices_found' with no_mapping_in populated and no top-level errors key."
+  },
+  {
+    "id": "RSKU_AZURE_BATCH10",
+    "prompt": "I need to reconcile three meter IDs from our Azure eastus export in one go: 3da19ca3-6007-4a29-89ea-cab10c2010ed, 00000000-0000-0000-0000-000000000000, and '!!!bad!!!'. Can you check all three and tell me which ones are actually billable and at what rate?",
+    "category": "batch-mixed",
+    "cloud": "azure",
+    "expected_outcome": "batch_mixed",
+    "sku_used": "3da19ca3-6007-4a29-89ea-cab10c2010ed, 00000000-0000-0000-0000-000000000000, !!!bad!!!",
+    "notes": "DEVIATION FROM SPEC: task assumed a 3-way split across results/no_mapping/top-level errors (AWS-style). Live-verified against 127.0.0.1:8123 today with this exact mixed batch: Azure produces only a 2-way split -- all three SKUs appear in the 'results' array (in input order), with the real meterId (D4s v3, $0.192/hr) carrying populated all_regions_sorted/cheapest_price, and BOTH the well-formed-but-absent GUID and the garbage string carrying result:'no_prices_found' with no_mapping_in populated. There is NO top-level 'errors' key in the response at all -- Azure has no reachable errors-map path for malformed meterId strings (only AWS's usage-type-inference failure reaches errors, per get_prices_by_sku docstring, internal/server/server.go ~line 3066). The automated check should expect: 1 matched result + 2 no_mapping results, 0 errors entries."
+  },
+  {
+    "id": "RSKU_AWS_BOM1",
+    "prompt": "My AWS Cost and Usage Report shows a cluster made up entirely of BoxUsage:c8g.xlarge line items across three different node groups — 4 of them, 2 of them, and 6 of them, all in us-east-1. Can you total up what this whole fleet costs me per month?",
+    "category": "raw-sku-bom",
+    "cloud": "aws",
+    "expected_outcome": "bom_estimate",
+    "sku_used": "BoxUsage:c8g.xlarge",
+    "notes": "Same raw-SKU usage-type at three different quantities (4/2/6) in one BoM — should produce 3 line_items (or one item with combined quantity, depending on how the LLM structures the call) all landing in line_items with errors:null. Live-verified: $0.15952/hr in us-east-1."
+  },
+  {
+    "id": "RSKU_AWS_BOM2",
+    "prompt": "I'm reconciling my AWS bill for a small web tier: the CUR shows 3x BoxUsage:c8g.xlarge for the app servers, plus we're also provisioning 500GB of gp3 EBS storage for the shared volume, all in us-east-1. What's the total monthly cost for this stack?",
+    "category": "raw-sku-bom",
+    "cloud": "aws",
+    "expected_outcome": "bom_estimate",
+    "sku_used": "BoxUsage:c8g.xlarge",
+    "notes": "Mixes a raw-SKU compute item with a normal named-resource gp3 storage item in the same BoM. Live-verified combined total: 3x c8g.xlarge ($349.35/mo) + 500GB gp3 ($40.00/mo) = $389.35/mo, errors:null, both items in line_items."
+  },
+  {
+    "id": "RSKU_AWS_BOM3",
+    "prompt": "We're deciding where to place a pair of m6a.8xlarge instances — the CUR usage type is BoxUsage:m6a.8xlarge. Can you compare the monthly cost of running 2 of these in us-east-1 versus eu-west-1 and tell me how much cheaper or more expensive eu-west-1 is?",
+    "category": "raw-sku-bom",
+    "cloud": "aws",
+    "expected_outcome": "bom_estimate",
+    "sku_used": "BoxUsage:m6a.8xlarge",
+    "notes": "compare_bom_regions across two regions that actually differ. Live-verified: us-east-1 $1.3824/hr -> 2x = $2018.30/mo; eu-west-1 $1.5408/hr -> 2x = $2249.57/mo (us-west-2 ties us-east-1 exactly, so deliberately excluded to keep the 'cost shifts' framing checkable). expected_outcome is per-region bom_estimate; the check should see distinct totals across the two regions."
+  },
+  {
+    "id": "RSKU_AWS_BOM4",
+    "prompt": "I've got a batch-processing job that only runs 200 hours a month (not 24/7) using 5x BoxUsage:c8g.xlarge instances in us-east-1. What would that actually cost me monthly given the reduced runtime?",
+    "category": "raw-sku-bom",
+    "cloud": "aws",
+    "expected_outcome": "bom_estimate",
+    "sku_used": "BoxUsage:c8g.xlarge",
+    "notes": "Raw-SKU BoM item with quantity=5 and hours_per_month=200 (well under the 730 default) instead of assuming full-month uptime. Live-verified: 5 x $0.15952/hr x 200hr = $159.52/mo, errors:null."
+  },
+  {
+    "id": "RSKU_AWS_BOM5",
+    "prompt": "My billing export lists two compute line items I need to estimate together: 2x BoxUsage:c7i.2xlarge and 1x BoxUsage:z9.fake, both in us-east-1. Can you total up what this stack costs per month, and flag anything you can't price?",
+    "category": "raw-sku-bom",
+    "cloud": "aws",
+    "expected_outcome": "bom_item_not_found",
+    "sku_used": "BoxUsage:c7i.2xlarge, BoxUsage:z9.fake",
+    "notes": "Per-item error handling: the fake usage type has no catalog mapping and should land in the errors array (message: 'no pricing mapping ... tried service(s): [AmazonEC2]') while BoxUsage:c7i.2xlarge (live-verified $0.357/hr, 2x = $521.22/mo) still resolves into line_items — a partial estimate, not a total failure."
+  },
+  {
+    "id": "RSKU_AWS_BOM6",
+    "prompt": "I'm sizing out a small stack: 2x BoxUsage:c8g.xlarge for the app tier, plus 1x InstanceUsage:db.r6g.large for the database, both from the us-east-1 CUR. Does this whole thing estimate cleanly, or is one of these line items going to need more info from me?",
+    "category": "raw-sku-bom",
+    "cloud": "aws",
+    "expected_outcome": "bom_item_ambiguous",
+    "sku_used": "BoxUsage:c8g.xlarge, InstanceUsage:db.r6g.large",
+    "notes": "Live-verified: InstanceUsage:db.r6g.large is ambiguous in a BoM context too (5 matching product rows — MySQL/PostgreSQL/Aurora variants at different rates) and lands in errors ('is ambiguous in region ... 5 matching rows ... supply operation/product_family'), NOT line_items — this is NOT a clean bom_estimate despite the prompt inviting that reading. Paired with the resolvable c8g.xlarge item ($232.90/mo for 2x) so the trace shows partial success (1 line_item + 1 error), not a fully-failed BoM."
+  },
+  {
+    "id": "RSKU_AWS_BOM7",
+    "prompt": "For a burst-capacity plan I want to compare 3x BoxUsage:m6a.8xlarge across us-east-1, us-west-2, and eu-west-1 — which region comes out cheapest for this instance type and by how much per month?",
+    "category": "raw-sku-bom",
+    "cloud": "aws",
+    "expected_outcome": "bom_estimate",
+    "sku_used": "BoxUsage:m6a.8xlarge",
+    "notes": "compare_bom_regions across three regions. Live-verified per-region totals for 3x m6a.8xlarge: us-east-1 = $1.3824/hr x 3 x 730 = $3027.456/mo, us-west-2 identical to us-east-1 (same $1.3824/hr rate) = $3027.456/mo, eu-west-1 = $1.5408/hr x 3 x 730 = $3374.352/mo — us-east-1/us-west-2 tie for cheapest, eu-west-1 is priciest; each region's bom_estimate should show line_items with errors:null."
+  },
+  {
+    "id": "RSKU_GCP_BOM1",
+    "prompt": "My GCP Cloud Billing export has two Cloud KMS line items I want folded into a monthly estimate, both in us-central1: skuId 77F8-D8AF-3CCE (active HSM symmetric key versions for our Autokey setup) and skuId 88D6-F2EE-C781 (HSM symmetric crypto operations for Autokey). Staging runs about 60 key versions and 8,000 crypto operations a month; production runs about 400 key versions and 60,000 crypto operations a month. Can you build a combined monthly cost estimate across both environments?",
+    "category": "raw-sku-bom",
+    "cloud": "gcp",
+    "expected_outcome": "bom_estimate",
+    "sku_used": "77F8-D8AF-3CCE, 88D6-F2EE-C781",
+    "notes": "Entirely-raw-SKU BoM (variation a): 4 line items, all raw-SKU, same KMS Autokey domain, quantities split across two environments. Both SKUs are tiered (free-then-paid): 77F8-D8AF-3CCE gives 100 free key-versions/mo then $1.00/version/mo (staging's 60 should land fully in the free tier, prod's 400 should straddle it); 88D6-F2EE-C781 gives 10,000 free ops/mo then $0.000003/op (staging's 8,000 free, prod's 60,000 straddles it). Each item should resolve as a single matched (non-ambiguous) tiered line item via gcpGraduatedTieredCost, not as ambiguous. GCP SKU sourced from code comments (internal/providers/gcp/gcp_kms.go, gcp_kms_test.go), not independently live-verified — OCC_GCP_API_KEY unavailable in the verification environment."
+  },
+  {
+    "id": "RSKU_GCP_BOM2",
+    "prompt": "I'm putting together a monthly estimate for a small stack in us-central1: 3 n2-standard-4 Compute Engine instances running 24/7, plus the external IP charge for those same 3 VMs which shows up in my billing export as skuId C054-7F72-A02E, plus 200GB of pd-ssd persistent disk. What's the total monthly cost?",
+    "category": "raw-sku-bom",
+    "cloud": "gcp",
+    "expected_outcome": "bom_estimate",
+    "sku_used": "C054-7F72-A02E",
+    "notes": "Mixed BoM (variation b): a raw-SKU item (external IP charge, quantity=3, default hours_per_month=730) alongside two normal named-resource items (n2-standard-4 compute, pd-ssd storage) resolved through the ordinary domain/resource_type spec path. C054-7F72-A02E is a two-tier SKU ($0.005/hr paid tier plus a free quota tier) that should resolve as a single matched tiered line item, not ambiguous. GCP SKU sourced from code comments (internal/providers/gcp/gcp_networking.go, gcp_networking_test.go), not independently live-verified — OCC_GCP_API_KEY unavailable in the verification environment."
+  },
+  {
+    "id": "RSKU_GCP_BOM3",
+    "prompt": "I have a Compute Engine external IP charge in my billing export — skuId C054-7F72-A02E — for 5 VMs running 24/7, and I'm deciding which region to deploy in. Can you compare the monthly cost of just that external IP charge across us-central1, europe-west4, and asia-southeast1?",
+    "category": "raw-sku-bom",
+    "cloud": "gcp",
+    "expected_outcome": "bom_region_comparison",
+    "sku_used": "C054-7F72-A02E",
+    "notes": "Single raw-SKU item run through compare_bom_regions across 3 regions (variation c). C054-7F72-A02E has literal serviceRegions=[\"global\"] in the Billing Catalog, and gcp.go's skuMatchesRegion treats the \"global\" sentinel as matching any requested region — so per gcpSKUMatchesRequestedRegion (internal/providers/gcp/gcp_sku_lookup.go) this item should resolve to the SAME monthly cost in all three regions, not a shifting one; expected_outcome intentionally is NOT a cost delta across regions. Uses compare_bom_regions' per-region comparison result shape, not estimate_bom's line-item shape, hence the distinct label. GCP SKU sourced from code comments (internal/providers/gcp/gcp_networking.go, gcp_networking_test.go, gcp_sku_lookup.go), not independently live-verified — OCC_GCP_API_KEY unavailable in the verification environment."
+  },
+  {
+    "id": "RSKU_GCP_BOM4",
+    "prompt": "My dev team spins up 8 Compute Engine VMs with external IPs, but only during work hours — about 300 hours a month per VM, not 24/7. The billing export tags this as skuId C054-7F72-A02E in us-east1. What would the external IP portion of my monthly bill look like for those 8 dev VMs at 300 hours/month each?",
+    "category": "raw-sku-bom",
+    "cloud": "gcp",
+    "expected_outcome": "bom_estimate",
+    "sku_used": "C054-7F72-A02E",
+    "notes": "Raw-SKU BoM item with explicit non-default quantity (8, default is 1) and hours_per_month (300, default is 730) to model non-24/7 usage (variation d). C054-7F72-A02E is PER_HOUR-unit and tiered; bomMonthlyCost/gcpGraduatedTieredCost scale by hours_per_month*quantity (2,400 VM-hours), not raw quantity, so the tier-threshold check and the displayed monthly cost should both reflect the reduced usage window. GCP SKU sourced from code comments (internal/providers/gcp/gcp_networking.go, gcp_networking_test.go), not independently live-verified — OCC_GCP_API_KEY unavailable in the verification environment."
+  },
+  {
+    "id": "RSKU_GCP_BOM5",
+    "prompt": "I'm building a monthly estimate for our GCP footprint in us-central1: 200 Cloud KMS Autokey HSM key versions under skuId 77F8-D8AF-3CCE, plus another line item from the billing export tagged skuId 1234-5678-90AB that I can't find documented anywhere. Can you estimate the whole bundle and flag anything that doesn't resolve?",
+    "category": "raw-sku-bom",
+    "cloud": "gcp",
+    "expected_outcome": "bom_item_not_found",
+    "sku_used": "77F8-D8AF-3CCE, 1234-5678-90AB",
+    "notes": "Per-item error handling (variation e): a real, resolvable raw-SKU item (77F8-D8AF-3CCE, 200 versions — straddles the 100-free-version tier boundary) mixed with a deliberately-fake skuId-shaped string (1234-5678-90AB) that should not resolve in any GCP service catalog. Expect the BoM response to carry a per-item error/no-mapping entry for the fake SKU while still costing the real item, rather than aborting the whole call. IMPORTANT CAVEAT: this test's discriminator (fake SKU -> no_mapping/could-not-resolve vs. real SKU -> resolved) only holds when GCP credentials are actually configured; without OCC_GCP_API_KEY (as in the verification environment used to write this test) BOTH the real and fake SKU return the same catalog-fetch error, making them indistinguishable — this label describes the GCP-configured/intended behavior the suite is meant to exercise, not what was observed live. GCP SKU sourced from code comments (internal/providers/gcp/gcp_kms.go, gcp_kms_test.go), not independently live-verified."
+  },
+  {
+    "id": "RSKU_GCP_BOM6",
+    "prompt": "Our Cloud KMS Autokey usage varies a lot by environment. The billing export shows skuId 88D6-F2EE-C781 (HSM symmetric crypto operations for Autokey), all in us-central1, at roughly 2,000 operations/month in dev, 9,500 in staging, and 45,000 in production. Can you build a combined monthly cost estimate across those three environments?",
+    "category": "raw-sku-bom",
+    "cloud": "gcp",
+    "expected_outcome": "bom_estimate",
+    "sku_used": "88D6-F2EE-C781",
+    "notes": "Entirely-raw-SKU BoM (variation a, single-SKU strict form): 3 line items, all the same raw SKU (88D6-F2EE-C781) at different quantities, deliberately straddling the 10,000-free-op/mo tier boundary (dev and staging both land inside the free tier at 2,000 and 9,500; production at 45,000 crosses it, so 10,000 free + 35,000 paid at $0.000003/op = $0.105 for that line). Exercises gcpGraduatedTieredCost per line item with distinct quantities against the same tier schedule. GCP SKU sourced from code comments (internal/providers/gcp/gcp_kms.go, gcp_kms_test.go), not independently live-verified — OCC_GCP_API_KEY unavailable in the verification environment."
+  },
+  {
+    "id": "RSKU_GCP_BOM7",
+    "prompt": "We're deciding between us-central1 and europe-west4 for a new deployment: 2 n2-standard-4 Compute Engine instances, 100GB of pd-balanced storage, and a Cloud KMS Autokey line item from our billing export — skuId 77F8-D8AF-3CCE, 150 active HSM key versions/month. Can you compare the total monthly cost of this whole stack across both regions?",
+    "category": "raw-sku-bom",
+    "cloud": "gcp",
+    "expected_outcome": "bom_region_comparison",
+    "sku_used": "77F8-D8AF-3CCE",
+    "notes": "Mixed BoM (raw-SKU KMS item + normal named compute/storage items, variation b) run through compare_bom_regions across 2 regions (variation c combined). 77F8-D8AF-3CCE is a KMS Autokey SKU which per gcp_kms.go's kmsServiceID handling is treated as region-invariant (Region reported as \"global\" regardless of requested region, per this file's own geoTaxonomy-first precedent) — so its cost contribution (100 free + 50 paid at $1.00/version = $50/mo) should be identical in both regions; only the compute/storage portions can vary by region. Uses compare_bom_regions' per-region comparison shape, hence the distinct label from plain bom_estimate. GCP SKU sourced from code comments (internal/providers/gcp/gcp_kms.go, gcp_kms_test.go), not independently live-verified — OCC_GCP_API_KEY unavailable in the verification environment."
+  },
+  {
+    "id": "RSKU_AZURE_BOM1",
+    "prompt": "My Azure cost export lists two Virtual Machines line items under the same Dv3 family: meterId 3da19ca3-6007-4a29-89ea-cab10c2010ed for 3 on-demand instances, and meterId cf64c470-a287-5429-8dd7-756a877824a0 for 2 Spot instances, both in eastus running 24/7. Can you estimate my total monthly bill for this VM fleet?",
+    "category": "raw-sku-bom",
+    "cloud": "azure",
+    "expected_outcome": "bom_estimate",
+    "sku_used": "3da19ca3-6007-4a29-89ea-cab10c2010ed (x3), cf64c470-a287-5429-8dd7-756a877824a0 (x2)",
+    "notes": "Entirely raw-SKU items of the same type (VM) at different quantities, per variation (a). Live-verified via estimate_bom: item1 3x$0.192/hr*730=$420.48/mo, item2 2x$0.037632/hr*730=$54.94/mo, totals.monthly=$475.42/mo, no errors."
+  },
+  {
+    "id": "RSKU_AZURE_BOM2",
+    "prompt": "I've got two rows in my Azure billing export for the same managed-disk meter, meterId 93a6a529-4f49-47cb-9b1e-db9e5f23263f, in eastus — one for 12 disks attached to production and one for 2 disks in a dev environment. What's my total monthly disk spend across both?",
+    "category": "raw-sku-bom",
+    "cloud": "azure",
+    "expected_outcome": "bom_estimate",
+    "sku_used": "93a6a529-4f49-47cb-9b1e-db9e5f23263f (x12 and x2)",
+    "notes": "Entirely raw-SKU items of the same type (storage) at different quantities, per variation (a) with a second same-type example beyond BOM1's compute one. Live-verified: 12x$19.71=$236.52/mo, 2x$19.71=$39.42/mo, totals.monthly=$275.94/mo, no errors."
+  },
+  {
+    "id": "RSKU_AZURE_BOM3",
+    "prompt": "I'm reconciling a mixed-cloud bill. On the Azure side there are 2 D4s v3 VMs billed under meterId 3da19ca3-6007-4a29-89ea-cab10c2010ed in eastus for our app servers, and on the AWS side we're storing 500GB of gp3 log storage in us-east-1. What's the combined monthly cost of that stack?",
+    "category": "raw-sku-bom",
+    "cloud": "azure",
+    "expected_outcome": "bom_estimate",
+    "sku_used": "3da19ca3-6007-4a29-89ea-cab10c2010ed (azure raw-SKU) + aws gp3 named-resource item",
+    "notes": "Variation (b): raw-SKU item mixed with a normal named-resource item, cross-provider in the same BoM (task's own (b) example is cross-provider-flavored). Live-verified: azure line $280.32/mo + aws gp3 500GB line $40.00/mo = totals.monthly=$320.32/mo, errors:null. Note the AWS gp3 leg also populates a not_included advisory block (CloudWatch, EBS snapshots) — don't key expected_outcome on not_included being empty, just on both line items resolving and totals being present."
+  },
+  {
+    "id": "RSKU_AZURE_BOM4",
+    "prompt": "For our eastus environment I have 4 web-tier VMs I'd size as Standard_D4s_v3, plus 4 attached P10 managed data disks billed under meterId 93a6a529-4f49-47cb-9b1e-db9e5f23263f — one disk per VM. Can you estimate the combined monthly cost of the VMs and their attached disks?",
+    "category": "raw-sku-bom",
+    "cloud": "azure",
+    "expected_outcome": "bom_estimate",
+    "sku_used": "93a6a529-4f49-47cb-9b1e-db9e5f23263f (raw-SKU) + azure named-resource Standard_D4s_v3 VM item",
+    "notes": "Variation (b) same-provider mix: raw-SKU disk item plus a normal named-resource (domain/resource_type) Azure VM item in one BoM. Live-verified: VM line $560.64/mo (4x$0.192/hr*730) + disk line $78.84/mo (4x$19.71) = totals.monthly=$639.48/mo, errors:null."
+  },
+  {
+    "id": "RSKU_AZURE_BOM5",
+    "prompt": "We're deciding where to run 2 D4s v3 VMs — the CUR/billing meter we're currently paying under is 3da19ca3-6007-4a29-89ea-cab10c2010ed, and today they run in eastus. Can you compare our current eastus rate for those 2 VMs against running the same 2 VMs in westus2 or centralus instead?",
+    "category": "raw-sku-bom",
+    "cloud": "azure",
+    "expected_outcome": "bom_region_partial",
+    "sku_used": "3da19ca3-6007-4a29-89ea-cab10c2010ed",
+    "notes": "Variation (c): raw-SKU BoM item run through compare_bom_regions across 3 regions (eastus explicitly pinned as the current/baseline region alongside the two alternatives, so it's guaranteed to be in the regions list). Live-verified with regions=[eastus,westus2,centralus], baseline_region=eastus: eastus resolves ok at total_monthly=$280.32/mo (2x$0.192/hr*730), delta_monthly=+$0.00 vs itself; westus2 and centralus both come back status=no_data with errors=[\"Item 1: sku ... has no pricing mapping in region 'westus2'/'centralus'...\"] and total_monthly=$0.00 — this specific Azure meterId is region-locked (Azure Retail Prices meterIds are per-region), so only the baseline region resolves and the other two are explicitly no_data, not silently dropped or estimated."
+  },
+  {
+    "id": "RSKU_AZURE_BOM6",
+    "prompt": "We run 3 D4s v3 Spot instances (meterId cf64c470-a287-5429-8dd7-756a877824a0) plus 3 attached P10 managed data disks (meterId 93a6a529-4f49-47cb-9b1e-db9e5f23263f) in eastus for a batch job — the VMs only run about 300 hours a month since the job shuts down nights and weekends, but the disks stay attached and billed 24/7. What would that combination cost us monthly?",
+    "category": "raw-sku-bom",
+    "cloud": "azure",
+    "expected_outcome": "bom_estimate",
+    "sku_used": "cf64c470-a287-5429-8dd7-756a877824a0 (hours_per_month=300, qty 3), 93a6a529-4f49-47cb-9b1e-db9e5f23263f (qty 3, default monthly disk rate)",
+    "notes": "Variation (d): explicit quantity>1 and hours_per_month<730 (non-24/7 usage) on a raw-SKU compute item. A second raw-SKU line item (the disks) is included specifically so the request can only be answered by resolving a multi-item BoM (estimate_bom), not by a single get_price_by_sku call the model multiplies by hand. Live-verified: Spot VM line $33.87/mo (3x$0.037632/hr*300hr, NOT the 730hr default), disk line $59.13/mo (3x$19.71), totals.monthly=$93.00/mo, errors:null."
+  },
+  {
+    "id": "RSKU_AZURE_BOM7",
+    "prompt": "My Azure export has 6 P10 managed disks in eastus under meterId 93a6a529-4f49-47cb-9b1e-db9e5f23263f, plus one more row with meterId 00000000-0000-0000-0000-badf00d00000 that I can't identify. Can you estimate my monthly disk spend and flag anything you can't price?",
+    "category": "raw-sku-bom",
+    "cloud": "azure",
+    "expected_outcome": "bom_item_not_found",
+    "sku_used": "93a6a529-4f49-47cb-9b1e-db9e5f23263f (resolves, x6), 00000000-0000-0000-0000-badf00d00000 (deliberately fake, does not resolve)",
+    "notes": "Variation (e): one BoM entry with a SKU that will not resolve, alongside otherwise-valid items, to exercise per-item error handling. Live-verified via estimate_bom: the fake-GUID item produces errors=[\"Item 2: sku \\\"00000000-0000-0000-0000-badf00d00000\\\" has no pricing mapping in region 'eastus' (tried service(s): [])\"] while the 6x P10 disk item still resolves cleanly at line monthly_cost=$118.26/mo and totals.monthly=$118.26/mo — i.e. a populated errors array coexisting with a non-empty line_items/totals, not a hard failure of the whole call."
+  },
+  {
+    "id": "RSKU_ERR1",
+    "prompt": "My AWS Cost and Usage Report has a line item for BoxUsage:c8g.xlarge but I forgot to note which region it's billed in — can you tell me what that usage type costs?",
+    "category": "protocol-edge-case",
+    "cloud": "aws",
+    "expected_outcome": "regions_required_or_clarify",
+    "sku_used": "BoxUsage:c8g.xlarge",
+    "notes": "Probes get_price_by_sku's regions_required path (confirmed live: sku='BoxUsage:c8g.xlarge', regions=[] returns {\"error\":\"regions_required\",\"message\":\"regions must contain at least one AWS region code\"}). Elicitation caveat: the LLM may instead silently default to a region like us-east-1 and return a clean 'matched' result rather than omitting regions or asking for clarification — that branch is not covered by this label, so a 'matched' trace with an assumed region should be treated as the LLM sidestepping the edge case, not a check failure against server validation."
+  },
+  {
+    "id": "RSKU_ERR2",
+    "prompt": "I'm about to reconcile a stack of AWS usage-type codes from this month's billing export, but I haven't pulled the actual list together yet — can you get the batch SKU pricing check ready to go so I can just hand you the codes in a minute?",
+    "category": "protocol-edge-case",
+    "cloud": "aws",
+    "expected_outcome": "skus_required",
+    "sku_used": "",
+    "notes": "Probes get_prices_by_sku's skus_required error (confirmed live: skus=[] returns {\"error\":\"skus_required\",\"message\":\"skus must contain at least one raw SKU/usage-type string\"}). Hard to elicit purely via prompt: a competent LLM will very likely just wait/ask for the actual codes rather than invoke the batch tool with an empty skus array, since there is nothing yet to check — the label has no clarify escape hatch, so a trace with no tool call at all should be read as the LLM declining to force the edge case, not as a failed skus_required check. The server-side validation itself is what's under test here."
+  },
+  {
+    "id": "RSKU_ERR3",
+    "prompt": "I moved one workload over to Oracle Cloud (OCI) and my OCI bill lists a line item by its raw SKU code — can you look up its current rate the same way you did for my AWS usage-type codes?",
+    "category": "protocol-edge-case",
+    "cloud": "oci",
+    "expected_outcome": "unsupported_provider",
+    "sku_used": "(unspecified OCI SKU code)",
+    "notes": "Probes the unsupported_provider path shared by get_price_by_sku/get_prices_by_sku (confirmed live: provider='oci' returns {\"error\":\"unsupported_provider\",\"message\":\"get_price_by_sku does not support provider \\\"oci\\\".\"}). Elicitation caveat: a well-informed LLM may recognize OCI isn't covered and say so directly without ever calling the tool, producing no trace to check — that is a plausible, acceptable outcome distinct from a failed unsupported_provider check."
+  },
+  {
+    "id": "RSKU_ERR4",
+    "prompt": "My monthly AWS Cost and Usage Report export lists these usage types, all billed in us-east-1 — can you price all of these in one shot: BoxUsage:x1.large, BoxUsage:x2.large, BoxUsage:x3.large, BoxUsage:x4.large, BoxUsage:x5.large, BoxUsage:x6.large, BoxUsage:x7.large, BoxUsage:x8.large, BoxUsage:x9.large, BoxUsage:x10.large, BoxUsage:x11.large, BoxUsage:x12.large, BoxUsage:x13.large, BoxUsage:x14.large, BoxUsage:x15.large, BoxUsage:x16.large, BoxUsage:x17.large, BoxUsage:x18.large, BoxUsage:x19.large, BoxUsage:x20.large, BoxUsage:x21.large, BoxUsage:x22.large, BoxUsage:x23.large, BoxUsage:x24.large, BoxUsage:x25.large, BoxUsage:x26.large, BoxUsage:x27.large, BoxUsage:x28.large, BoxUsage:x29.large, BoxUsage:x30.large?",
+    "category": "protocol-edge-case",
+    "cloud": "aws",
+    "expected_outcome": "too_many_skus_or_chunked",
+    "sku_used": "BoxUsage:x1.large..BoxUsage:x30.large (30 items)",
+    "notes": "Probes get_prices_by_sku's maxSKUsPerBatch=25 cap (internal/tools/sku_lookup.go:530; confirmed live: 26 skus returns {\"error\":\"too_many_skus\",\"message\":\"skus must contain at most 25 entries (got 26) — call get_prices_by_sku in smaller batches, or use get_price_by_sku for one-off lookups.\"}). Prompt phrased as 'in one shot' to bias the LLM toward a single 30-item call (fires too_many_skus) rather than pre-emptively chunking into batches of <=25 (also an acceptable outcome per the _or_chunked label)."
+  },
+  {
+    "id": "RSKU_ERR5",
+    "prompt": "I have a line item on my AWS bill but the usage type column is blank — can you still figure out what it costs?",
+    "category": "protocol-edge-case",
+    "cloud": "aws",
+    "expected_outcome": "sku_required_or_cannot_resolve",
+    "sku_used": "",
+    "notes": "Probes get_price_by_sku's sku_required error (confirmed live: sku='', regions=['us-east-1'] returns {\"error\":\"sku_required\",\"message\":\"sku must not be empty\"}). Hard to elicit purely via prompt: a competent LLM will most likely explain that it needs the actual SKU/usage-type string and ask the user to supply it, rather than calling the tool with an empty sku argument — a no-call trace should be read as the LLM correctly declining rather than a failed sku_required check. The server-side validation is what's actually under test here."
+  }
+]

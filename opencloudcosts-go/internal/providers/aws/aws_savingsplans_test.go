@@ -416,9 +416,9 @@ func TestEDPAdjustment_ReducesRate(t *testing.T) {
 			Region:   "us-east-1",
 			Term:     models.PricingTermComputeSP,
 		},
-		ResourceType:   "m5.xlarge",
-		OS:             "Linux",
-		PaymentOption:  &payOpt,
+		ResourceType:    "m5.xlarge",
+		OS:              "Linux",
+		PaymentOption:   &payOpt,
 		CommitmentYears: &years,
 		EDPDiscountPct:  &edpPct,
 	}
@@ -434,7 +434,7 @@ func TestEDPAdjustment_ReducesRate(t *testing.T) {
 		t.Fatalf("expected EDP contracted price, got empty")
 	}
 
-	spRate := result.PublicPrices[0].PricePerUnit   // 0.141
+	spRate := result.PublicPrices[0].PricePerUnit      // 0.141
 	edpRate := result.ContractedPrices[0].PricePerUnit // 0.141 * 0.9 = 0.1269
 
 	const wantSP = 0.141

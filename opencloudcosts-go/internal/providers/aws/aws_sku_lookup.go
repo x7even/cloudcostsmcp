@@ -41,6 +41,7 @@ import (
 	"time"
 
 	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/models"
+	"github.com/x7even/cloudcostsmcp/opencloudcosts-go/internal/skulookup"
 )
 
 // --------------------------------------------------------------------------
@@ -217,15 +218,21 @@ func isChinaPartitionRegion(region string) bool {
 // switch on when building a structured JSON error response (mirroring how
 // the rest of this codebase distinguishes error kinds, e.g. "not_supported"
 // vs "not_configured" in tools/lookup.go).
+//
+// These were originally declared locally here; they now alias the canonical
+// definitions in internal/skulookup so a second provider (GCP) can share them
+// without importing this package. Every existing call site that spells them
+// as awsprovider.SKUErrSKURequired, etc. continues to compile unchanged — see
+// internal/skulookup's package doc for why.
 const (
-	SKUErrUnsupportedProvider   = "unsupported_provider"
-	SKUErrSKURequired           = "sku_required"
-	SKUErrSKUTooLong            = "sku_too_long"
-	SKUErrRegionsRequired       = "regions_required"
-	SKUErrTooManyRegions        = "too_many_regions"
-	SKUErrInvalidService        = "invalid_service"
-	SKUErrServiceUndeterminable = "service_undeterminable"
-	SKUErrHintTooLong           = "hint_too_long"
+	SKUErrUnsupportedProvider   = skulookup.SKUErrUnsupportedProvider
+	SKUErrSKURequired           = skulookup.SKUErrSKURequired
+	SKUErrSKUTooLong            = skulookup.SKUErrSKUTooLong
+	SKUErrRegionsRequired       = skulookup.SKUErrRegionsRequired
+	SKUErrTooManyRegions        = skulookup.SKUErrTooManyRegions
+	SKUErrInvalidService        = skulookup.SKUErrInvalidService
+	SKUErrServiceUndeterminable = skulookup.SKUErrServiceUndeterminable
+	SKUErrHintTooLong           = skulookup.SKUErrHintTooLong
 )
 
 // maxSKULength bounds the raw sku string. Real AWS usage-type strings are at
@@ -247,16 +254,8 @@ const maxSKULength = 1024
 // is.
 const maxHintLength = 256
 
-// SKULookupError is returned for request-level failures that apply to the
-// whole lookup (bad input, unsupported provider) as opposed to a single
-// region's result, which is instead represented as a non-error entry inside
-// SKULookupResult.Regions (see that type's docs for why).
-type SKULookupError struct {
-	Code    string
-	Message string
-}
-
-func (e *SKULookupError) Error() string { return e.Message }
+// SKULookupError aliases skulookup.SKULookupError — see that package's docs.
+type SKULookupError = skulookup.SKULookupError
 
 // maxSKULookupRegions caps the regions list. Each requested region can
 // trigger a full multi-hundred-MB offer-file download per candidate service
@@ -467,98 +466,17 @@ func fetchSKUCatalog(ctx context.Context, p *Provider, service, region string) (
 // Public result types
 // --------------------------------------------------------------------------
 
-// SKULookupRegionResult is the per-region outcome of a SKU lookup. Exactly
-// one of the following holds, mirroring how the rest of this codebase
-// distinguishes "we looked and found nothing" from "we couldn't look":
-//   - len(Prices) > 0: a match was found; ServiceUsed names the AWS
-//     servicecode whose catalog contained it.
-//   - NoMapping == true: every candidate service's catalog was fetched
-//     successfully for this region, but no product row's usage-type suffix
-//     matched the input SKU's suffix. This is the explicit "no mapping
-//     found" result the caller needs to distinguish "priced but not in this
-//     region" (or "not modeled by AWS at all") from a transient failure.
-//   - Error != "": the region code or China-partition check failed, or every
-//     candidate service's catalog fetch itself failed (e.g. network/HTTP
-//     error) — we don't actually know whether a match exists.
-type SKULookupRegionResult struct {
-	Region string `json:"region"`
+// SKULookupRegionResult aliases skulookup.SKULookupRegionResult — see that
+// package's docs. It was originally declared locally here; AWS never sets
+// its additive Tiered field (see skulookup's docs for why — AWS's usage-type
+// suffix model does not surface tiered rate schedules through this path).
+type SKULookupRegionResult = skulookup.SKULookupRegionResult
 
-	// ServiceUsed is the AWS servicecode whose catalog produced the match.
-	// Only set when len(Prices) > 0.
-	ServiceUsed string `json:"service_used,omitempty"`
-
-	// ServiceMismatch is true when ServiceUsed differs from the caller's
-	// explicit service hint — i.e. the hint's catalog had no match, but the
-	// inferred-service fallback catalog did. See LookupSKUAcrossRegions docs.
-	ServiceMismatch bool `json:"service_mismatch,omitempty"`
-
-	// Prices holds the resolved candidate row(s) for this region. In the
-	// common case this is a single row. When multiple product rows share the
-	// same stripped usage-type suffix (e.g. an EC2 BoxUsage suffix matches
-	// Linux, Windows, and RHEL rows, or Shared vs Dedicated tenancy rows),
-	// resolveSKUCandidates first narrows to the codebase's established
-	// canonical-default attributes (see canonicalDefaultAttrs) before this is
-	// populated. If that narrowing still leaves more than one row — i.e. the
-	// usage-type suffix genuinely does not disambiguate them (the clearest
-	// case: RDS databaseEngine, which no usage-type string encodes) — all
-	// remaining candidates are kept here and Ambiguous is set, rather than
-	// silently picking one (e.g. the cheapest) and reporting it as *the*
-	// price.
-	Prices []models.NormalizedPrice `json:"prices,omitempty"`
-
-	// Ambiguous is true when Prices contains more than one row that
-	// resolveSKUCandidates could not narrow down to a single canonical match
-	// — the caller must disambiguate using Prices[i].Attributes /
-	// Description / SKUID rather than trusting a single "the" price.
-	Ambiguous bool `json:"ambiguous,omitempty"`
-
-	// HintStatus explains *why* Ambiguous is what it is, one of the
-	// HintStatus* constants: "resolved_by_hint" (an operation/product_family
-	// hint narrowed Prices to exactly one row — Ambiguous is false),
-	// "hint_no_match" (a hint was supplied but matched none of the
-	// candidates — fails closed, Prices holds the original unfiltered set,
-	// Ambiguous is true), "hint_ambiguous" (a hint was supplied and matched
-	// more than one candidate even after canonical-default narrowing —
-	// Ambiguous is true), or "no_hint_supplied" (no hint was given; ordinary
-	// canonicalDefaultAttrs narrowing applied, which may or may not have
-	// resolved to one row). Only meaningful when len(Prices) > 1 originally
-	// applied (i.e. there was something to disambiguate at all).
-	HintStatus string `json:"hint_status,omitempty"`
-
-	NoMapping bool `json:"no_mapping,omitempty"`
-
-	Error string `json:"error,omitempty"`
-
-	// AttemptedServices lists the AWS servicecodes searched for this region,
-	// in search order, for diagnostic/debugging purposes.
-	AttemptedServices []string `json:"attempted_services,omitempty"`
-}
-
-// SKULookupResult is the full result of a get_price_by_sku lookup: the
-// canonicalized form of the input SKU, service-resolution provenance, and
-// one SKULookupRegionResult per requested region (in the same order as the
-// input regions list — the tool-handler layer is responsible for any
-// cheapest-first sorting, mirroring how compare_prices sorts after fan-out).
-type SKULookupResult struct {
-	SKU string `json:"sku"`
-
-	// UsageTypePrefix is the stripped region-prefix token ("CAN1", "EU", "")
-	// and UsageTypeSuffix is the region-independent remainder used for
-	// cross-region matching. See stripUsageTypePrefix.
-	UsageTypePrefix string `json:"usage_type_prefix"`
-	UsageTypeSuffix string `json:"usage_type_suffix"`
-
-	ServiceHint     string `json:"service_hint,omitempty"`
-	InferredService string `json:"inferred_service,omitempty"`
-	// ServiceSource is "explicit" when ServiceHint was supplied and used as
-	// the primary candidate, or "inferred" when no hint was given and
-	// InferredService was derived from the usage-type pattern.
-	ServiceSource string `json:"service_source"`
-
-	Warnings []string `json:"warnings,omitempty"`
-
-	Regions []SKULookupRegionResult `json:"regions"`
-}
+// SKULookupResult aliases skulookup.SKULookupResult — see that package's
+// docs. UsageTypePrefix/UsageTypeSuffix (the stripped region-prefix token and
+// region-independent remainder, see stripUsageTypePrefix) are AWS-only
+// concepts populated only by this file.
+type SKULookupResult = skulookup.SKULookupResult
 
 // --------------------------------------------------------------------------
 // LookupSKUAcrossRegions — main entry point
@@ -570,11 +488,16 @@ type SKULookupResult struct {
 // semaphore of 10, matching the pattern used by compare_prices in
 // tools/lookup.go).
 //
-// providerName is validated against "aws" as defense-in-depth: this whole
-// feature is AWS-only (raw usage-type strings are an AWS CUR concept with no
-// GCP/Azure equivalent), and the caller — the tool-handler layer added in a
-// later phase — is expected to reject non-AWS providers before ever reaching
-// this AWS-package method, but this function does not assume that happened.
+// providerName is validated against "aws" as defense-in-depth: this function
+// only knows how to parse AWS's usage-type/SKU string shape (GCP's raw-SKU
+// lookup is a separate implementation, internal/providers/gcp/
+// gcp_sku_lookup.go, behind the same skulookup.SKULookupProvider interface —
+// get_price_by_sku itself supports both). The tool-handler layer
+// (internal/tools, see resolveSKULookupProviderFromMap) already resolves
+// providerName to the correct concrete provider before ever reaching this
+// AWS-package method — LookupSKUAcrossRegionsGeneric below always calls this
+// with providerName hardcoded to "aws" — but this function does not assume
+// that happened.
 //
 // serviceHint, if non-empty, is tried first for every region. If the
 // usage-type pattern also allows inferring a servicecode (see
@@ -609,8 +532,9 @@ func (p *Provider) LookupSKUAcrossRegions(
 		return nil, &SKULookupError{
 			Code: SKUErrUnsupportedProvider,
 			Message: fmt.Sprintf(
-				"get_price_by_sku only supports provider=\"aws\" (got %q) — raw AWS usage-type/SKU "+
-					"strings are an AWS Cost & Usage Report concept with no GCP/Azure equivalent",
+				"this raw-SKU lookup path only supports provider=\"aws\" (got %q) — raw AWS "+
+					"usage-type/SKU strings are an AWS Cost & Usage Report concept; GCP raw-SKU "+
+					"lookup is handled by a separate implementation",
 				providerName,
 			),
 		}
@@ -783,22 +707,14 @@ var canonicalDefaultAttrs = map[string]string{
 // Hint-resolution status codes, surfaced on SKULookupRegionResult.HintStatus
 // so a caller can tell *why* a region is still ambiguous rather than just
 // seeing "ambiguous: true" again. See resolveSKUCandidates.
+//
+// These alias the canonical definitions in internal/skulookup — see that
+// package's docs.
 const (
-	// HintStatusNoHint means neither operationHint nor productFamilyHint was
-	// supplied — resolution fell back to the existing canonicalDefaultAttrs
-	// narrowing (or, if that also failed to narrow, plain ambiguity).
-	HintStatusNoHint = "no_hint_supplied"
-	// HintStatusResolved means a supplied hint narrowed the candidates to
-	// exactly one row.
-	HintStatusResolved = "resolved_by_hint"
-	// HintStatusNoMatch means a hint was supplied but matched zero candidate
-	// rows — resolution fails closed: the original unfiltered candidate set
-	// is returned, still ambiguous, rather than silently ignoring the hint.
-	HintStatusNoMatch = "hint_no_match"
-	// HintStatusAmbiguous means a hint was supplied and matched more than one
-	// row (canonical-default narrowing was then tried on that hint-filtered
-	// subset and still could not get to exactly one).
-	HintStatusAmbiguous = "hint_ambiguous"
+	HintStatusNoHint    = skulookup.HintStatusNoHint
+	HintStatusResolved  = skulookup.HintStatusResolved
+	HintStatusNoMatch   = skulookup.HintStatusNoMatch
+	HintStatusAmbiguous = skulookup.HintStatusAmbiguous
 )
 
 // resolveSKUCandidates narrows prices (all rows sharing one stripped
@@ -1002,4 +918,22 @@ func (p *Provider) lookupSKUInRegion(
 
 	rr.NoMapping = true
 	return rr
+}
+
+// --------------------------------------------------------------------------
+// skulookup.SKULookupProvider conformance
+// --------------------------------------------------------------------------
+
+// LookupSKUAcrossRegionsGeneric adapts LookupSKUAcrossRegions to the
+// provider-agnostic skulookup.SKULookupProvider interface, so the
+// tool-handler layer (internal/tools) can resolve AWS and GCP raw-SKU lookups
+// through one generic code path instead of hardcoding *Provider. It does not
+// replace or change the behavior of LookupSKUAcrossRegions — it is a
+// different method name delegating to the exact same logic, with
+// providerName hardcoded to "aws" (this method only ever makes sense for an
+// AWS *Provider instance).
+func (p *Provider) LookupSKUAcrossRegionsGeneric(
+	ctx context.Context, sku string, regions []string, serviceHint string, hint skulookup.SKUHint,
+) (*skulookup.SKULookupResult, error) {
+	return p.LookupSKUAcrossRegions(ctx, "aws", sku, serviceHint, regions, hint.OperationHint, hint.ProductFamilyHint)
 }

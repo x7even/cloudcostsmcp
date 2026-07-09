@@ -31,6 +31,13 @@ const (
 	regionStatusOK        = "ok"
 	regionStatusTransient = "transient_error"
 	regionStatusNoData    = "no_data"
+	// regionStatusPartial marks a fan-out outcome where some but not all
+	// items/regions resolved successfully — e.g. compare_bom_regions
+	// (compare_bom_regions.go) resolving some BoM line items for a region
+	// while others in the same region errored. Distinct from regionStatusOK
+	// (everything resolved) so a partial, possibly-understated total isn't
+	// reported with the same "ok" status as a complete one.
+	regionStatusPartial = "partial"
 )
 
 // Provider is an alias so callers of this package do not need to import providers directly.
@@ -68,20 +75,27 @@ func (h *Handler) provider(name string) Provider {
 // --------------------------------------------------------------------------
 
 // jsonText returns a *mcp.CallToolResult containing a single TextContent block
-// with the JSON-serialised value of v. If marshalling fails, a structured
-// {"error": "internal_error", ...} object is returned instead.
+// with the JSON-serialised value of v, and StructuredContent set to v itself
+// so it matches the tool's declared output schema on the wire. If marshalling
+// fails, a structured {"error": "internal_error", ...} object is returned
+// instead (and used for StructuredContent too, since v could not be
+// serialised).
 func jsonText(v any) *mcp.CallToolResult {
 	b, err := json.Marshal(v)
+	structured := v
 	if err != nil {
-		b, _ = json.Marshal(map[string]any{
+		fallback := map[string]any{
 			"error":   "internal_error",
 			"message": "failed to serialise response",
-		})
+		}
+		b, _ = json.Marshal(fallback)
+		structured = fallback
 	}
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
 			&mcp.TextContent{Text: string(b)},
 		},
+		StructuredContent: structured,
 	}
 }
 

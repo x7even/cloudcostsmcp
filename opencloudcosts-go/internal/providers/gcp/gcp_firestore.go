@@ -526,19 +526,9 @@ func resolveFirestoreRates(live map[string]firestoreRates, region string) (rates
 // requested region (NOT global scope — see file header) and the fields
 // common to every Firestore line item.
 func newFirestorePrice(region, skuID, description string, pricePerUnit float64, unit models.PriceUnit, attrs map[string]string) models.NormalizedPrice {
-	return models.NormalizedPrice{
-		Provider:      models.CloudProviderGCP,
-		Service:       "firestore",
-		SKUID:         skuID,
-		ProductFamily: "Cloud Firestore",
-		Description:   description,
-		Region:        region,
-		PricingTerm:   models.PricingTermOnDemand,
-		PricePerUnit:  pricePerUnit,
-		Unit:          unit,
-		Currency:      "USD",
-		Attributes:    attrs,
-	}
+	price := newGCPBasePrice("firestore", "Cloud Firestore", skuID, description, pricePerUnit, unit, attrs)
+	price.Region = region
+	return price
 }
 
 // priceFirestore returns Cloud Firestore pricing for the given
