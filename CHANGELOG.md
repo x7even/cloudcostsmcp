@@ -5,6 +5,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.3.1] — 2026-07-09
+
+### Fixed
+- **Docker image publish** — `opencloudcosts-go/Dockerfile`'s builder stage was pinned to
+  `golang:1.25.11-alpine`, incompatible with the `go 1.25.12` minimum introduced in 1.3.0
+  (GO-2026-5856). This broke the GHCR image publish on every push to `main` and on the
+  v1.3.0 tag itself, so no `:1.3.0` versioned image was ever published. Builder image bumped
+  to `golang:1.25.12-alpine`; no application code changed. (#99)
+
 ## [1.3.0] — 2026-07-09
 
 ### Added
